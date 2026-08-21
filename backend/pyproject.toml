@@ -1,0 +1,10 @@
+[project]
+name = "workflow-vdai"
+version = "0.1.0"
+description = "Local-first Script-to-Video production pipeline"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
