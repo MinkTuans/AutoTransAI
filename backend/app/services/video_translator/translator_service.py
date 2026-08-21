@@ -392,7 +392,7 @@ async def render_dubbed_video(
         seg_audio = Path(seg.synced_audio_path or seg.tts_audio_path)
         inputs.extend(["-i", str(seg_audio)])
         delay_ms = int(seg.start_time * 1000)
-        filter_chain.append(f"[{idx}:a]adelay={delay_ms}|{delay_ms}[a{idx}];")
+        filter_chain.append(f"[{idx}:a]adelay=delays={delay_ms}:all=1[a{idx}];")
 
     mix_inputs = "".join(f"[a{idx}]" for idx in range(1, len(valid_segments) + 1))
     filter_graph = "".join(filter_chain) + f"[0:a]{mix_inputs}amix=inputs={len(valid_segments)+1}:duration=first[outa]"

@@ -112,10 +112,21 @@ class EdgeTTSProvider(AudioProvider):
             GenerationResult with the saved audio file path.
         """
         try:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
+            for attempt in range(1, 4):
+                try:
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    if output_path.exists():
+                        output_path.unlink()
 
-            communicate = edge_tts.Communicate(text, voice_id)
-            await communicate.save(str(output_path))
+                    communicate = edge_tts.Communicate(text, voice_id)
+                    await communicate.save(str(output_path))
+
+                    if output_path.exists() and output_path.stat().st_size > 0:
+                        break
+                except Exception as attempt_err:
+                    if attempt == 3:
+                        raise attempt_err
+                    await asyncio.sleep(attempt * 1.0)
 
             if not output_path.exists():
                 return GenerationResult(

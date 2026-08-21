@@ -81,13 +81,21 @@ class ProviderRegistry:
 def _register_defaults(reg: ProviderRegistry) -> None:
     try:
         from app.providers.audio.edge_tts_provider import EdgeTTSProvider
-        from app.providers.audio.google_tts_provider import GoogleCloudTTSProvider
-        from app.providers.audio.elevenlabs_provider import ElevenLabsAudioProvider
         reg.register_audio(EdgeTTSProvider())
+    except Exception as e:
+        logger.warning("Failed to register EdgeTTSProvider", error=str(e))
+
+    try:
+        from app.providers.audio.google_tts_provider import GoogleCloudTTSProvider
         reg.register_audio(GoogleCloudTTSProvider())
+    except Exception as e:
+        logger.warning("Failed to register GoogleCloudTTSProvider", error=str(e))
+
+    try:
+        from app.providers.audio.elevenlabs_provider import ElevenLabsAudioProvider
         reg.register_audio(ElevenLabsAudioProvider())
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Failed to register ElevenLabsAudioProvider", error=str(e))
 
     try:
         from app.providers.video.local_provider import LocalVideoProvider
