@@ -60,6 +60,19 @@ async def init_db() -> None:
         await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
         await conn.run_sync(Base.metadata.create_all)
 
+        # Lightweight schema migration for existing SQLite database
+        try:
+            res = await conn.exec_driver_sql("PRAGMA table_info(segments)")
+            columns = [row[1] for row in res.fetchall()]
+            if "audio_error_message" not in columns:
+                await conn.exec_driver_sql("ALTER TABLE segments ADD COLUMN audio_error_message TEXT")
+            if "video_error_message" not in columns:
+                await conn.exec_driver_sql("ALTER TABLE segments ADD COLUMN video_error_message TEXT")
+            if "video_error_details" not in columns:
+                await conn.exec_driver_sql("ALTER TABLE segments ADD COLUMN video_error_details TEXT")
+        except Exception:
+            pass
+
 
 async def get_session() -> AsyncSession:  # type: ignore[misc]
     """Dependency injection for FastAPI routes."""

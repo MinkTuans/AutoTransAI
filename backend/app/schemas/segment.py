@@ -17,5 +17,8 @@ class SegmentResponse(BaseModel):
     video_duration: float | None = None
     target_duration: float | None = None
     sync_strategy_used: str | None = None
+    audio_error_message: str | None = None
+    video_error_message: str | None = None
+    video_error_details: str | None = None
 
     model_config = {"from_attributes": True}

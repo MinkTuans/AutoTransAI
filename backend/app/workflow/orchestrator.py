@@ -431,12 +431,14 @@ class WorkflowOrchestrator:
                 segment.video_status = SegmentStatus.COMPLETED.value
                 segment.video_duration = duration
                 segment.video_file_path = str(result.file_path)
+                segment.video_error_message = None
                 await self.session.commit()
 
                 update_segment_in_manifest(self.project_id, segment.segment_number, {
                     "video_status": "completed",
                     "video_duration": duration,
                     "video_file": str(result.file_path),
+                    "video_error": None,
                 })
 
                 await self._emit_progress({
@@ -446,19 +448,34 @@ class WorkflowOrchestrator:
                     "project_id": self.project_id,
                 })
             else:
-                segment.video_status = SegmentStatus.FAILED.value
-                await self.session.commit()
                 err_msg = result.error_message or "Video generation returned failure"
+                segment.video_status = SegmentStatus.FAILED.value
+                segment.video_error_message = err_msg
+                await self.session.commit()
+
+                update_segment_in_manifest(self.project_id, segment.segment_number, {
+                    "video_status": "failed",
+                    "video_error": err_msg,
+                })
+
                 logger.error("Video generation failed", segment=segment.segment_number, error=err_msg)
                 raise WorkflowError(err_msg, code="VIDEO_GENERATION_FAILED")
 
         except Exception as e:
+            err_msg = str(e)
             segment.video_status = SegmentStatus.FAILED.value
+            segment.video_error_message = err_msg
             await self.session.commit()
+
+            update_segment_in_manifest(self.project_id, segment.segment_number, {
+                "video_status": "failed",
+                "video_error": err_msg,
+            })
+
             logger.error(
                 "Segment video failed",
                 segment=segment.segment_number,
-                error=str(e),
+                error=err_msg,
             )
 
     async def _sync_all_segments(self) -> None:

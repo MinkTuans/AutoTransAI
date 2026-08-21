@@ -515,24 +515,49 @@ export default function ProjectDetail({ projectId, onBack }) {
           </thead>
           <tbody>
             {project.segments.map((seg) => (
-              <tr key={seg.number}>
-                <td style={{ fontWeight: '700' }}>{seg.number}</td>
-                <td style={{ maxWidth: '400px' }}>{seg.text_preview}</td>
-                <td>{seg.char_count}</td>
-                <td>
-                  <span className={`badge ${seg.audio_status === 'completed' ? 'badge-success' : (seg.audio_status === 'failed' ? 'badge-danger' : 'badge-neutral')}`}>
-                    {seg.audio_status}
-                  </span>
-                </td>
-                <td>
-                  <span className={`badge ${seg.video_status === 'completed' ? 'badge-success' : (seg.video_status === 'failed' ? 'badge-danger' : 'badge-neutral')}`}>
-                    {seg.video_status}
-                  </span>
-                </td>
-                <td>
-                  {seg.audio_duration ? `${seg.audio_duration}s` : '-'}
-                </td>
-              </tr>
+              <React.Fragment key={seg.number}>
+                <tr>
+                  <td style={{ fontWeight: '700' }}>{seg.number}</td>
+                  <td style={{ maxWidth: '400px' }}>{seg.text_preview}</td>
+                  <td>{seg.char_count}</td>
+                  <td>
+                    <span className={`badge ${seg.audio_status === 'completed' ? 'badge-success' : (seg.audio_status === 'failed' ? 'badge-danger' : 'badge-neutral')}`}>
+                      {seg.audio_status}
+                    </span>
+                  </td>
+                  <td>
+                    <span
+                      className={`badge ${seg.video_status === 'completed' ? 'badge-success' : (seg.video_status === 'failed' ? 'badge-danger' : 'badge-neutral')}`}
+                      style={{ cursor: seg.video_error_message ? 'pointer' : 'default' }}
+                      title={seg.video_error_message ? "Click to view detailed error" : ""}
+                    >
+                      {seg.video_status} {seg.video_error_message ? '⚠️' : ''}
+                    </span>
+                  </td>
+                  <td>
+                    {seg.audio_duration ? `${seg.audio_duration}s` : '-'}
+                  </td>
+                </tr>
+
+                {/* Expanded Error Card for Failed Segments */}
+                {seg.video_status === 'failed' && (
+                  <tr>
+                    <td colSpan="6" style={{ padding: '0.5rem 1rem', backgroundColor: 'rgba(239, 68, 68, 0.05)', borderBottom: '1px solid var(--danger)' }}>
+                      <div style={{ color: 'var(--danger)', fontSize: '0.85rem' }}>
+                        <strong>FAILED — Segment #{seg.number} Video Generation Error:</strong>
+                        <div style={{ fontFamily: 'monospace', margin: '0.3rem 0', whiteSpace: 'pre-wrap', backgroundColor: 'rgba(0,0,0,0.2)', padding: '0.5rem', borderRadius: '4px' }}>
+                          Provider: {project.video_provider_id || 'Unknown'}
+                          {'\n'}
+                          Error: {seg.video_error_message || 'Video generation failed'}
+                        </div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                          💡 <em>Tip: You can add additional API keys under Settings for automatic key rotation failover, or switch provider to <strong>Local AI & FFmpeg Generator</strong> for 100% free offline video generation.</em>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
             ))}
           </tbody>
         </table>

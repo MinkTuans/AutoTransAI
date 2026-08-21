@@ -29,6 +29,17 @@ export const providersApi = {
     api.post(`/providers/${providerId}/config`, { api_key: apiKey }).then(res => res.data),
   listVoices: (providerId, language) =>
     api.get(`/providers/${providerId}/voices`, { params: { language } }).then(res => res.data),
+  listKeys: (providerId) => api.get(`/providers/${providerId}/keys`).then(res => res.data),
+  addKey: (providerId, apiKey, priority) =>
+    api.post(`/providers/${providerId}/keys`, { api_key: apiKey, priority }).then(res => res.data),
+  deleteKey: (providerId, keyId) =>
+    api.delete(`/providers/${providerId}/keys/${keyId}`).then(res => res.data),
+  updateKey: (providerId, keyId, data) =>
+    api.put(`/providers/${providerId}/keys/${keyId}`, data).then(res => res.data),
+  testKey: (providerId, keyId) =>
+    api.post(`/providers/${providerId}/keys/${keyId}/test`).then(res => res.data),
+  checkQuota: (providerId, keyId) =>
+    api.post(`/providers/${providerId}/keys/${keyId}/quota`).then(res => res.data),
 };
 
 export const systemApi = {

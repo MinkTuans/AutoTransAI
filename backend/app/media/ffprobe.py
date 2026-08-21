@@ -30,12 +30,27 @@ def _ensure_ffmpeg_in_path() -> None:
         if Path(d).exists() and d not in current_path:
             os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
 
+def get_ffmpeg_executable() -> str:
+    """Get path to FFmpeg binary using system PATH or imageio_ffmpeg fallback."""
+    _ensure_ffmpeg_in_path()
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return "ffmpeg"
+
 import re
 
 def is_ffmpeg_installed() -> bool:
-    """Check if FFmpeg is available in PATH."""
-    _ensure_ffmpeg_in_path()
-    return shutil.which("ffmpeg") is not None or shutil.which("ffprobe") is not None
+    """Check if FFmpeg is available."""
+    try:
+        exe = get_ffmpeg_executable()
+        return bool(exe) and (shutil.which(exe) is not None or Path(exe).exists())
+    except Exception:
+        return False
 
 
 def get_ffmpeg_version() -> str | None:

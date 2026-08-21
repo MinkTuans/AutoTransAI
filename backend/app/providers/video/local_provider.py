@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import asyncio
 import random
+import shutil
 import urllib.parse
 import httpx
 from pathlib import Path
 
 from app.core import get_logger
 from app.core.security import safe_subprocess_run_async
-from app.media.ffprobe import is_ffmpeg_installed
+from app.media.ffprobe import is_ffmpeg_installed, get_ffmpeg_executable
 from app.providers.base import (
     VideoProvider,
     GenerationResult,
@@ -101,12 +102,13 @@ class LocalVideoProvider(VideoProvider):
                 except Exception as download_err:
                     logger.warning("Fallback image fetch failed", error=str(download_err))
 
+            ffmpeg_bin = get_ffmpeg_executable()
             total_frames = int(dur * 30)
 
             if image_downloaded and img_path.exists():
                 # Apply cinematic Ken Burns zoom & pan motion effect
                 cmd = [
-                    "ffmpeg", "-y",
+                    ffmpeg_bin, "-y",
                     "-loop", "1", "-i", str(img_path.resolve()),
                     "-vf", f"zoompan=z='min(zoom+0.0015,1.18)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total_frames}:s=1920x1080:fps=30",
                     "-c:v", "libx264", "-t", str(dur), "-pix_fmt", "yuv420p",
@@ -115,7 +117,7 @@ class LocalVideoProvider(VideoProvider):
             else:
                 # Fallback to dark cinematic gradient video if totally offline
                 cmd = [
-                    "ffmpeg", "-y",
+                    ffmpeg_bin, "-y",
                     "-f", "lavfi",
                     "-i", f"color=c=0x0b0f19:s=1920x1080:d={dur}",
                     "-c:v", "libx264",

@@ -22,6 +22,18 @@ def setup_logging(log_level: str = "INFO", log_dir: Path | None = None) -> None:
         log_level: Minimum log level (DEBUG, INFO, WARNING, ERROR).
         log_dir: Optional directory for file-based logs.
     """
+    if sys.platform == "win32":
+        if hasattr(sys.stdout, "reconfigure"):
+            try:
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+        if hasattr(sys.stderr, "reconfigure"):
+            try:
+                sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
     # Configure stdlib logging as the base
     logging.basicConfig(
         format="%(message)s",
@@ -40,9 +52,9 @@ def setup_logging(log_level: str = "INFO", log_dir: Path | None = None) -> None:
         structlog.processors.UnicodeDecoder(),
     ]
 
-    # Use JSON in production, colored console in dev
+    # Use JSON or safe console renderer
     processors.append(
-        structlog.dev.ConsoleRenderer()
+        structlog.dev.ConsoleRenderer(colors=False)
         if log_level.upper() == "DEBUG"
         else structlog.processors.JSONRenderer()
     )

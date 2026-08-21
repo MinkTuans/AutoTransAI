@@ -12,6 +12,8 @@ from app.providers.base import AudioProvider, VideoProvider, LLMProvider
 
 logger = get_logger(__name__)
 
+_registry: ProviderRegistry | None = None
+
 
 class ProviderRegistry:
     """
@@ -76,8 +78,32 @@ class ProviderRegistry:
         }
 
 
-# Global singleton instance
-_registry: ProviderRegistry | None = None
+def _register_defaults(reg: ProviderRegistry) -> None:
+    try:
+        from app.providers.audio.edge_tts_provider import EdgeTTSProvider
+        from app.providers.audio.google_tts_provider import GoogleCloudTTSProvider
+        from app.providers.audio.elevenlabs_provider import ElevenLabsAudioProvider
+        reg.register_audio(EdgeTTSProvider())
+        reg.register_audio(GoogleCloudTTSProvider())
+        reg.register_audio(ElevenLabsAudioProvider())
+    except Exception:
+        pass
+
+    try:
+        from app.providers.video.local_provider import LocalVideoProvider
+        from app.providers.video.kling_provider import KlingVideoProvider
+        from app.providers.video.fal_provider import FalVideoProvider
+        reg.register_video(LocalVideoProvider())
+        reg.register_video(KlingVideoProvider())
+        reg.register_video(FalVideoProvider())
+    except Exception:
+        pass
+
+    try:
+        from app.providers.llm.gemini_provider import GeminiLLMProvider
+        reg.register_llm(GeminiLLMProvider())
+    except Exception:
+        pass
 
 
 def get_registry() -> ProviderRegistry:
@@ -85,4 +111,5 @@ def get_registry() -> ProviderRegistry:
     global _registry
     if _registry is None:
         _registry = ProviderRegistry()
+        _register_defaults(_registry)
     return _registry

@@ -47,6 +47,7 @@ def start_backend():
             "app.main:app",
             "--host", "127.0.0.1",
             "--port", "8000",
+            "--reload",
         ],
         cwd=str(BACKEND_DIR),
         creationflags=CREATE_NO_WINDOW,

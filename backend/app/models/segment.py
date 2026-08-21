@@ -38,6 +38,7 @@ class Segment(Base):
     )
     audio_duration: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     audio_file_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    audio_error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Video status
     video_status: Mapped[str] = mapped_column(
@@ -45,6 +46,8 @@ class Segment(Base):
     )
     video_duration: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     video_file_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    video_error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    video_error_details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Sync
     target_duration: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

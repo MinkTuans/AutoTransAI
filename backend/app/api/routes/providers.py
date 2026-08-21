@@ -144,6 +144,74 @@ async def configure_provider(provider_id: str, body: ProviderConfigureRequest):
     }
 
 
+from app.services.key_manager import get_key_manager
+
+@router.get("/{provider_id}/keys", response_model=dict)
+async def get_provider_keys(provider_id: str):
+    """List all API keys for a provider (masked)."""
+    key_mgr = get_key_manager()
+    keys = await key_mgr.get_keys_for_provider(provider_id)
+    return {"success": True, "data": keys}
+
+
+@router.post("/{provider_id}/keys", response_model=dict)
+async def add_provider_key(provider_id: str, body: dict):
+    """Add a new API key for a provider."""
+    api_key = body.get("api_key", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API key is required")
+    priority = body.get("priority")
+    key_mgr = get_key_manager()
+    entry = await key_mgr.add_key(provider_id, api_key, priority=priority)
+
+    # Also sync with .env for backward compatibility
+    env_var = PROVIDER_ENV_MAP.get(provider_id)
+    if env_var:
+        try:
+            os.environ[env_var] = api_key
+            setattr(settings, env_var, api_key)
+        except Exception:
+            pass
+
+    return {"success": True, "data": entry.to_dict(include_raw_key=False)}
+
+
+@router.delete("/{provider_id}/keys/{key_id}", response_model=dict)
+async def delete_provider_key(provider_id: str, key_id: str):
+    """Delete an API key."""
+    key_mgr = get_key_manager()
+    res = await key_mgr.delete_key(provider_id, key_id)
+    return {"success": res, "message": "Key deleted successfully"}
+
+
+@router.put("/{provider_id}/keys/{key_id}", response_model=dict)
+async def update_provider_key(provider_id: str, key_id: str, body: dict):
+    """Update API key priority or status."""
+    key_mgr = get_key_manager()
+    priority = body.get("priority")
+    status = body.get("status")
+    entry = await key_mgr.update_key(provider_id, key_id, priority=priority, status=status)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Key not found")
+    return {"success": True, "data": entry.to_dict(include_raw_key=False)}
+
+
+@router.post("/{provider_id}/keys/{key_id}/test", response_model=dict)
+async def test_provider_key(provider_id: str, key_id: str):
+    """Test validity of a specific API key."""
+    key_mgr = get_key_manager()
+    res = await key_mgr.test_key(provider_id, key_id)
+    return {"success": True, "data": res}
+
+
+@router.post("/{provider_id}/keys/{key_id}/quota", response_model=dict)
+async def fetch_provider_key_quota(provider_id: str, key_id: str):
+    """Fetch official quota/balance for an API key."""
+    key_mgr = get_key_manager()
+    res = await key_mgr.fetch_quota(provider_id, key_id)
+    return {"success": True, "data": res}
+
+
 @router.get("/{provider_id}/voices", response_model=dict)
 async def list_voices(provider_id: str, language: str | None = None):
     """List available voices for an audio provider."""
