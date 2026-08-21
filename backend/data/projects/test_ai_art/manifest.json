@@ -1,0 +1,61 @@
+{
+  "version": "1.0",
+  "project_id": "test_ai_art",
+  "workflow_status": "completed",
+  "updated_at": "2026-08-21T16:03:38.338580+00:00",
+  "segments": [
+    {
+      "audio_status": "completed",
+      "audio_duration": 4.15,
+      "audio_file": "data\\projects\\test_ai_art\\audio\\segment_001\\segment_001_audio.wav",
+      "number": 1,
+      "video_status": "completed",
+      "video_duration": 8.0,
+      "video_file": "data\\projects\\test_ai_art\\video\\segment_001\\segment_001_video.mp4",
+      "sync_strategy": "trim_video",
+      "target_duration": 4.15,
+      "merged_file": "data\\projects\\test_ai_art\\output\\segment_001_final.mp4"
+    },
+    {
+      "audio_status": "completed",
+      "audio_duration": 4.51,
+      "audio_file": "data\\projects\\test_ai_art\\audio\\segment_002\\segment_002_audio.wav",
+      "number": 2,
+      "video_status": "completed",
+      "video_duration": 8.0,
+      "video_file": "data\\projects\\test_ai_art\\video\\segment_002\\segment_002_video.mp4",
+      "sync_strategy": "trim_video",
+      "target_duration": 4.51,
+      "merged_file": "data\\projects\\test_ai_art\\output\\segment_002_final.mp4"
+    },
+    {
+      "audio_status": "completed",
+      "audio_duration": 3.65,
+      "audio_file": "data\\projects\\test_ai_art\\audio\\segment_003\\segment_003_audio.wav",
+      "number": 3,
+      "video_status": "completed",
+      "video_duration": 8.0,
+      "video_file": "data\\projects\\test_ai_art\\video\\segment_003\\segment_003_video.mp4",
+      "sync_strategy": "trim_video",
+      "target_duration": 3.65,
+      "merged_file": "data\\projects\\test_ai_art\\output\\segment_003_final.mp4"
+    },
+    {
+      "audio_status": "completed",
+      "audio_duration": 3.6,
+      "audio_file": "data\\projects\\test_ai_art\\audio\\segment_004\\segment_004_audio.wav",
+      "number": 4,
+      "video_status": "completed",
+      "video_duration": 8.0,
+      "video_file": "data\\projects\\test_ai_art\\video\\segment_004\\segment_004_video.mp4",
+      "sync_strategy": "trim_video",
+      "target_duration": 3.6,
+      "merged_file": "data\\projects\\test_ai_art\\output\\segment_004_final.mp4"
+    }
+  ],
+  "output": {
+    "final_file": "data\\projects\\test_ai_art\\output\\final_video.mp4",
+    "duration": 15.95,
+    "format": "mp4"
+  }
+}

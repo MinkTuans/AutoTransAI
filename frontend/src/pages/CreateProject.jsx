@@ -61,7 +61,14 @@ export default function CreateProject({ onProjectCreated }) {
         setError(res.error?.message || 'Failed to create project');
       }
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to create project');
+      const detail = err.response?.data?.detail;
+      if (Array.isArray(detail)) {
+        setError(detail.map(d => d.msg || JSON.stringify(d)).join('; '));
+      } else if (typeof detail === 'object' && detail !== null) {
+        setError(JSON.stringify(detail));
+      } else {
+        setError(detail || err.message || 'Failed to create project');
+      }
     } finally {
       setSubmitting(false);
     }

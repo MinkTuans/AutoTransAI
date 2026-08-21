@@ -25,6 +25,8 @@ export const projectsApi = {
 
 export const providersApi = {
   list: () => api.get('/providers').then(res => res.data),
+  configureKey: (providerId, apiKey) =>
+    api.post(`/providers/${providerId}/config`, { api_key: apiKey }).then(res => res.data),
   listVoices: (providerId, language) =>
     api.get(`/providers/${providerId}/voices`, { params: { language } }).then(res => res.data),
 };

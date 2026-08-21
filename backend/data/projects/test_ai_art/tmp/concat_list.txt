@@ -1,0 +1,4 @@
+file 'C:/Hack/WorkflowVdAi/backend/data/projects/test_ai_art/output/segment_001_final.mp4'
+file 'C:/Hack/WorkflowVdAi/backend/data/projects/test_ai_art/output/segment_002_final.mp4'
+file 'C:/Hack/WorkflowVdAi/backend/data/projects/test_ai_art/output/segment_003_final.mp4'
+file 'C:/Hack/WorkflowVdAi/backend/data/projects/test_ai_art/output/segment_004_final.mp4'

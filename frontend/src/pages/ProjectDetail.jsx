@@ -41,6 +41,9 @@ export default function ProjectDetail({ projectId, onBack }) {
 
       if (provRes.success) {
         setProviders(provRes.data);
+        if (provRes.data.video && provRes.data.video.length > 0) {
+          setSelectedVideoProvider(prev => prev || provRes.data.video[0].id);
+        }
       }
     } catch (err) {
       setError('Failed to load project details');
@@ -56,8 +59,8 @@ export default function ProjectDetail({ projectId, onBack }) {
         .then(res => {
           if (res.success && res.data.length > 0) {
             setVoices(res.data);
-            // Default to first voice if none selected
-            if (!selectedVoice) {
+            const exists = res.data.some(v => v.id === selectedVoice);
+            if (!selectedVoice || !exists) {
               setSelectedVoice(res.data[0].id);
               setSelectedVoiceName(res.data[0].name);
             }
@@ -77,36 +80,45 @@ export default function ProjectDetail({ projectId, onBack }) {
       'generating_audio', 'generating_video', 'syncing', 'merging'
     ].includes(project.workflow_status);
 
-    if (isRunning) {
-      pollIntervalRef.current = setInterval(async () => {
-        try {
-          const statusRes = await projectsApi.status(projectId);
-          if (statusRes.success) {
-            setStatus(statusRes.data);
-          }
-          const projRes = await projectsApi.get(projectId);
-          if (projRes.success) {
-            setProject(projRes.data);
-          }
-        } catch (e) {
-          console.error('Polling status failed', e);
-        }
-      }, 2000);
-    } else {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    if (!isRunning) {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+      return;
     }
 
+    pollIntervalRef.current = setInterval(async () => {
+      try {
+        const [statusRes, projRes] = await Promise.all([
+          projectsApi.status(projectId),
+          projectsApi.get(projectId),
+        ]);
+        if (statusRes.success) setStatus(statusRes.data);
+        if (projRes.success) setProject(projRes.data);
+      } catch (e) {
+        console.error('Polling status failed', e);
+      }
+    }, 2000);
+
     return () => {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
     };
   }, [project?.workflow_status, projectId]);
+
 
   // Handle Estimate
   const handleEstimate = async () => {
     setActionLoading(true);
     try {
       const res = await projectsApi.estimate(projectId);
-      if (res.success) setEstimate(res.data);
+      if (res.success) {
+        setEstimate(res.data);
+        await loadProjectData();
+      }
     } catch (err) {
       setError('Estimation failed');
     } finally {
@@ -119,20 +131,28 @@ export default function ProjectDetail({ projectId, onBack }) {
     setActionLoading(true);
     setError(null);
     try {
+      const voiceToUse = selectedVoice || (voices.length > 0 ? voices[0].id : '');
+      const voiceNameToUse = selectedVoiceName || (voices.length > 0 ? voices[0].name : '');
+      const videoToUse = selectedVideoProvider || (providers.video && providers.video.length > 0 ? providers.video[0].id : '');
+
       // Save config first
       await projectsApi.configure(projectId, {
         audio_provider_id: selectedAudioProvider,
-        video_provider_id: selectedVideoProvider,
-        voice_id: selectedVoice,
-        voice_name: selectedVoiceName,
+        video_provider_id: videoToUse,
+        voice_id: voiceToUse,
+        voice_name: voiceNameToUse,
         sync_strategy: syncStrategy,
       });
+
+      setSelectedVoice(voiceToUse);
+      setSelectedVoiceName(voiceNameToUse);
+      setSelectedVideoProvider(videoToUse);
 
       // Run precheck
       const res = await projectsApi.precheck(projectId);
       if (res.success) {
         setPreflight(res.data);
-        loadProjectData();
+        await loadProjectData();
       }
     } catch (err) {
       setError('Precheck failed');
@@ -255,13 +275,15 @@ export default function ProjectDetail({ projectId, onBack }) {
         <div className="card">
           <div className="card-title">
             <span>Workflow Execution Progress</span>
-            <span className="badge badge-info">{project.workflow_status}</span>
+            <span className={`badge ${project.workflow_status === 'completed' ? 'badge-success' : 'badge-info'}`}>
+              {project.workflow_status}
+            </span>
           </div>
 
           <div className="progress-container">
             <div className="progress-label">
               <span>Overall Status</span>
-              <span>{status ? `${status.audio_completed}/${status.total_segments} Segments` : ''}</span>
+              <span>{status ? `${status.audio_completed}/${status.total_segments} Segments` : (project.workflow_status === 'completed' ? '100% Completed' : '')}</span>
             </div>
             <div className="progress-bar-bg">
               <div
@@ -274,6 +296,50 @@ export default function ProjectDetail({ projectId, onBack }) {
           </div>
         </div>
       )}
+
+      {/* Completed Output Preview Card */}
+      {project.workflow_status === 'completed' && (
+        <div className="card" style={{ border: '1px solid var(--success)', backgroundColor: 'rgba(34, 197, 94, 0.05)' }}>
+          <div className="card-title">
+            <span>🎉 Production Completed — Final Output</span>
+            <span className="badge badge-success">READY</span>
+          </div>
+
+          {project.workflow_mode === 'audio_video' ? (
+            <div style={{ textAlign: 'center', margin: '1rem 0' }}>
+              <video
+                controls
+                style={{ maxWidth: '100%', maxHeight: '420px', borderRadius: 'var(--radius)', boxShadow: '0 4px 20px rgba(0,0,0,0.4)', backgroundColor: '#000' }}
+                src={`/media/projects/${project.id}/output/final_video.mp4`}
+              >
+                Your browser does not support the video tag.
+              </video>
+              <div style={{ marginTop: '1.25rem' }}>
+                <a
+                  href={`/media/projects/${project.id}/output/final_video.mp4`}
+                  download={`${project.title.replace(/[^a-z0-9]/gi, '_')}_final.mp4`}
+                  className="btn btn-primary"
+                  style={{ fontSize: '1rem', padding: '0.75rem 1.5rem' }}
+                >
+                  📥 Download Final Video (MP4)
+                </a>
+              </div>
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center', margin: '1rem 0' }}>
+              <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>Audio files generated for all segments.</p>
+              <a
+                href={`/media/projects/${project.id}/audio/segment_001/segment_001_audio.wav`}
+                download={`${project.title.replace(/[^a-z0-9]/gi, '_')}_segment_001.wav`}
+                className="btn btn-primary"
+              >
+                📥 Download Segment 1 Audio (WAV)
+              </a>
+            </div>
+          )}
+        </div>
+      )}
+
 
       {/* Provider & Voice Configuration Cards */}
       <div className="grid-2">
@@ -362,6 +428,36 @@ export default function ProjectDetail({ projectId, onBack }) {
           </div>
         )}
       </div>
+
+      {/* Resource Estimate Results */}
+      {estimate && (
+        <div className="card">
+          <div className="card-title">
+            <span>📊 Resource Requirement Estimate</span>
+            <span className="badge badge-info">Calculated</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '1rem', marginTop: '0.5rem' }}>
+            <div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Total Segments</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 'bold' }}>{estimate.total_segments}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Total Characters</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 'bold' }}>{estimate.total_characters}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Est. Audio Duration</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: 'var(--success)' }}>~{estimate.estimated_audio_duration_seconds}s</div>
+            </div>
+            {estimate.estimated_video_clips && (
+              <div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Est. Video Clips</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: 'var(--accent-light)' }}>{estimate.estimated_video_clips} clips ({estimate.estimated_video_seconds}s)</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Preflight Checklist Results */}
       {preflight && (

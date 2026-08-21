@@ -100,7 +100,7 @@ async def run_preflight(
                 passed=video_valid,
                 required=True,
                 error_code="PROVIDER_UNREACHABLE" if not video_valid else None,
-                error_message=f"Cannot reach video provider '{video_provider_id}'" if not video_valid else None,
+                error_message=f"Tài khoản {video_provider_id} hết số dư (Exhausted balance) hoặc API Key chưa đúng. Vui lòng chuyển sang 'Local FFmpeg Generator' để sử dụng miễn phí." if not video_valid else None,
             ))
 
             # Check duration support

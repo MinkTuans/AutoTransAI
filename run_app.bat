@@ -1,0 +1,3 @@
+@echo off
+echo Starting WorkflowVdAi...
+call "%~dp0WorkflowVdAi.bat"

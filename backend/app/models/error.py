@@ -12,8 +12,8 @@ class Error(Base):
     __tablename__ = "errors"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    job_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("jobs.id", ondelete="CASCADE"), index=True
+    job_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=True, index=True
     )
     error_type: Mapped[str] = mapped_column(String(50))
     http_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

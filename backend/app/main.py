@@ -40,11 +40,28 @@ async def lifespan(app: FastAPI):
     # Register providers
     registry = get_registry()
 
-    # Always register Edge TTS (free, no API key needed)
-    registry.register_audio(EdgeTTSProvider())
+    # Register Audio Providers
+    from app.providers.audio.edge_tts_provider import EdgeTTSProvider
+    from app.providers.audio.google_tts_provider import GoogleCloudTTSProvider
+    from app.providers.audio.elevenlabs_provider import ElevenLabsAudioProvider
 
-    # Register additional providers based on configured API keys
-    # (Video and LLM providers will be registered when implemented)
+    registry.register_audio(EdgeTTSProvider())
+    registry.register_audio(GoogleCloudTTSProvider())
+    registry.register_audio(ElevenLabsAudioProvider())
+
+    # Register Video Providers
+    from app.providers.video.local_provider import LocalVideoProvider
+    from app.providers.video.kling_provider import KlingVideoProvider
+    from app.providers.video.fal_provider import FalVideoProvider
+
+    registry.register_video(LocalVideoProvider())
+    registry.register_video(KlingVideoProvider())
+    registry.register_video(FalVideoProvider())
+
+    # Register LLM Providers
+    from app.providers.llm.gemini_provider import GeminiLLMProvider
+
+    registry.register_llm(GeminiLLMProvider())
 
     logger.info(
         "Providers registered",
@@ -82,6 +99,11 @@ app.add_middleware(
 app.include_router(projects.router)
 app.include_router(providers.router)
 app.include_router(system.router)
+
+# Mount Static Files for local media serving
+settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/media", StaticFiles(directory=settings.DATA_DIR), name="media")
+
 
 
 @app.get("/")

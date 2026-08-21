@@ -16,7 +16,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from app.database import get_session
+from app.database import get_session, async_session_factory
 from app.models.project import Project, WorkflowStatus
 from app.models.segment import Segment, SegmentStatus
 from app.schemas.project import (
@@ -355,15 +355,14 @@ async def run_workflow(
             detail=f"Cannot start workflow from state '{project.workflow_status}'. Run precheck first.",
         )
 
-    # Create orchestrator and start in background
-    orchestrator = WorkflowOrchestrator(session, project_id)
-    _running_workflows[project_id] = orchestrator
-
     async def run_and_cleanup():
-        try:
-            await orchestrator.run()
-        finally:
-            _running_workflows.pop(project_id, None)
+        async with async_session_factory() as bg_session:
+            orchestrator = WorkflowOrchestrator(bg_session, project_id)
+            _running_workflows[project_id] = orchestrator
+            try:
+                await orchestrator.run()
+            finally:
+                _running_workflows.pop(project_id, None)
 
     background_tasks.add_task(run_and_cleanup)
 
@@ -396,15 +395,14 @@ async def resume_workflow(
     project.updated_at = datetime.now(timezone.utc)
     await session.commit()
 
-    # Start orchestrator
-    orchestrator = WorkflowOrchestrator(session, project_id)
-    _running_workflows[project_id] = orchestrator
-
     async def run_and_cleanup():
-        try:
-            await orchestrator.run()
-        finally:
-            _running_workflows.pop(project_id, None)
+        async with async_session_factory() as bg_session:
+            orchestrator = WorkflowOrchestrator(bg_session, project_id)
+            _running_workflows[project_id] = orchestrator
+            try:
+                await orchestrator.run()
+            finally:
+                _running_workflows.pop(project_id, None)
 
     background_tasks.add_task(run_and_cleanup)
 

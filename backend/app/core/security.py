@@ -63,6 +63,9 @@ def validate_path_within(path: Path, base_dir: Path) -> Path:
     return resolved
 
 
+import asyncio
+
+
 def safe_subprocess_run(
     args: list[str],
     *,
@@ -75,20 +78,6 @@ def safe_subprocess_run(
     Run a subprocess safely with list arguments.
 
     NEVER use shell=True or string interpolation for commands.
-
-    Args:
-        args: Command and arguments as a list of strings.
-        timeout: Maximum execution time in seconds.
-        capture_output: Whether to capture stdout/stderr.
-        check: Whether to raise on non-zero exit code.
-        cwd: Working directory for the command.
-
-    Returns:
-        CompletedProcess result.
-
-    Raises:
-        subprocess.CalledProcessError: On non-zero exit code (if check=True).
-        subprocess.TimeoutExpired: If command exceeds timeout.
     """
     logger.debug(
         "Running subprocess",
@@ -105,3 +94,23 @@ def safe_subprocess_run(
         cwd=cwd,
         shell=False,  # Explicit: NEVER use shell=True
     )
+
+
+async def safe_subprocess_run_async(
+    args: list[str],
+    *,
+    timeout: int = 300,
+    capture_output: bool = True,
+    check: bool = True,
+    cwd: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Async non-blocking version of safe_subprocess_run using asyncio.to_thread."""
+    return await asyncio.to_thread(
+        safe_subprocess_run,
+        args,
+        timeout=timeout,
+        capture_output=capture_output,
+        check=check,
+        cwd=cwd,
+    )
+

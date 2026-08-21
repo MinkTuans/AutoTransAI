@@ -18,12 +18,24 @@ from app.core.security import safe_subprocess_run
 logger = get_logger(__name__)
 
 
+import sys
+import os
+
+def _ensure_ffmpeg_in_path() -> None:
+    """Ensure virtualenv Scripts/bin directory is in PATH."""
+    scripts_dir = str(Path(sys.prefix) / "Scripts")
+    bin_dir = str(Path(sys.prefix) / "bin")
+    current_path = os.environ.get("PATH", "")
+    for d in (scripts_dir, bin_dir):
+        if Path(d).exists() and d not in current_path:
+            os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
+
+import re
+
 def is_ffmpeg_installed() -> bool:
-    """Check if FFmpeg and FFprobe are available in PATH."""
-    return (
-        shutil.which("ffmpeg") is not None
-        and shutil.which("ffprobe") is not None
-    )
+    """Check if FFmpeg is available in PATH."""
+    _ensure_ffmpeg_in_path()
+    return shutil.which("ffmpeg") is not None or shutil.which("ffprobe") is not None
 
 
 def get_ffmpeg_version() -> str | None:
@@ -42,9 +54,17 @@ def get_ffmpeg_version() -> str | None:
     return None
 
 
+import asyncio
+
+
+async def probe_duration_async(file_path: Path) -> float:
+    """Async non-blocking version of probe_duration."""
+    return await asyncio.to_thread(probe_duration, file_path)
+
+
 def probe_duration(file_path: Path) -> float:
     """
-    Get the actual duration of a media file in seconds using FFprobe.
+    Get the actual duration of a media file in seconds using FFprobe or FFmpeg.
 
     Args:
         file_path: Path to the audio or video file.
@@ -53,7 +73,7 @@ def probe_duration(file_path: Path) -> float:
         Duration in seconds.
 
     Raises:
-        FFmpegNotFoundError: If FFprobe is not installed.
+        FFmpegNotFoundError: If FFmpeg is not installed.
         ValueError: If duration cannot be determined.
     """
     if not is_ffmpeg_installed():
@@ -62,31 +82,43 @@ def probe_duration(file_path: Path) -> float:
     if not file_path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
 
+    # 1. Try ffprobe if available
+    ffprobe_bin = shutil.which("ffprobe")
+    if ffprobe_bin:
+        result = safe_subprocess_run(
+            [
+                ffprobe_bin,
+                "-v", "quiet",
+                "-print_format", "json",
+                "-show_format",
+                str(file_path),
+            ],
+            timeout=30,
+            check=False,
+        )
+        if result.returncode == 0:
+            try:
+                data = json.loads(result.stdout)
+                duration_str = data.get("format", {}).get("duration")
+                if duration_str is not None:
+                    return round(float(duration_str), 3)
+            except Exception:
+                pass
+
+    # 2. Universal FFmpeg duration probe fallback
+    ffmpeg_bin = shutil.which("ffmpeg") or "ffmpeg"
     result = safe_subprocess_run(
-        [
-            "ffprobe",
-            "-v", "quiet",
-            "-print_format", "json",
-            "-show_format",
-            str(file_path),
-        ],
+        [ffmpeg_bin, "-i", str(file_path)],
         timeout=30,
         check=False,
     )
+    output = (result.stderr or "") + (result.stdout or "")
+    match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", output)
+    if match:
+        h, m, s = float(match.group(1)), float(match.group(2)), float(match.group(3))
+        return round(h * 3600 + m * 60 + s, 3)
 
-    if result.returncode != 0:
-        raise ValueError(
-            f"FFprobe failed for {file_path}: {result.stderr}"
-        )
-
-    try:
-        data = json.loads(result.stdout)
-        duration_str = data.get("format", {}).get("duration")
-        if duration_str is None:
-            raise ValueError(f"No duration found in FFprobe output for {file_path}")
-        return round(float(duration_str), 3)
-    except (json.JSONDecodeError, KeyError, TypeError) as e:
-        raise ValueError(f"Failed to parse FFprobe output: {e}") from e
+    raise ValueError(f"Could not determine duration for media file {file_path}")
 
 
 def probe_media_info(file_path: Path) -> dict:

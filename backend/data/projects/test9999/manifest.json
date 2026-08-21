@@ -1,0 +1,86 @@
+{
+  "version": "1.0",
+  "project_id": "test9999",
+  "workflow_status": "completed",
+  "updated_at": "2026-08-21T15:47:55.303352+00:00",
+  "segments": [
+    {
+      "audio_status": "completed",
+      "audio_duration": 5.57,
+      "audio_file": "data\\projects\\test9999\\audio\\segment_001\\segment_001_audio.wav",
+      "number": 1,
+      "video_status": "completed",
+      "video_duration": 8.0,
+      "video_file": "data\\projects\\test9999\\video\\segment_001\\segment_001_video.mp4",
+      "sync_strategy": "trim_video",
+      "target_duration": 5.57,
+      "merged_file": "data\\projects\\test9999\\output\\segment_001_final.mp4"
+    },
+    {
+      "audio_status": "completed",
+      "audio_duration": 5.33,
+      "audio_file": "data\\projects\\test9999\\audio\\segment_002\\segment_002_audio.wav",
+      "number": 2,
+      "video_status": "completed",
+      "video_duration": 8.0,
+      "video_file": "data\\projects\\test9999\\video\\segment_002\\segment_002_video.mp4",
+      "sync_strategy": "trim_video",
+      "target_duration": 5.33,
+      "merged_file": "data\\projects\\test9999\\output\\segment_002_final.mp4"
+    },
+    {
+      "audio_status": "completed",
+      "audio_duration": 3.31,
+      "audio_file": "data\\projects\\test9999\\audio\\segment_003\\segment_003_audio.wav",
+      "number": 3,
+      "video_status": "completed",
+      "video_duration": 8.0,
+      "video_file": "data\\projects\\test9999\\video\\segment_003\\segment_003_video.mp4",
+      "sync_strategy": "trim_video",
+      "target_duration": 3.31,
+      "merged_file": "data\\projects\\test9999\\output\\segment_003_final.mp4"
+    },
+    {
+      "audio_status": "completed",
+      "audio_duration": 3.34,
+      "audio_file": "data\\projects\\test9999\\audio\\segment_004\\segment_004_audio.wav",
+      "number": 4,
+      "video_status": "completed",
+      "video_duration": 8.0,
+      "video_file": "data\\projects\\test9999\\video\\segment_004\\segment_004_video.mp4",
+      "sync_strategy": "trim_video",
+      "target_duration": 3.34,
+      "merged_file": "data\\projects\\test9999\\output\\segment_004_final.mp4"
+    },
+    {
+      "audio_status": "completed",
+      "audio_duration": 3.84,
+      "audio_file": "data\\projects\\test9999\\audio\\segment_005\\segment_005_audio.wav",
+      "number": 5,
+      "video_status": "completed",
+      "video_duration": 8.0,
+      "video_file": "data\\projects\\test9999\\video\\segment_005\\segment_005_video.mp4",
+      "sync_strategy": "trim_video",
+      "target_duration": 3.84,
+      "merged_file": "data\\projects\\test9999\\output\\segment_005_final.mp4"
+    },
+    {
+      "audio_status": "completed",
+      "audio_duration": 5.16,
+      "audio_file": "data\\projects\\test9999\\audio\\segment_006\\segment_006_audio.wav",
+      "number": 6,
+      "video_status": "completed",
+      "video_duration": 8.0,
+      "video_file": "data\\projects\\test9999\\video\\segment_006\\segment_006_video.mp4",
+      "sync_strategy": "trim_video",
+      "target_duration": 5.16,
+      "merged_file": "data\\projects\\test9999\\output\\segment_006_final.mp4"
+    }
+  ],
+  "error": "Command '['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', 'data\\\\projects\\\\test9999\\\\tmp\\\\concat_list.txt', '-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-c:a', 'aac', '-b:a', '192k', 'data\\\\projects\\\\test9999\\\\output\\\\final_video.mp4']' returned non-zero exit status 4294967294.",
+  "output": {
+    "final_file": "data\\projects\\test9999\\output\\final_video.mp4",
+    "duration": 26.59,
+    "format": "mp4"
+  }
+}

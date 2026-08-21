@@ -24,12 +24,13 @@ from app.config import get_settings
 from app.core import get_logger
 from app.core.exceptions import PreflightError, WorkflowError
 from app.core.retry import RetryConfig, retry_async
-from app.media.ffprobe import probe_duration
-from app.media.ffmpeg import merge_audio_video, concatenate_videos
-from app.media.strategies import SyncStrategy, plan_sync, execute_sync
+from app.media.ffprobe import probe_duration, probe_duration_async
+from app.media.ffmpeg import merge_audio_video, concatenate_videos, merge_audio_video_async, concatenate_videos_async
+from app.media.strategies import SyncStrategy, plan_sync, execute_sync, execute_sync_async
 from app.models.project import Project, WorkflowMode, WorkflowStatus
 from app.models.segment import Segment, SegmentStatus
 from app.models.job import Job, JobType, JobStatus
+from app.models.error import Error
 from app.providers.base import AudioProvider, VideoProvider
 from app.providers.registry import get_registry
 from app.services.file_manager import (
@@ -200,7 +201,18 @@ class WorkflowOrchestrator:
                     updated_at=datetime.now(timezone.utc),
                 )
             )
-            await self.session.commit()
+            # Create Error record in DB
+            try:
+                db_error = Error(
+                    job_id=None,
+                    error_type=e.code,
+                    message=e.message,
+                )
+                self.session.add(db_error)
+                await self.session.commit()
+            except Exception as err_ex:
+                logger.warning("Failed to insert Error record", error=str(err_ex))
+
             update_manifest(self.project_id, {
                 "workflow_status": WorkflowStatus.FAILED.value,
                 "error": e.message,
@@ -222,14 +234,25 @@ class WorkflowOrchestrator:
                     updated_at=datetime.now(timezone.utc),
                 )
             )
-            await self.session.commit()
+            try:
+                db_error = Error(
+                    job_id=None,
+                    error_type=type(e).__name__,
+                    message=str(e),
+                )
+                self.session.add(db_error)
+                await self.session.commit()
+            except Exception as err_ex:
+                logger.warning("Failed to insert Error record", error=str(err_ex))
+
             update_manifest(self.project_id, {
                 "workflow_status": WorkflowStatus.FAILED.value,
                 "error": str(e),
             })
 
+
     async def _generate_all_audio(self) -> None:
-        """Generate audio for all pending segments with concurrency control."""
+        """Generate audio for all pending segments."""
         project = await self._get_project()
         provider = self._registry.get_audio(project.audio_provider_id)
         if not provider:
@@ -239,17 +262,10 @@ class WorkflowOrchestrator:
             )
 
         segments = await self._get_segments()
-        semaphore = asyncio.Semaphore(settings.MAX_CONCURRENCY)
-
-        async def process_segment(seg: Segment) -> None:
-            async with semaphore:
-                if self._cancelled:
-                    return
-                await self._generate_segment_audio(seg, provider, project.voice_id or "")
-
-        # Process with controlled concurrency
-        tasks = [process_segment(seg) for seg in segments]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        for seg in segments:
+            if self._cancelled:
+                return
+            await self._generate_segment_audio(seg, provider, project.voice_id or "")
 
         # Check for any failures
         segments = await self._get_segments()
@@ -305,7 +321,7 @@ class WorkflowOrchestrator:
 
             if result.success and result.file_path and result.file_path.exists():
                 # Measure actual duration with FFprobe
-                duration = probe_duration(result.file_path)
+                duration = await probe_duration_async(result.file_path)
                 segment.audio_status = SegmentStatus.COMPLETED.value
                 segment.audio_duration = duration
                 segment.audio_file_path = str(result.file_path)
@@ -332,11 +348,9 @@ class WorkflowOrchestrator:
             else:
                 segment.audio_status = SegmentStatus.FAILED.value
                 await self.session.commit()
-                logger.error(
-                    "Audio generation returned failure",
-                    segment=segment.segment_number,
-                    error=result.error_message,
-                )
+                err_msg = result.error_message or "Audio generation returned failure"
+                logger.error("Audio generation failed", segment=segment.segment_number, error=err_msg)
+                raise WorkflowError(err_msg, code="AUDIO_GENERATION_FAILED")
 
         except Exception as e:
             segment.audio_status = SegmentStatus.FAILED.value
@@ -348,7 +362,7 @@ class WorkflowOrchestrator:
             )
 
     async def _generate_all_video(self) -> None:
-        """Generate video for all pending segments with concurrency control."""
+        """Generate video for all pending segments."""
         project = await self._get_project()
         provider = self._registry.get_video(project.video_provider_id)
         if not provider:
@@ -358,16 +372,10 @@ class WorkflowOrchestrator:
             )
 
         segments = await self._get_segments()
-        semaphore = asyncio.Semaphore(settings.MAX_CONCURRENCY)
-
-        async def process_segment(seg: Segment) -> None:
-            async with semaphore:
-                if self._cancelled:
-                    return
-                await self._generate_segment_video(seg, provider)
-
-        tasks = [process_segment(seg) for seg in segments]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        for seg in segments:
+            if self._cancelled:
+                return
+            await self._generate_segment_video(seg, provider)
 
         segments = await self._get_segments()
         failed = [s for s in segments if s.video_status == SegmentStatus.FAILED.value]
@@ -419,7 +427,7 @@ class WorkflowOrchestrator:
             )
 
             if result.success and result.file_path and result.file_path.exists():
-                duration = probe_duration(result.file_path)
+                duration = await probe_duration_async(result.file_path)
                 segment.video_status = SegmentStatus.COMPLETED.value
                 segment.video_duration = duration
                 segment.video_file_path = str(result.file_path)
@@ -440,6 +448,9 @@ class WorkflowOrchestrator:
             else:
                 segment.video_status = SegmentStatus.FAILED.value
                 await self.session.commit()
+                err_msg = result.error_message or "Video generation returned failure"
+                logger.error("Video generation failed", segment=segment.segment_number, error=err_msg)
+                raise WorkflowError(err_msg, code="VIDEO_GENERATION_FAILED")
 
         except Exception as e:
             segment.video_status = SegmentStatus.FAILED.value
@@ -477,7 +488,7 @@ class WorkflowOrchestrator:
             if sync_plan.strategy != SyncStrategy.NONE:
                 tmp_dir = get_project_dir(self.project_id) / "tmp"
                 synced_path = tmp_dir / f"segment_{segment.segment_number:03d}_synced.mp4"
-                execute_sync(sync_plan, video_path, synced_path)
+                await execute_sync_async(sync_plan, video_path, synced_path)
                 # Update the video path to the synced version
                 segment.video_file_path = str(synced_path)
 
@@ -507,7 +518,7 @@ class WorkflowOrchestrator:
                 continue
 
             merged_path = get_segment_merged_path(self.project_id, segment.segment_number)
-            merge_audio_video(audio_path, video_path, merged_path)
+            await merge_audio_video_async(audio_path, video_path, merged_path)
             merged_paths.append(merged_path)
 
             segment.merged_file_path = str(merged_path)
@@ -522,9 +533,9 @@ class WorkflowOrchestrator:
 
         # Concatenate all merged segments
         final_path = get_final_output_path(self.project_id)
-        concatenate_videos(merged_paths, final_path, tmp_dir)
+        await concatenate_videos_async(merged_paths, final_path, tmp_dir)
 
-        final_duration = probe_duration(final_path)
+        final_duration = await probe_duration_async(final_path)
 
         update_manifest(self.project_id, {
             "output": {

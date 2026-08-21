@@ -98,6 +98,40 @@ def plan_sync(
     return plan
 
 
+from app.media.ffmpeg import (
+    trim_video,
+    loop_video,
+    pad_video_with_black,
+    trim_video_async,
+    loop_video_async,
+    pad_video_with_black_async,
+)
+
+
+async def execute_sync_async(
+    plan: SyncPlan,
+    video_input_path: Path,
+    video_output_path: Path,
+) -> Path:
+    """Execute a sync plan asynchronously (non-blocking)."""
+    if plan.strategy == SyncStrategy.NONE:
+        logger.debug("No sync needed", segment=plan.segment_number)
+        return video_input_path
+
+    if plan.strategy == SyncStrategy.TRIM_VIDEO:
+        return await trim_video_async(video_input_path, video_output_path, plan.target_duration)
+
+    if plan.strategy == SyncStrategy.LOOP_VIDEO:
+        return await loop_video_async(video_input_path, video_output_path, plan.target_duration)
+
+    if plan.strategy == SyncStrategy.PAD_VIDEO:
+        pad_duration = plan.target_duration - plan.video_duration
+        return await pad_video_with_black_async(video_input_path, video_output_path, pad_duration)
+
+    logger.warning("Unknown sync strategy", strategy=plan.strategy.value)
+    return video_input_path
+
+
 def execute_sync(
     plan: SyncPlan,
     video_input_path: Path,
@@ -130,3 +164,4 @@ def execute_sync(
 
     logger.warning("Unknown sync strategy", strategy=plan.strategy.value)
     return video_input_path
+

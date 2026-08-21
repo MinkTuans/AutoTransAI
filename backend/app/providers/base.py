@@ -203,6 +203,16 @@ class LLMProvider(ABC):
     def provider_name(self) -> str:
         ...
 
+    @property
+    @abstractmethod
+    def is_free(self) -> bool:
+        ...
+
+    @property
+    @abstractmethod
+    def requires_api_key(self) -> bool:
+        ...
+
     @abstractmethod
     async def validate_configuration(self) -> bool:
         ...

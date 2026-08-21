@@ -1,0 +1,41 @@
+{
+  "version": "1.0",
+  "project_id": "49f0489a",
+  "created_at": "2026-08-21T14:59:58.205860+00:00",
+  "updated_at": "2026-08-21T15:01:09.680399+00:00",
+  "title": "ZombieG",
+  "workflow_mode": "audio_video",
+  "workflow_status": "merging",
+  "segments": [
+    {
+      "number": 1,
+      "text": "Ngày hôm đó cũng giống như mọi ngày. Tôi chỉ đang trên đường về nhà... cho đến khi mọi thứ thay đổi.",
+      "char_count": 169
+    },
+    {
+      "number": 2,
+      "text": "Tôi tỉnh lại giữa một con phố hoang tàn. Xe cộ bị bỏ lại, cửa kính vỡ nát, khói bốc lên từ xa. Không",
+      "char_count": 246
+    },
+    {
+      "number": 3,
+      "text": "Bất ngờ, một giao diện ánh sáng xanh bí ẩn xuất hiện ngay trước mắt. Hệ thống lên tiếng: Chào mừng n",
+      "char_count": 286
+    },
+    {
+      "number": 4,
+      "text": "Một nhóm zombie hung hãn đang tiến lại gần. Tôi siết chặt thanh sắt nhặt bên đường. Bình tĩnh, chỉ c",
+      "char_count": 350
+    },
+    {
+      "number": 5,
+      "text": "Sau trận chiến, tôi bước vào một cửa hàng bỏ hoang. Trên tường khắc một dòng chữ kỳ lạ: Ngày thứ 30,",
+      "char_count": 327
+    },
+    {
+      "number": 6,
+      "text": "Tôi từ từ quay lại. Trước mặt là một con zombie khổng lồ với đôi mắt đỏ rực. Hệ thống hiển thị: Cấp ",
+      "char_count": 300
+    }
+  ]
+}
