@@ -31,8 +31,10 @@ export default function VideoTranslator() {
   const [isFetchingLogs, setIsFetchingLogs] = useState(false);
   const [copySuccess, setCopySuccess] = useState('');
 
-  // Polling ref
+  // Polling ref & Timestamps
   const pollingRef = useRef(null);
+  const [lastPollTime, setLastPollTime] = useState(null);
+  const [lastApiResponseTime, setLastApiResponseTime] = useState(null);
 
   // Fetch voices when provider or language changes
   useEffect(() => {
@@ -48,23 +50,32 @@ export default function VideoTranslator() {
       .catch(() => setVoices([]));
   }, [audioProviderId, targetLanguage]);
 
-  // Robust Polling for job updates with terminal state guard
+  // Single Source of Truth Polling Effect
   useEffect(() => {
     if (!job?.id) return;
 
-    const isTerminal = ['completed', 'failed', 'cancelled', 'segment_editing'].includes(job.status);
-    if (isTerminal) {
+    if (['completed', 'failed', 'cancelled', 'segment_editing'].includes(job.status)) {
       if (isProcessing) setIsProcessing(false);
-      return;
     }
 
-    pollingRef.current = setInterval(() => {
+    const isFinalTerminal = ['completed', 'failed', 'cancelled'].includes(job.status);
+    if (isFinalTerminal) return;
+
+    const fetchJobStatus = () => {
+      const nowStr = new Date().toLocaleTimeString('vi-VN');
+      setLastPollTime(nowStr);
+      console.log(`[JOB POLL] Job ID: ${job.id} | Request time: ${nowStr}`);
+
       videoTranslatorApi.getJob(job.id)
         .then(res => {
+          const respTimeStr = new Date().toLocaleTimeString('vi-VN');
+          setLastApiResponseTime(respTimeStr);
+
           if (res.success && res.data) {
             const newJob = res.data;
+            console.log(`[JOB POLL RESPONSE] Job: ${newJob.job_id || newJob.id} | Status: ${newJob.status} | Stage: ${newJob.stage} | Overall: ${newJob.overall_progress_pct}% | StagePct: ${newJob.stage_progress_pct}% | Heartbeat: ${newJob.heartbeat?.active} | FFmpeg: ${newJob.process?.status} | Segments: ${newJob.segments?.length || 0}`);
+
             setJob(prev => {
-              // Terminal state guard: Never overwrite terminal status with older response
               if (prev && ['completed', 'failed', 'cancelled'].includes(prev.status)) {
                 return prev;
               }
@@ -77,12 +88,20 @@ export default function VideoTranslator() {
 
             if (['completed', 'failed', 'cancelled', 'segment_editing'].includes(newJob.status)) {
               setIsProcessing(false);
-              clearInterval(pollingRef.current);
+            }
+
+            if (['completed', 'failed', 'cancelled'].includes(newJob.status)) {
+              if (pollingRef.current) clearInterval(pollingRef.current);
             }
           }
         })
-        .catch(console.error);
-    }, 1500);
+        .catch(err => {
+          console.error('[JOB POLL ERROR]', err);
+        });
+    };
+
+    fetchJobStatus();
+    pollingRef.current = setInterval(fetchJobStatus, 1500);
 
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
@@ -161,6 +180,9 @@ export default function VideoTranslator() {
       await videoTranslatorApi.startJob(newJobId);
       const initialJob = await videoTranslatorApi.getJob(newJobId);
       setJob(initialJob.data);
+      if (initialJob.data.segments && initialJob.data.segments.length > 0) {
+        setSegments(initialJob.data.segments);
+      }
     } catch (err) {
       const detail = err.response?.data?.detail || err.message || 'Không thể bắt đầu dịch video';
       setPipelineError(detail);
@@ -168,24 +190,21 @@ export default function VideoTranslator() {
     }
   };
 
-  const handleSegmentTextChange = (segId, newText) => {
-    setSegments(prev =>
-      prev.map(s => (s.id === segId ? { ...s, translated_text: newText } : s))
-    );
+  const handleSegmentTextChange = (segmentId, text) => {
+    setSegments(prev => prev.map(s => s.id === segmentId ? { ...s, translated_text: text } : s));
   };
 
   const handleRenderFinalVideo = async () => {
-    if (!job) return;
+    if (!job?.id) return;
     setIsProcessing(true);
-    try {
-      await videoTranslatorApi.updateSegments(
-        job.id,
-        segments.map(s => ({ id: s.id, translated_text: s.translated_text }))
-      );
+    setPipelineError(null);
 
-      await videoTranslatorApi.renderJob(job.id);
-      const updated = await videoTranslatorApi.getJob(job.id);
-      setJob(updated.data);
+    try {
+      const updateItems = segments.map(s => ({ id: s.id, translated_text: s.translated_text }));
+      await videoTranslatorApi.updateSegments(job.id, updateItems);
+      await videoTranslatorApi.renderFinalVideo(job.id);
+      const updatedJob = await videoTranslatorApi.getJob(job.id);
+      setJob(updatedJob.data);
     } catch (err) {
       const detail = err.response?.data?.detail || err.message || 'Lỗi render video';
       setPipelineError(detail);
@@ -194,46 +213,42 @@ export default function VideoTranslator() {
   };
 
   const handleCancelJob = async () => {
-    if (!job) return;
-    if (!window.confirm('Bạn có chắc chắn muốn hủy tiến trình dịch video này không?')) return;
+    if (!job?.id) return;
     try {
       await videoTranslatorApi.cancelJob(job.id);
-      const updated = await videoTranslatorApi.getJob(job.id);
-      setJob(updated.data);
-      setIsProcessing(false);
+      const res = await videoTranslatorApi.getJob(job.id);
+      if (res.success) setJob(res.data);
     } catch (err) {
-      alert('Không thể hủy job: ' + (err.message || 'Lỗi'));
+      alert('Không thể hủy job: ' + (err.message || 'Lỗi hệ thống'));
     }
   };
 
   const handleRetryJob = async () => {
-    if (!job) return;
+    if (!job?.id) return;
     setIsProcessing(true);
     setPipelineError(null);
     try {
       await videoTranslatorApi.retryJob(job.id);
-      const updated = await videoTranslatorApi.getJob(job.id);
-      setJob(updated.data);
+      const res = await videoTranslatorApi.getJob(job.id);
+      if (res.success) setJob(res.data);
     } catch (err) {
-      const detail = err.response?.data?.detail || err.message || 'Lỗi retry job';
-      setPipelineError(detail);
+      setPipelineError('Không thể thử lại job: ' + (err.message || 'Lỗi hệ thống'));
       setIsProcessing(false);
     }
   };
 
-  const formatTime = (seconds) => {
-    if (!seconds) return '00:00';
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
+  const formatTime = (sec) => {
+    if (!sec || isNaN(sec)) return '00:00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  // Single Source of Truth Heartbeat & Status Badge
   const getHeartbeatBadge = (currentJob) => {
     if (!currentJob) return null;
-
     const status = currentJob.status;
-    const ageSec = currentJob.last_heartbeat_age_sec ?? 999;
+    const heartbeat = currentJob.heartbeat || {};
+    const ageSec = heartbeat.age_seconds ?? 999;
 
     if (status === 'failed') {
       return (
@@ -256,6 +271,13 @@ export default function VideoTranslator() {
         </span>
       );
     }
+    if (status === 'segment_editing') {
+      return (
+        <span style={{ color: '#6ee7b7', fontSize: '13px', fontWeight: 'bold' }}>
+          🟢 Phase 1 Hoàn Thành (Đang chờ bạn xác nhận phân đoạn)
+        </span>
+      );
+    }
     if (status === 'stalled') {
       return (
         <span style={{ color: '#fb923c', fontSize: '13px', fontWeight: 'bold' }}>
@@ -264,7 +286,7 @@ export default function VideoTranslator() {
       );
     }
 
-    if (ageSec <= 15) {
+    if (heartbeat.active && ageSec <= 15) {
       return (
         <span style={{ color: '#4ade80', fontSize: '13px', fontWeight: 'bold' }}>
           🟢 Worker đang hoạt động (Cập nhật {Math.round(ageSec)}s trước)
@@ -274,16 +296,15 @@ export default function VideoTranslator() {
     if (ageSec <= 45) {
       return (
         <span style={{ color: '#facc15', fontSize: '13px', fontWeight: 'bold' }}>
-          🟡 Đang chờ cập nhật từ server... (Cập nhật {Math.round(ageSec)}s trước)
+          🟡 Đang xử lý / Chờ server... (Cập nhật {Math.round(ageSec)}s trước)
         </span>
       );
     }
     return (
-      <span style={{ color: '#f87171', fontSize: '13px', fontWeight: 'bold' }}>
-        🔴 Mất kết nối heartbeat (Không nhận phản hồi &gt; {Math.round(ageSec)}s)
+      <span style={{ color: '#94a3b8', fontSize: '13px', fontWeight: 'bold' }}>
+        ⚪ Worker đã dừng (Dừng heartbeat)
       </span>
     );
-
   };
 
   return (
@@ -299,71 +320,55 @@ export default function VideoTranslator() {
       <div className="card" style={{ background: '#1e1b4b', border: '1px solid #3730a3', borderRadius: '12px', padding: '24px', color: '#fff', marginBottom: '24px' }}>
         <div style={{ display: 'flex', gap: '12px', marginBottom: '20px' }}>
           <button
-            className={`tab-btn ${inputMode === 'upload' ? 'active' : ''}`}
-            onClick={() => setInputMode('upload')}
-            style={{
-              padding: '10px 20px',
-              borderRadius: '8px',
-              border: 'none',
-              cursor: 'pointer',
-              fontWeight: '600',
-              backgroundColor: inputMode === 'upload' ? '#6366f1' : '#312e81',
-              color: '#fff',
-            }}
-          >
-            📁 Upload Video từ Máy tính
-          </button>
-          <button
-            className={`tab-btn ${inputMode === 'url' ? 'active' : ''}`}
             onClick={() => setInputMode('url')}
             style={{
-              padding: '10px 20px',
+              flex: 1,
+              padding: '12px',
               borderRadius: '8px',
-              border: 'none',
-              cursor: 'pointer',
-              fontWeight: '600',
-              backgroundColor: inputMode === 'url' ? '#6366f1' : '#312e81',
+              border: inputMode === 'url' ? '2px solid #818cf8' : '1px solid #4338ca',
+              background: inputMode === 'url' ? '#312e81' : '#1e1b4b',
               color: '#fff',
+              fontWeight: 'bold',
+              cursor: 'pointer',
             }}
           >
-            🌐 Dán Video URL
+            🔗 Dán Link/URL Video
+          </button>
+          <button
+            onClick={() => setInputMode('upload')}
+            style={{
+              flex: 1,
+              padding: '12px',
+              borderRadius: '8px',
+              border: inputMode === 'upload' ? '2px solid #818cf8' : '1px solid #4338ca',
+              background: inputMode === 'upload' ? '#312e81' : '#1e1b4b',
+              color: '#fff',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+            }}
+          >
+            📁 Upload File từ Máy
           </button>
         </div>
 
-        {inputMode === 'upload' ? (
+        {inputMode === 'url' ? (
           <div>
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>Chọn file Video (MP4, WEBM, MOV, MKV):</label>
-            <input
-              type="file"
-              accept="video/*"
-              onChange={(e) => setUploadFile(e.target.files[0])}
-              style={{
-                width: '100%',
-                padding: '12px',
-                background: '#0f172a',
-                border: '1px dashed #6366f1',
-                borderRadius: '8px',
-                color: '#fff',
-              }}
-            />
-          </div>
-        ) : (
-          <div>
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>Dán link/URL của video từ Internet:</label>
-            <div style={{ display: 'flex', gap: '12px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', color: '#cbd5e1' }}>
+              Nhập Đường Dẫn Video (Direct MP4, YouTube, Bilibili, TikTok...):
+            </label>
+            <div style={{ display: 'flex', gap: '10px' }}>
               <input
                 type="text"
-                placeholder="https://example.com/video.mp4 hoặc https://www.youtube.com/watch?v=..."
+                placeholder="https://example.com/video.mp4"
                 value={videoUrl}
                 onChange={(e) => setVideoUrl(e.target.value)}
                 style={{
                   flex: 1,
-                  padding: '12px 16px',
-                  borderRadius: '8px',
-                  border: '1px solid #4338ca',
+                  padding: '12px',
+                  borderRadius: '6px',
+                  border: '1px solid #475569',
                   background: '#0f172a',
                   color: '#fff',
-                  fontSize: '14px',
                 }}
               />
               <button
@@ -371,37 +376,48 @@ export default function VideoTranslator() {
                 disabled={isCheckingUrl || !videoUrl}
                 style={{
                   padding: '12px 20px',
-                  borderRadius: '8px',
+                  borderRadius: '6px',
                   background: '#4f46e5',
                   color: '#fff',
                   border: 'none',
-                  fontWeight: '600',
+                  fontWeight: 'bold',
                   cursor: isCheckingUrl ? 'not-allowed' : 'pointer',
                 }}
               >
-                {isCheckingUrl ? 'Đang kiểm tra...' : '🔍 Kiểm tra Video'}
+                {isCheckingUrl ? 'Đang kiểm tra...' : '🔍 Kiểm tra URL'}
               </button>
             </div>
-
             {checkError && (
-              <div style={{ marginTop: '12px', padding: '12px', background: '#7f1d1d', border: '1px solid #f87171', borderRadius: '8px', color: '#fca5a5' }}>
+              <div style={{ color: '#ef4444', fontSize: '13px', marginTop: '8px' }}>
                 {checkError}
               </div>
             )}
-
             {urlMetadata && (
-              <div style={{ marginTop: '16px', padding: '16px', background: '#0f172a', borderRadius: '8px', border: '1px solid #22c55e' }}>
-                <div style={{ color: '#4ade80', fontWeight: 'bold', marginBottom: '8px' }}>✓ Video Found</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', fontSize: '13px' }}>
-                  <div><strong>Nguồn:</strong> {urlMetadata.source} ({urlMetadata.domain})</div>
-                  <div><strong>Tiêu đề:</strong> {urlMetadata.title}</div>
-                  <div><strong>Thời lượng:</strong> {formatTime(urlMetadata.duration)}</div>
-                  <div><strong>Độ phân giải:</strong> {urlMetadata.width ? `${urlMetadata.width} × ${urlMetadata.height}` : 'Chưa rõ'}</div>
-                  <div><strong>Định dạng:</strong> {urlMetadata.format?.toUpperCase()}</div>
-                  <div><strong>Audio Track:</strong> {urlMetadata.audio_available ? 'Có audio ✓' : 'Không audio ❌'}</div>
-                </div>
+              <div style={{ marginTop: '12px', padding: '12px', background: '#0f172a', borderRadius: '6px', fontSize: '13px', border: '1px solid #334155' }}>
+                <div style={{ color: '#4ade80', fontWeight: 'bold', marginBottom: '4px' }}>✓ Metadata Hợp Lệ</div>
+                <div><strong>Tiêu đề:</strong> {urlMetadata.title}</div>
+                <div><strong>Thời lượng:</strong> {formatTime(urlMetadata.duration)} ({urlMetadata.duration}s)</div>
               </div>
             )}
+          </div>
+        ) : (
+          <div>
+            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', color: '#cbd5e1' }}>
+              Chọn File Video (MP4, MOV, MKV, AVI):
+            </label>
+            <input
+              type="file"
+              accept="video/*"
+              onChange={(e) => setUploadFile(e.target.files[0] || null)}
+              style={{
+                width: '100%',
+                padding: '10px',
+                borderRadius: '6px',
+                border: '1px solid #475569',
+                background: '#0f172a',
+                color: '#fff',
+              }}
+            />
           </div>
         )}
       </div>
@@ -519,7 +535,7 @@ export default function VideoTranslator() {
         <div className="card" style={{ background: '#0f172a', border: `1px solid ${job.status === 'failed' ? '#ef4444' : '#3b82f6'}`, borderRadius: '12px', padding: '24px', color: '#fff', marginBottom: '24px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
             <h3 style={{ fontSize: '18px', fontWeight: 'bold', color: job.status === 'failed' ? '#fca5a5' : '#60a5fa', margin: 0 }}>
-              📊 Tiến Trình Xử Lý Pipeline (Job: {job.job_id})
+              📊 Tiến Trình Xử Lý Pipeline (Job: {job.id || job.job_id})
             </h3>
             <div style={{ display: 'flex', gap: '8px' }}>
               <button
@@ -580,7 +596,7 @@ export default function VideoTranslator() {
           <div style={{ marginBottom: '16px', padding: '10px 14px', background: '#1e293b', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>{getHeartbeatBadge(job)}</div>
             <div style={{ fontSize: '12px', color: '#94a3b8' }}>
-              Stage: <strong>{job.stage || 'QUEUED'}</strong> | Status: <strong>{job.status.toUpperCase()}</strong>
+              Stage: <strong>{job.stage || 'QUEUED'}</strong> | Status: <strong>{(job.status || '').toUpperCase()}</strong>
             </div>
           </div>
 
@@ -622,8 +638,8 @@ export default function VideoTranslator() {
 
             <div>
               <span style={{ color: '#94a3b8' }}>FFmpeg Process Status:</span>
-              <div style={{ fontWeight: 'bold', color: job.process?.status === 'RUNNING' ? '#60a5fa' : (job.process?.status === 'FAILED' ? '#ef4444' : '#94a3b8'), marginTop: '2px' }}>
-                {job.process?.status === 'RUNNING' ? `RUNNING (PID: ${job.process.pid})` : (job.process?.status || 'IDLE')}
+              <div style={{ fontWeight: 'bold', color: job.process?.status === 'RUNNING' ? '#60a5fa' : (job.process?.status === 'COMPLETED' ? '#4ade80' : (job.process?.status === 'FAILED' ? '#ef4444' : '#94a3b8')), marginTop: '2px' }}>
+                {job.process?.status === 'RUNNING' ? `⚡ RUNNING (PID: ${job.process.pid})` : (job.process?.status === 'COMPLETED' ? '✅ COMPLETED' : (job.process?.status || 'IDLE'))}
               </div>
             </div>
 
@@ -653,12 +669,42 @@ export default function VideoTranslator() {
               </div>
             )}
           </div>
+
+          {/* DEBUG JOB STATE PANEL (Dev Mode Single Source of Truth) */}
+          <details open style={{ marginTop: '20px', padding: '14px 18px', background: '#020617', border: '1px solid #1e293b', borderRadius: '10px', fontSize: '12px', fontFamily: 'monospace', color: '#38bdf8' }}>
+            <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: '#facc15', fontSize: '14px' }}>🐞 DEBUG JOB STATE (Single Source of Truth)</summary>
+            <div style={{ marginTop: '12px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '10px' }}>
+              <div>Job ID: <strong style={{ color: '#fff' }}>{job.id || job.job_id}</strong></div>
+              <div>Backend Status: <strong style={{ color: '#a7f3d0' }}>{job.status}</strong></div>
+              <div>Backend Stage: <strong style={{ color: '#60a5fa' }}>{job.stage}</strong></div>
+              <div>Overall Progress: <strong style={{ color: '#facc15' }}>{job.overall_progress_pct}%</strong></div>
+              <div>Stage Progress: <strong style={{ color: '#facc15' }}>{job.stage_progress_pct}%</strong></div>
+              <div>Heartbeat Active: <strong style={{ color: job.heartbeat?.active ? '#4ade80' : '#f87171' }}>{job.heartbeat?.active ? 'ACTIVE (TRUE)' : 'INACTIVE (FALSE)'}</strong> ({job.heartbeat?.age_seconds ?? 'N/A'}s)</div>
+              <div>FFmpeg Status: <strong style={{ color: job.process?.status === 'COMPLETED' ? '#4ade80' : '#60a5fa' }}>{job.process?.status || 'IDLE'}</strong> (PID: {job.process?.pid || 'N/A'})</div>
+              <div>STT Status: <strong style={{ color: job.stt?.status === 'COMPLETED' ? '#4ade80' : '#60a5fa' }}>{job.stt?.status || 'PENDING'}</strong> ({job.stt?.provider || 'gemini'})</div>
+              <div>Detected Language: <strong style={{ color: '#fbbf24' }}>{job.detected_language || 'Auto'}</strong></div>
+              <div>Translation Status: <strong style={{ color: job.translation?.status === 'COMPLETED' ? '#4ade80' : '#60a5fa' }}>{job.translation?.status || 'PENDING'}</strong></div>
+              <div>Segments Loaded: <strong style={{ color: '#c084fc' }}>{segments.length} / {job.total_segments_count || segments.length}</strong></div>
+              <div>Last Backend Update: <strong style={{ color: '#cbd5e1' }}>{job.updated_at ? new Date(job.updated_at).toLocaleTimeString('vi-VN') : 'N/A'}</strong></div>
+              <div>Last Frontend Poll: <strong style={{ color: '#cbd5e1' }}>{lastPollTime || 'N/A'}</strong></div>
+              <div>API Response Time: <strong style={{ color: '#cbd5e1' }}>{lastApiResponseTime || 'N/A'}</strong></div>
+            </div>
+          </details>
         </div>
       )}
 
       {/* Segment Editor when phase 1 completes */}
       {job && (job.status === 'segment_editing' || job.status === 'completed' || segments.length > 0) && (
         <div className="card" style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '12px', padding: '24px', color: '#fff', marginBottom: '24px' }}>
+          <div style={{ marginBottom: '20px', padding: '16px 20px', background: '#064e3b', border: '1px solid #10b981', borderRadius: '10px', color: '#a7f3d0' }}>
+            <h4 style={{ margin: '0 0 6px 0', fontSize: '16px', fontWeight: 'bold', color: '#6ee7b7' }}>
+              🟢 Phase 1 Hoàn Thành – Đã Trích Xuất & Dịch Phân Đoạn!
+            </h4>
+            <p style={{ margin: 0, fontSize: '13px' }}>
+              Hệ thống đã nhận diện giọng nói và dịch thành công <strong>{segments.length}</strong> phân đoạn. Vui lòng xem lại và chỉnh sửa bản dịch dưới đây trước khi xác nhận render video lồng tiếng.
+            </p>
+          </div>
+
           <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '12px' }}>📝 Xem lại & Chỉnh sửa Văn Bản Dịch</h3>
           <p style={{ fontSize: '13px', color: '#94a3b8', marginBottom: '20px' }}>
             Bạn có thể chỉnh sửa câu từ dịch của từng mốc thời gian trước khi tiến hành tạo giọng đọc TTS và Render video.
@@ -776,7 +822,7 @@ export default function VideoTranslator() {
           >
             <div style={{ padding: '16px 20px', borderBottom: '1px solid #1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold', color: '#60a5fa' }}>
-                📜 Job Execution Logs ({job?.job_id})
+                📜 Job Execution Logs ({job?.id || job?.job_id})
               </h3>
               <button
                 onClick={() => setShowLogModal(false)}
@@ -818,7 +864,7 @@ export default function VideoTranslator() {
                   📋 Sao Chép Full Log
                 </button>
                 <button
-                  onClick={() => fetchLogs(job?.job_id)}
+                  onClick={() => fetchLogs(job?.id || job?.job_id)}
                   style={{ padding: '8px 16px', borderRadius: '6px', background: '#2563eb', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}
                 >
                   🔄 Làm Mới

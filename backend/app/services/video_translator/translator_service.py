@@ -163,8 +163,25 @@ async def speech_to_text_and_detect_language(
 
             from app.providers.llm.gemini_provider import GEMINI_MODEL_CANDIDATES
 
+            payload = {
+                "contents": [
+                    {
+                        "parts": [
+                            {"text": prompt},
+                            {
+                                "inline_data": {
+                                    "mime_type": "audio/wav",
+                                    "data": base64_audio,
+                                }
+                            },
+                        ]
+                    }
+                ]
+            }
+
             import httpx
             async with httpx.AsyncClient(timeout=90.0) as client:
+
                 for model in GEMINI_MODEL_CANDIDATES:
                     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={settings.GEMINI_API_KEY}"
                     try:

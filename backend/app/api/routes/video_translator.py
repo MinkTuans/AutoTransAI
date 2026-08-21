@@ -305,10 +305,12 @@ async def start_translation_pipeline(
                 current_stage = "STT"
                 b_job.status = TranslationJobStatus.STT.value
                 b_job.stage = "STT"
+                b_job.pid = None
                 b_job.current_step = "Nhận diện giọng nói (Speech-to-Text)"
                 b_job.stage_progress_pct = 50.0
                 b_job.overall_progress_pct = calculate_overall_progress("STT", 50.0)
                 await bg_session.commit()
+
 
                 segments_raw, detected_lang = await speech_to_text_and_detect_language(
                     extracted_audio_path,
@@ -362,7 +364,13 @@ async def start_translation_pipeline(
                 b_job.completed_segments_count = 0
                 b_job.pid = None
                 await bg_session.commit()
-                log_job_event(job_id, "SEGMENT_EDITING", "Phase 1 completed. Awaiting user segment confirmation.")
+                
+                snapshot_str = (
+                    f"Phase 1 completed. Awaiting user segment confirmation.\n"
+                    f"[STATE SNAPSHOT] Job: {job_id} | status={b_job.status} | stage={b_job.stage} | "
+                    f"progress={b_job.overall_progress_pct}% | heartbeat=INACTIVE | segments={len(translated_segs)}"
+                )
+                log_job_event(job_id, "SEGMENT_EDITING", snapshot_str)
 
         except Exception as e:
             tb_str = traceback.format_exc()
@@ -397,12 +405,37 @@ async def start_translation_pipeline(
     return {"success": True, "data": {"started": True, "job_id": job_id}}
 
 
+STAGE_ORDER_MAP = {
+    "QUEUED": 0,
+    "EXTRACTING_AUDIO": 1,
+    "STT": 2,
+    "TRANSLATING": 3,
+    "SEGMENT_EDITING": 4,
+    "GENERATING_TTS": 5,
+    "SYNCING_AUDIO": 6,
+    "RENDERING": 7,
+    "COMPLETED": 8,
+    "FAILED": 99,
+    "CANCELLED": 99,
+}
+
+
 async def _update_ffmpeg_stats(job_id: str, stage: str, pct: float, pid: Optional[int], stats: dict):
-    """Helper to update FFmpeg real-time stats in DB with guard against updating terminal jobs."""
+    """Helper to update FFmpeg real-time stats in DB with guard against updating terminal or later stage jobs."""
     async with async_session_factory() as session:
         res = await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))
         job = res.scalar_one_or_none()
-        if not job or job.status in [TranslationJobStatus.FAILED.value, TranslationJobStatus.COMPLETED.value, "cancelled"]:
+        if not job:
+            return
+
+        # Terminal status check
+        if job.status in [TranslationJobStatus.FAILED.value, TranslationJobStatus.COMPLETED.value, "cancelled", TranslationJobStatus.SEGMENT_EDITING.value, "segment_editing"]:
+            return
+
+        # Stage order check: do not overwrite if job has already progressed past this stage
+        current_job_stage_idx = STAGE_ORDER_MAP.get(job.stage, 0)
+        incoming_stage_idx = STAGE_ORDER_MAP.get(stage, 0)
+        if incoming_stage_idx < current_job_stage_idx:
             return
 
         overall = calculate_overall_progress(stage, pct)
@@ -414,7 +447,7 @@ async def _update_ffmpeg_stats(job_id: str, stage: str, pct: float, pid: Optiona
                 stage_progress_pct=pct,
                 overall_progress_pct=overall,
                 progress_pct=overall,
-                pid=pid,
+                pid=pid if pct < 100.0 else None,
                 ffmpeg_stats_json=json.dumps(stats, ensure_ascii=False),
                 last_heartbeat=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
@@ -428,6 +461,7 @@ async def _update_ffmpeg_stats(job_id: str, stage: str, pct: float, pid: Optiona
             "overall_pct": overall,
             "stats": stats,
         })
+
 
 
 async def _update_pid(job_id: str, pid: int):
@@ -480,18 +514,36 @@ async def get_translation_job(
     now = datetime.now(timezone.utc)
     hb_age_sec = (now - job.last_heartbeat.replace(tzinfo=timezone.utc)).total_seconds() if job.last_heartbeat else 999.0
 
-    is_terminal = job.status in [TranslationJobStatus.FAILED.value, TranslationJobStatus.COMPLETED.value, "cancelled"]
+    is_terminal = job.status in [TranslationJobStatus.FAILED.value, TranslationJobStatus.COMPLETED.value, "cancelled", TranslationJobStatus.SEGMENT_EDITING.value, "segment_editing"]
     heartbeat_active = (not is_terminal) and (hb_age_sec <= 30)
 
-    process_status = "NOT_STARTED"
+    process_status = "IDLE"
     if job.status == TranslationJobStatus.FAILED.value:
         process_status = "FAILED"
     elif job.status == "cancelled":
         process_status = "KILLED"
     elif job.status == TranslationJobStatus.COMPLETED.value:
         process_status = "COMPLETED"
+    elif is_terminal:
+        process_status = "COMPLETED"
     elif job.pid:
         process_status = "RUNNING"
+    elif job.stage in ["STT", "TRANSLATING", "SEGMENT_EDITING", "GENERATING_TTS", "SYNCING_AUDIO", "RENDERING", "COMPLETED"]:
+        process_status = "COMPLETED"
+    elif job.stage == "EXTRACTING_AUDIO":
+        process_status = "STARTING"
+
+    stt_status = "PENDING"
+    if job.stage in ["SEGMENT_EDITING", "GENERATING_TTS", "SYNCING_AUDIO", "RENDERING", "COMPLETED"]:
+        stt_status = "COMPLETED"
+    elif job.stage == "STT":
+        stt_status = "RUNNING"
+
+    translation_status = "PENDING"
+    if job.stage in ["SEGMENT_EDITING", "GENERATING_TTS", "SYNCING_AUDIO", "RENDERING", "COMPLETED"]:
+        translation_status = "COMPLETED"
+    elif job.stage == "TRANSLATING":
+        translation_status = "RUNNING"
 
     return {
         "success": True,
@@ -518,22 +570,35 @@ async def get_translation_job(
             "pid": job.pid if not is_terminal else None,
             "heartbeat": {
                 "active": heartbeat_active,
-                "last_heartbeat_age_sec": round(hb_age_sec, 1),
+                "age_seconds": round(hb_age_sec, 1),
+                "message": "Worker đang hoạt động" if heartbeat_active else "Heartbeat loop stopped.",
             },
             "process": {
+                "type": "ffmpeg",
                 "status": process_status,
-                "pid": job.pid if not is_terminal else None,
+                "pid": job.pid if job.pid and not is_terminal else None,
+                "exitCode": 0 if process_status == "COMPLETED" else (-1 if process_status == "FAILED" else None),
             },
+            "stt": {
+                "status": stt_status,
+                "provider": "gemini",
+                "segments": job.total_segments_count or len(segments),
+                "language": job.detected_language or job.source_language,
+            },
+            "translation": {
+                "status": translation_status,
+                "segments": job.total_segments_count or len(segments),
+            },
+            "ffmpeg_stats": ffmpeg_stats,
+            "last_heartbeat_age_sec": round(hb_age_sec, 1),
             "error": {
                 "message": job.error_message,
                 "stage": job.stage if job.status == TranslationJobStatus.FAILED.value else None,
             },
-            "last_heartbeat_age_sec": round(hb_age_sec, 1),
-            "ffmpeg_stats": ffmpeg_stats,
-            "completed_segments_count": job.completed_segments_count or 0,
-            "total_segments_count": job.total_segments_count or len(segments),
-            "output_video_path": job.output_video_path,
             "error_message": job.error_message,
+            "output_video_path": job.output_video_path,
+            "total_segments_count": job.total_segments_count or len(segments),
+            "completed_segments_count": job.completed_segments_count or 0,
             "segments": [
                 {
                     "id": s.id,
@@ -546,8 +611,11 @@ async def get_translation_job(
                 }
                 for s in segments
             ],
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "updated_at": job.updated_at.isoformat() if job.updated_at else None,
         },
     }
+
 
 
 @router.get("/jobs/{job_id}/logs", response_model=dict)
