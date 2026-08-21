@@ -10,9 +10,20 @@ import './App.css';
 export default function App() {
   const [activePage, setActivePage] = useState('dashboard');
   const [selectedProjectId, setSelectedProjectId] = useState(null);
+  const [selectedJobId, setSelectedJobId] = useState(null);
 
-  const handleSelectProject = (projectId) => {
-    setSelectedProjectId(projectId);
+  const handleSelectProject = (item) => {
+    if (typeof item === 'object' && item !== null) {
+      if (item.type === 'video_translator') {
+        setSelectedJobId(item.id || item.job_id);
+        setActivePage('translator');
+        return;
+      }
+      setSelectedProjectId(item.id);
+      setActivePage('detail');
+      return;
+    }
+    setSelectedProjectId(item);
     setActivePage('detail');
   };
 
@@ -27,7 +38,7 @@ export default function App() {
 
   return (
     <div className="app-container">
-      <Navbar activePage={activePage} setActivePage={setActivePage} />
+      <Navbar activePage={activePage} setActivePage={(page) => { setSelectedJobId(null); setActivePage(page); }} />
       <main className="main-content">
         {activePage === 'dashboard' && (
           <Dashboard
@@ -47,7 +58,7 @@ export default function App() {
           />
         )}
 
-        {activePage === 'translator' && <VideoTranslator />}
+        {activePage === 'translator' && <VideoTranslator initialJobId={selectedJobId} />}
 
         {activePage === 'settings' && <Settings />}
       </main>

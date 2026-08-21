@@ -12,13 +12,17 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from sqlalchemy import select, func
+from pydantic import BaseModel
+from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from sse_starlette.sse import EventSourceResponse
 
 from app.database import get_session, async_session_factory
 from app.models.project import Project, WorkflowStatus
 from app.models.segment import Segment, SegmentStatus
+from app.models.video_translator import VideoTranslationJob, VideoAsset, VideoTranslationSegment
+from app.services.storage_service import storage_service
 from app.schemas.project import (
     ProjectCreate,
     ProjectResponse,
@@ -42,6 +46,12 @@ from app.providers.registry import get_registry
 from app.workflow.orchestrator import WorkflowOrchestrator
 from app.workflow.state_machine import is_resumable_state, validate_transition
 from app.core import get_logger
+from app.config import get_settings
+
+settings = get_settings()
+
+class BatchDeleteRequest(BaseModel):
+    ids: list[str]
 
 logger = get_logger(__name__)
 
@@ -119,86 +129,144 @@ async def create_project(
 
 @router.get("", response_model=dict)
 async def list_projects(session: AsyncSession = Depends(get_session)):
-    """List all projects."""
-    result = await session.execute(
+    """List all projects (both Standard Projects and Video Translator Jobs)."""
+    # 1. Fetch standard projects
+    std_result = await session.execute(
         select(Project).order_by(Project.created_at.desc())
     )
-    projects = result.scalars().all()
+    std_projects = std_result.scalars().all()
 
     items = []
-    for p in projects:
-        # Count segments
+    for p in std_projects:
         seg_count = await session.execute(
             select(func.count(Segment.id)).where(Segment.project_id == p.id)
         )
         count = seg_count.scalar() or 0
+        items.append({
+            "id": p.id,
+            "job_id": p.id,
+            "title": p.title,
+            "type": "standard",
+            "workflow_mode": p.workflow_mode,
+            "workflow_status": p.workflow_status,
+            "status": p.workflow_status,
+            "progress": 100.0 if p.workflow_status == "completed" else 0.0,
+            "segment_count": count,
+            "output_video_url": p.media_url,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+            "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+        })
 
-        items.append(ProjectListResponse(
-            id=p.id,
-            title=p.title,
-            workflow_mode=p.workflow_mode,
-            workflow_status=p.workflow_status,
-            segment_count=count,
-            created_at=p.created_at,
-            updated_at=p.updated_at,
-        ))
+    # 2. Fetch Video Translator jobs
+    vt_result = await session.execute(
+        select(VideoTranslationJob)
+        .options(selectinload(VideoTranslationJob.asset))
+        .order_by(VideoTranslationJob.created_at.desc())
+    )
+    vt_jobs = vt_result.scalars().all()
 
-    return {"success": True, "data": [item.model_dump() for item in items]}
+    for vt in vt_jobs:
+        title = vt.asset.title if (vt.asset and vt.asset.title) else f"Video Translation {vt.id}"
+        output_url = vt.output_url or (
+            storage_service.get_url(vt.r2_key) if vt.r2_key else (
+                f"/api/storage/files/translator/jobs/{vt.id}/final_dubbed_video.mp4" if vt.status == "completed" else None
+            )
+        )
+        items.append({
+            "id": vt.id,
+            "job_id": vt.id,
+            "title": title,
+            "type": "video_translator",
+            "workflow_mode": "video_translator",
+            "workflow_status": vt.status,
+            "status": vt.status,
+            "stage": vt.stage,
+            "progress": vt.overall_progress_pct or 0.0,
+            "segment_count": vt.total_segments_count or 0,
+            "output_video_url": output_url,
+            "created_at": vt.created_at.isoformat() if vt.created_at else None,
+            "updated_at": vt.updated_at.isoformat() if vt.updated_at else None,
+        })
+
+    # Sort all items by created_at descending
+    items.sort(key=lambda x: x["created_at"] or "", reverse=True)
+    return {"success": True, "data": items}
 
 
-@router.get("/{project_id}", response_model=dict)
-async def get_project(
-    project_id: str,
+async def _delete_single_item(item_id: str, session: AsyncSession) -> bool:
+    import shutil
+    # 1. Check if Standard Project
+    std_res = await session.execute(select(Project).where(Project.id == item_id))
+    std_proj = std_res.scalar_one_or_none()
+    if std_proj:
+        if item_id in _running_workflows:
+            _running_workflows[item_id].cancel()
+        if std_proj.r2_key:
+            await storage_service.delete_file(std_proj.r2_key)
+        await session.execute(delete(Segment).where(Segment.project_id == item_id))
+        await session.delete(std_proj)
+        await session.commit()
+        delete_project_files(item_id)
+        return True
+
+    # 2. Check if Video Translation Job
+    vt_res = await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == item_id))
+    vt_job = vt_res.scalar_one_or_none()
+    if vt_job:
+        asset_id = vt_job.asset_id
+        if vt_job.r2_key:
+            await storage_service.delete_file(vt_job.r2_key)
+        await storage_service.delete_file(f"translator/jobs/{item_id}/final_dubbed_video.mp4")
+        
+        await session.execute(delete(VideoTranslationSegment).where(VideoTranslationSegment.job_id == item_id))
+        await session.delete(vt_job)
+        await session.commit()
+
+        # Check if asset used by other jobs
+        other_jobs = await session.execute(
+            select(func.count(VideoTranslationJob.id)).where(VideoTranslationJob.asset_id == asset_id)
+        )
+        if (other_jobs.scalar() or 0) == 0:
+            asset_res = await session.execute(select(VideoAsset).where(VideoAsset.id == asset_id))
+            asset = asset_res.scalar_one_or_none()
+            if asset:
+                if asset.r2_key:
+                    await storage_service.delete_file(asset.r2_key)
+                await session.delete(asset)
+                await session.commit()
+                asset_disk = settings.DATA_DIR / "translator" / "assets" / asset_id
+                if asset_disk.exists():
+                    shutil.rmtree(asset_disk, ignore_errors=True)
+
+        job_disk = settings.DATA_DIR / "translator" / "jobs" / item_id
+        if job_disk.exists():
+            shutil.rmtree(job_disk, ignore_errors=True)
+        return True
+
+    return False
+
+
+@router.post("/batch-delete", response_model=dict)
+async def batch_delete_projects(
+    body: BatchDeleteRequest,
     session: AsyncSession = Depends(get_session),
 ):
-    """Get full project details with segments."""
-    result = await session.execute(
-        select(Project).where(Project.id == project_id)
-    )
-    project = result.scalar_one_or_none()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    """Delete multiple projects (Standard or Video Translator)."""
+    deleted = []
+    failed = []
 
-    seg_result = await session.execute(
-        select(Segment)
-        .where(Segment.project_id == project_id)
-        .order_by(Segment.segment_number)
-    )
-    segments = seg_result.scalars().all()
+    for item_id in body.ids:
+        try:
+            ok = await _delete_single_item(item_id, session)
+            if ok:
+                deleted.append(item_id)
+            else:
+                failed.append(item_id)
+        except Exception as e:
+            logger.error("Failed to delete item", item_id=item_id, error=str(e))
+            failed.append(item_id)
 
-    segment_summaries = [
-        SegmentSummary(
-            number=s.segment_number,
-            char_count=s.char_count,
-            text_preview=s.text_content[:100] + ("..." if len(s.text_content) > 100 else ""),
-            audio_status=s.audio_status,
-            video_status=s.video_status,
-            audio_duration=s.audio_duration,
-            video_duration=s.video_duration,
-        )
-        for s in segments
-    ]
-
-    return {
-        "success": True,
-        "data": ProjectResponse(
-            id=project.id,
-            title=project.title,
-            workflow_mode=project.workflow_mode,
-            workflow_status=project.workflow_status,
-            audio_provider_id=project.audio_provider_id,
-            video_provider_id=project.video_provider_id,
-            voice_id=project.voice_id,
-            voice_name=project.voice_name,
-            sync_strategy=project.sync_strategy,
-            segment_count=len(segments),
-            total_characters=sum(s.char_count for s in segments),
-            segments=segment_summaries,
-            error_message=project.error_message,
-            created_at=project.created_at,
-            updated_at=project.updated_at,
-        ).model_dump(),
-    }
+    return {"success": True, "data": {"deleted": deleted, "failed": failed}}
 
 
 @router.delete("/{project_id}")
@@ -206,22 +274,10 @@ async def delete_project(
     project_id: str,
     session: AsyncSession = Depends(get_session),
 ):
-    """Delete a project and all its files."""
-    result = await session.execute(
-        select(Project).where(Project.id == project_id)
-    )
-    project = result.scalar_one_or_none()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    # Cancel if running
-    if project_id in _running_workflows:
-        _running_workflows[project_id].cancel()
-
-    await session.delete(project)
-    await session.commit()
-    delete_project_files(project_id)
-
+    """Delete a single project or video translator job."""
+    ok = await _delete_single_item(project_id, session)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Project or job not found")
     return {"success": True, "data": {"deleted": project_id}}
 
 

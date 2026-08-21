@@ -8,7 +8,7 @@ environment variables. No magic numbers should exist outside this module.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -26,12 +26,15 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # ── Paths ──────────────────────────────────────────────────────────
+    # ── Database & Paths ───────────────────────────────────────────────
+    DATABASE_URL: Optional[str] = None
     DATA_DIR: Path = Path("data")
     DB_FILENAME: str = "workflow.db"
 
     @property
     def DB_URL(self) -> str:
+        if self.DATABASE_URL:
+            return self.DATABASE_URL
         db_path = self.DATA_DIR / self.DB_FILENAME
         return f"sqlite+aiosqlite:///{db_path}"
 
@@ -72,6 +75,14 @@ class Settings(BaseSettings):
     KLING_API_KEY: str = ""
     KLING_API_SECRET: str = ""
     FAL_API_KEY: str = ""
+
+    # ── Cloudflare R2 Storage ──────────────────────────────────────────
+    R2_ACCOUNT_ID: str = ""
+    R2_ACCESS_KEY_ID: str = ""
+    R2_SECRET_ACCESS_KEY: str = ""
+    R2_BUCKET_NAME: str = "workflowvdai"
+    R2_ENDPOINT_URL: str = ""
+    R2_PUBLIC_DOMAIN: str = ""
 
     # ── Server ─────────────────────────────────────────────────────────
     HOST: str = "127.0.0.1"

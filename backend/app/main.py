@@ -106,11 +106,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from app.api.routes import projects, providers, system, video_translator, storage
+
 # Mount API routes
 app.include_router(projects.router)
 app.include_router(providers.router)
 app.include_router(system.router)
 app.include_router(video_translator.router)
+app.include_router(storage.router)
 
 # Mount Static Files for local media serving
 settings.DATA_DIR.mkdir(parents=True, exist_ok=True)

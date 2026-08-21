@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import signal
 import sys
 import traceback
@@ -25,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core import get_logger
+from app.services.storage_service import storage_service
 from app.core.job_logger import log_job_event, get_job_logs
 from app.database import get_session, async_session_factory
 from app.core.security_url import SSRFValidationError
@@ -47,7 +49,7 @@ from app.services.video_translator import (
 )
 from app.services.video_translator.translator_service import calculate_overall_progress
 from app.services.video_translator.heartbeat import start_job_heartbeat, stop_job_heartbeat, check_and_mark_stalled_jobs
-from app.media.ffprobe import probe_duration_async
+from app.media.ffprobe import probe_duration_async, get_video_metadata_async
 from app.media.ffmpeg_process import FFmpegExecutionError
 
 logger = get_logger(__name__)
@@ -174,6 +176,20 @@ async def import_video_asset(
             audio_available=meta["audio_available"],
             status="ready",
         )
+
+    # Upload asset file to R2 Storage Service
+    try:
+        asset_local_file = Path(meta["local_path"])
+        r2_asset_key = f"translator/assets/{asset_id}/{asset_local_file.name}"
+        obj_key, asset_url = await storage_service.upload_file(
+            asset_local_file,
+            r2_asset_key,
+            content_type=meta.get("mime_type", "video/mp4")
+        )
+        asset.r2_key = obj_key
+        asset.url = asset_url
+    except Exception as store_err:
+        logger.warning("Error storing asset in R2", error=str(store_err), asset_id=asset_id)
 
     session.add(asset)
     await session.commit()
@@ -790,7 +806,7 @@ async def render_final_translated_video(
                     asyncio.create_task(_update_pid(job_id, pid))
 
                 final_video_path = job_dir / "final_dubbed_video.mp4"
-                await render_dubbed_video(
+                rendered_path = await render_dubbed_video(
                     video_path=Path(b_asset.file_path),
                     segments=segments,
                     original_audio_mode=b_job.original_audio_mode,
@@ -801,15 +817,57 @@ async def render_final_translated_video(
                     on_pid=on_render_pid,
                 )
 
+                # Strict FFprobe Validation
+                meta = await get_video_metadata_async(rendered_path)
+                if not meta.get("has_audio"):
+                    raise RuntimeError("❌ Output validation failed: Video thành phẩm không có audio stream.")
+                if meta.get("duration", 0.0) <= 0.0:
+                    raise RuntimeError("❌ Output validation failed: Thời lượng video thành phẩm = 0s.")
+
+                log_job_event(
+                    job_id,
+                    "VALIDATION",
+                    f"FFprobe Validation Passed: Duration={meta['duration']}s, Resolution={meta['width']}x{meta['height']}, Audio=True"
+                )
+
+                # Upload final video to Cloudflare R2 / Storage Service
+                r2_key = f"translator/jobs/{job_id}/final_dubbed_video.mp4"
+                object_key, output_url = await storage_service.upload_file(
+                    final_video_path,
+                    r2_key,
+                    content_type="video/mp4"
+                )
+
+                # Clean intermediate temporary files (TTS audio, synced audio, FFmpeg work dir, temp audio)
+                try:
+                    tts_dir = job_dir / "tts"
+                    if tts_dir.exists():
+                        shutil.rmtree(tts_dir, ignore_errors=True)
+                    synced_dir = job_dir / "synced"
+                    if synced_dir.exists():
+                        shutil.rmtree(synced_dir, ignore_errors=True)
+                    work_dir = job_dir / "work"
+                    if work_dir.exists():
+                        shutil.rmtree(work_dir, ignore_errors=True)
+                    extracted_audio = job_dir / "extracted_audio.mp3"
+                    if extracted_audio.exists():
+                        extracted_audio.unlink(missing_ok=True)
+                    b_job.is_cleaned = True
+                    log_job_event(job_id, "CLEANUP", "Intermediate TTS audio and FFmpeg temp files purged.")
+                except Exception as clean_err:
+                    logger.warning("Error cleaning intermediate files", error=str(clean_err), job_id=job_id)
+
                 b_job.status = TranslationJobStatus.COMPLETED.value
                 b_job.stage = "COMPLETED"
                 b_job.current_step = "Hoàn tất lồng tiếng video"
                 b_job.stage_progress_pct = 100.0
                 b_job.overall_progress_pct = 100.0
                 b_job.output_video_path = str(final_video_path)
+                b_job.r2_key = object_key
+                b_job.output_url = output_url
                 b_job.pid = None
                 await bg_session.commit()
-                log_job_event(job_id, "COMPLETED", f"Final video ready at {final_video_path}")
+                log_job_event(job_id, "COMPLETED", f"Final video ready at {output_url or final_video_path}")
 
         except Exception as e:
             tb_str = traceback.format_exc()

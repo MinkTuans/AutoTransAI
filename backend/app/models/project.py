@@ -54,14 +54,16 @@ class Project(Base):
     voice_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     voice_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     sync_strategy: Mapped[str] = mapped_column(String(30), default="trim_video")
+    r2_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    media_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
     )
 
     # Relationships

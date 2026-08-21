@@ -61,14 +61,16 @@ class VideoAsset(Base):
     height: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     audio_available: Mapped[bool] = mapped_column(Boolean, default=True)
     status: Mapped[str] = mapped_column(String(30), default="ready")
+    r2_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
     )
 
     # Relationships
@@ -99,20 +101,23 @@ class VideoTranslationJob(Base):
     current_step: Mapped[str] = mapped_column(String(100), default="Khởi tạo")
     pid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     last_heartbeat: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )
     ffmpeg_stats_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     completed_segments_count: Mapped[int] = mapped_column(Integer, default=0)
     total_segments_count: Mapped[int] = mapped_column(Integer, default=0)
     output_video_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    r2_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    output_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_cleaned: Mapped[bool] = mapped_column(Boolean, default=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
     )
 
 

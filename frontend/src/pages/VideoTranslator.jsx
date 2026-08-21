@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { videoTranslatorApi, providersApi } from '../api';
 
-export default function VideoTranslator() {
+export default function VideoTranslator({ initialJobId }) {
   const [inputMode, setInputMode] = useState('url');
   const [videoUrl, setVideoUrl] = useState('');
   const [uploadFile, setUploadFile] = useState(null);
@@ -24,6 +24,18 @@ export default function VideoTranslator() {
   const [segments, setSegments] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [pipelineError, setPipelineError] = useState(null);
+
+  // Initial Job ID effect
+  useEffect(() => {
+    if (initialJobId) {
+      videoTranslatorApi.getJob(initialJobId).then(res => {
+        if (res.success && res.data) {
+          setJob(res.data);
+          if (res.data.segments) setSegments(res.data.segments);
+        }
+      }).catch(err => console.error('Failed to load initial job:', err));
+    }
+  }, [initialJobId]);
 
   // Log Modal state
   const [showLogModal, setShowLogModal] = useState(false);

@@ -29,19 +29,23 @@ def _ensure_db_directory() -> None:
 
 _ensure_db_directory()
 
+is_sqlite = settings.DB_URL.startswith("sqlite")
+connect_args = {"check_same_thread": False} if is_sqlite else {}
+
 engine = create_async_engine(
     settings.DB_URL,
     echo=settings.DEBUG,
-    connect_args={"check_same_thread": False},
+    connect_args=connect_args,
 )
 
 
-@event.listens_for(engine.sync_engine, "connect")
-def set_sqlite_pragma(dbapi_connection, connection_record):
-    """Enable foreign key constraints for every SQLite connection."""
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.close()
+if is_sqlite:
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        """Enable foreign key constraints for every SQLite connection."""
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
 
 async_session_factory = async_sessionmaker(
@@ -53,11 +57,12 @@ async_session_factory = async_sessionmaker(
 
 
 async def init_db() -> None:
-    """Create all tables and enable WAL mode."""
+    """Create all tables and run schema migrations."""
     async with engine.begin() as conn:
-        # Enable WAL mode for better concurrent read performance
-        await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
-        await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+        if is_sqlite:
+            await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+            await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+        
         await conn.run_sync(Base.metadata.create_all)
 
         # Migration for segments table

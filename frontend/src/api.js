@@ -14,6 +14,7 @@ export const projectsApi = {
   get: (id) => api.get(`/projects/${id}`).then(res => res.data),
   create: (data) => api.post('/projects', data).then(res => res.data),
   delete: (id) => api.delete(`/projects/${id}`).then(res => res.data),
+  batchDelete: (ids) => api.post('/projects/batch-delete', { ids }).then(res => res.data),
   estimate: (id) => api.post(`/projects/${id}/estimate`).then(res => res.data),
   configure: (id, config) => api.post(`/projects/${id}/configure`, config).then(res => res.data),
   precheck: (id) => api.post(`/projects/${id}/precheck`).then(res => res.data),

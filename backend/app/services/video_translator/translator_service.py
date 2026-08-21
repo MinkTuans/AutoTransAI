@@ -358,7 +358,7 @@ async def render_dubbed_video(
     on_pid: Optional[Callable[[int], None]] = None,
 ) -> Path:
     """
-    Render final dubbed video by combining TTS audio segments and mixing with original video.
+    Render final dubbed video by combining TTS audio segments onto timeline and mixing with original video.
     """
     output_video_path.parent.mkdir(parents=True, exist_ok=True)
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -370,32 +370,27 @@ async def render_dubbed_video(
     valid_segments = [s for s in segments if s.synced_audio_path or s.tts_audio_path]
 
     if not valid_segments:
-        raise ValueError("Không có phân đoạn âm thanh lồng tiếng nào được tạo.")
+        raise ValueError("❌ Không có phân đoạn âm thanh lồng tiếng nào được tạo.")
 
     log_job_event(job_id, "RENDERING", f"Combining {len(valid_segments)} audio segments into timeline (Duration: {total_video_duration:.1f}s)...")
 
-    # Create silence base
-    silence_base = work_dir / "silence_base.wav"
-    cmd_silence = [
-        "ffmpeg", "-y",
-        "-f", "lavfi",
-        "-i", f"anullsrc=r=24000:cl=mono:d={total_video_duration:.2f}",
-        str(silence_base),
-    ]
-    await run_ffmpeg_with_progress_async(cmd_silence, total_duration=total_video_duration, timeout=30.0)
-
-    # Combine audio segments at timestamps
-    inputs = ["-i", str(silence_base)]
-    filter_chain = ["[0:a]"]
-
-    for idx, seg in enumerate(valid_segments, start=1):
+    # Build FFmpeg inputs and filter graph directly from valid_segments
+    inputs = []
+    filter_chain = []
+    
+    for idx, seg in enumerate(valid_segments):
         seg_audio = Path(seg.synced_audio_path or seg.tts_audio_path)
         inputs.extend(["-i", str(seg_audio)])
-        delay_ms = int(seg.start_time * 1000)
-        filter_chain.append(f"[{idx}:a]adelay=delays={delay_ms}:all=1[a{idx}];")
+        delay_ms = max(0, round(seg.start_time * 1000))
+        filter_chain.append(f"[{idx}:a]adelay=delays={delay_ms}:all=1[a{idx}]")
 
-    mix_inputs = "".join(f"[a{idx}]" for idx in range(1, len(valid_segments) + 1))
-    filter_graph = "".join(filter_chain) + f"[0:a]{mix_inputs}amix=inputs={len(valid_segments)+1}:duration=first[outa]"
+    num_segments = len(valid_segments)
+    if num_segments == 1:
+        filter_graph = f"{filter_chain[0]};[a0]apad=whole_dur={total_video_duration:.2f}[outa]"
+    else:
+        mix_inputs = "".join(f"[a{i}]" for i in range(num_segments))
+        filter_statements = ";".join(filter_chain)
+        filter_graph = f"{filter_statements};{mix_inputs}amix=inputs={num_segments}:duration=longest:dropout_transition=0,apad=whole_dur={total_video_duration:.2f}[outa]"
 
     cmd_mix = [
         "ffmpeg", "-y",
@@ -405,16 +400,20 @@ async def render_dubbed_video(
         str(combined_audio_path),
     ]
 
+    log_job_event(job_id, "RENDERING", f"Executing FFmpeg audio timeline mix with {num_segments} audio inputs...")
+    
+    used_fallback = False
     try:
         await run_ffmpeg_with_progress_async(
             cmd_mix,
             total_duration=total_video_duration,
             on_progress=on_progress,
             on_pid=on_pid,
-            timeout=120.0,
+            timeout=180.0,
         )
-    except Exception as e:
-        log_job_event(job_id, "RENDERING", f"Complex audio mix fallback used: {str(e)}")
+    except Exception as mix_err:
+        used_fallback = True
+        log_job_event(job_id, "RENDERING", f"❌ Primary audio timeline mix failed: {str(mix_err)}\nFilter used: {filter_graph}")
         concat_list_path = work_dir / "audio_concat.txt"
         with open(concat_list_path, "w", encoding="utf-8") as f:
             for seg in valid_segments:
@@ -429,9 +428,12 @@ async def render_dubbed_video(
             str(combined_audio_path),
         ]
         await run_ffmpeg_with_progress_async(cmd_concat, total_duration=total_video_duration, timeout=60.0)
+        log_job_event(job_id, "RENDERING", "⚠️ WARNING: Audio timeline mix used fallback concat method!")
 
+    if not combined_audio_path.exists() or combined_audio_path.stat().st_size == 0:
+        raise RuntimeError("❌ Không thể tạo file âm thanh lồng tiếng tổng hợp (combined_dubbed_audio.wav).")
 
-    log_job_event(job_id, "RENDERING", f"Muxing audio with video (Mode: {original_audio_mode})...")
+    log_job_event(job_id, "RENDERING", f"Muxing dubbed audio with video (Mode: {original_audio_mode})...")
 
     # Merge combined audio into video according to original_audio_mode
     if original_audio_mode == AudioMixMode.MUTE.value:
@@ -451,7 +453,7 @@ async def render_dubbed_video(
             "ffmpeg", "-y",
             "-i", str(video_path),
             "-i", str(combined_audio_path),
-            "-filter_complex", "[0:a]volume=0.2[orig];[1:a]volume=1.0[dub];[orig][dub]amix=inputs=2:duration=first[outa]",
+            "-filter_complex", "[0:a]volume=0.15[orig];[1:a]volume=1.0[dub];[orig][dub]amix=inputs=2:duration=first:dropout_transition=0[outa]",
             "-c:v", "copy",
             "-c:a", "aac",
             "-map", "0:v:0",
@@ -464,7 +466,7 @@ async def render_dubbed_video(
             "ffmpeg", "-y",
             "-i", str(video_path),
             "-i", str(combined_audio_path),
-            "-filter_complex", "[0:a][1:a]amix=inputs=2:duration=first[outa]",
+            "-filter_complex", "[0:a]volume=1.0[orig];[1:a]volume=1.0[dub];[orig][dub]amix=inputs=2:duration=first:dropout_transition=0[outa]",
             "-c:v", "copy",
             "-c:a", "aac",
             "-map", "0:v:0",
@@ -481,8 +483,12 @@ async def render_dubbed_video(
         timeout=300.0,
     )
 
-    if not output_video_path.exists():
-        raise RuntimeError("FFmpeg render final video failed.")
+    if not output_video_path.exists() or output_video_path.stat().st_size == 0:
+        raise RuntimeError("❌ FFmpeg render final video failed: File output không tồn tại hoặc bị rỗng.")
 
-    log_job_event(job_id, "RENDERING", f"Final video rendered successfully: {output_video_path}")
+    if used_fallback:
+        log_job_event(job_id, "COMPLETED_WITH_FALLBACK", f"Final video rendered with fallback: {output_video_path}")
+    else:
+        log_job_event(job_id, "RENDERING", f"Final video rendered successfully: {output_video_path}")
+
     return output_video_path
