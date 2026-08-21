@@ -32,12 +32,13 @@ async def test_check_url_api_invalid():
 @pytest.mark.anyio
 async def test_upload_local_video_and_pipeline_flow(tmp_path):
     """Test 1 & Test 12: Import uploaded video file and verify job pipeline creation."""
-    real_video = Path(__file__).parent.parent.parent / "test_ai_out.mp4"
+    real_video = Path(__file__).parent.parent.parent / "test_with_audio.mp4"
     if not real_video.exists():
         test_video = tmp_path / "test_sample.mp4"
         test_video.write_bytes(b"\x00" * 1024)
     else:
         test_video = real_video
+
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
 

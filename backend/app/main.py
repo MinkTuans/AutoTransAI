@@ -4,8 +4,19 @@ FastAPI application entry point.
 Initializes the app, registers providers, and mounts routes.
 """
 
+import sys
+import asyncio
+
+# Ensure Windows ProactorEventLoopPolicy is set for asyncio subprocess support
+if sys.platform == "win32":
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    except Exception:
+        pass
+
 from contextlib import asynccontextmanager
 from pathlib import Path
+
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

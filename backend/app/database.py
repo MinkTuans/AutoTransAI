@@ -60,18 +60,45 @@ async def init_db() -> None:
         await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
         await conn.run_sync(Base.metadata.create_all)
 
-        # Lightweight schema migration for existing SQLite database
+        # Migration for segments table
         try:
             res = await conn.exec_driver_sql("PRAGMA table_info(segments)")
             columns = [row[1] for row in res.fetchall()]
-            if "audio_error_message" not in columns:
-                await conn.exec_driver_sql("ALTER TABLE segments ADD COLUMN audio_error_message TEXT")
-            if "video_error_message" not in columns:
-                await conn.exec_driver_sql("ALTER TABLE segments ADD COLUMN video_error_message TEXT")
-            if "video_error_details" not in columns:
-                await conn.exec_driver_sql("ALTER TABLE segments ADD COLUMN video_error_details TEXT")
+            for col, col_type in [
+                ("audio_error_message", "TEXT"),
+                ("video_error_message", "TEXT"),
+                ("video_error_details", "TEXT"),
+            ]:
+                if col not in columns:
+                    await conn.exec_driver_sql(f"ALTER TABLE segments ADD COLUMN {col} {col_type}")
         except Exception:
             pass
+
+        # Migration for video_translation_jobs table
+        try:
+            res_v = await conn.exec_driver_sql("PRAGMA table_info(video_translation_jobs)")
+            job_cols = [row[1] for row in res_v.fetchall()]
+            if job_cols:
+                cols_to_add = [
+                    ("stage", "VARCHAR(50) DEFAULT 'QUEUED'"),
+                    ("stage_progress_pct", "FLOAT DEFAULT 0.0"),
+                    ("overall_progress_pct", "FLOAT DEFAULT 0.0"),
+                    ("pid", "INTEGER NULL"),
+                    ("last_heartbeat", "DATETIME NULL"),
+                    ("ffmpeg_stats_json", "TEXT NULL"),
+                    ("completed_segments_count", "INTEGER DEFAULT 0"),
+                    ("total_segments_count", "INTEGER DEFAULT 0"),
+                ]
+                for col_name, col_def in cols_to_add:
+                    if col_name not in job_cols:
+                        try:
+                            await conn.exec_driver_sql(f"ALTER TABLE video_translation_jobs ADD COLUMN {col_name} {col_def}")
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+
 
 
 async def get_session() -> AsyncSession:  # type: ignore[misc]

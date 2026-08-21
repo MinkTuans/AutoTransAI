@@ -3,7 +3,7 @@ Video Translation Pipeline Service.
 
 Manages audio extraction, Speech-to-Text (STT), Language Detection,
 LLM Translation, TTS generation, Audio Synchronization (time-stretching),
-and final FFmpeg audio mix / video rendering.
+and final FFmpeg audio mix / video rendering with real-time progress & logging.
 """
 
 from __future__ import annotations
@@ -12,17 +12,15 @@ import asyncio
 import base64
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import Callable, Optional, Dict, Any, List, Tuple
 
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-
 from app.config import get_settings
 from app.core import get_logger
-from app.core.exceptions import WorkflowError
+from app.core.job_logger import log_job_event
 from app.media.ffprobe import probe_duration_async, get_video_metadata_async
-from app.media.ffmpeg import safe_subprocess_run_async
+from app.media.ffmpeg_process import run_ffmpeg_with_progress_async, FFmpegExecutionError
 from app.providers.registry import get_registry
 from app.models.video_translator import (
     VideoAsset,
@@ -35,24 +33,67 @@ from app.models.video_translator import (
 logger = get_logger(__name__)
 settings = get_settings()
 
+# Stage weights for overall progress calculation
+STAGE_WEIGHTS = {
+    "DOWNLOADING": 10.0,
+    "EXTRACTING_AUDIO": 10.0,
+    "STT": 20.0,
+    "TRANSLATING": 20.0,
+    "GENERATING_TTS": 20.0,
+    "SYNCING_AUDIO": 5.0,
+    "RENDERING": 15.0,
+}
 
-async def extract_audio_from_video(video_path: Path, output_audio_path: Path) -> float:
+STAGE_BASE_OFFSET = {
+    "QUEUED": 0.0,
+    "DOWNLOADING": 0.0,
+    "EXTRACTING_AUDIO": 10.0,
+    "STT": 20.0,
+    "TRANSLATING": 40.0,
+    "SEGMENT_EDITING": 60.0,
+    "GENERATING_TTS": 60.0,
+    "SYNCING_AUDIO": 80.0,
+    "RENDERING": 85.0,
+    "COMPLETED": 100.0,
+}
+
+
+def calculate_overall_progress(stage: str, stage_progress_pct: float) -> float:
+    """Calculate total overall progress percentage based on stage base offset and stage progress."""
+    base = STAGE_BASE_OFFSET.get(stage, 0.0)
+    weight = STAGE_WEIGHTS.get(stage, 0.0)
+    if stage == "SEGMENT_EDITING":
+        return 60.0
+    if stage == "COMPLETED":
+        return 100.0
+    overall = base + (weight * (stage_progress_pct / 100.0))
+    return round(min(99.9, max(0.0, overall)), 1)
+
+
+async def extract_audio_from_video(
+    video_path: Path,
+    output_audio_path: Path,
+    job_id: str = "VT-JOB",
+    on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+    on_pid: Optional[Callable[[int], None]] = None,
+) -> float:
     """
-    Extract audio track from video file into 16kHz MONO WAV file using FFmpeg.
+    Extract audio track from video file into 16kHz MONO WAV using real-time FFmpeg process.
     """
     if not video_path.exists():
         raise FileNotFoundError(f"Video file not found: {video_path}")
 
-    # Check audio track presence
+    log_job_event(job_id, "EXTRACTING_AUDIO", f"Probing metadata for {video_path.name}")
     meta = await get_video_metadata_async(video_path)
     if not meta.get("has_audio"):
+        log_job_event(job_id, "EXTRACTING_AUDIO", "ERROR: Video has no audio stream.")
         raise ValueError("Video không chứa track audio. Không thể thực hiện dịch giọng nói.")
 
+    total_duration = meta.get("duration", 0.0)
     output_audio_path.parent.mkdir(parents=True, exist_ok=True)
 
     cmd = [
-        "ffmpeg",
-        "-y",
+        "ffmpeg", "-y",
         "-i", str(video_path),
         "-vn",
         "-acodec", "pcm_s16le",
@@ -61,27 +102,32 @@ async def extract_audio_from_video(video_path: Path, output_audio_path: Path) ->
         str(output_audio_path),
     ]
 
-    res = await safe_subprocess_run_async(cmd, timeout=120)
-    if res.returncode != 0 or not output_audio_path.exists() or output_audio_path.stat().st_size == 0:
+    log_job_event(job_id, "EXTRACTING_AUDIO", f"Starting FFmpeg audio extraction (Duration: {total_duration:.1f}s)")
+    stats = await run_ffmpeg_with_progress_async(
+        cmd,
+        total_duration=total_duration,
+        on_progress=on_progress,
+        on_pid=on_pid,
+        timeout=300.0,
+    )
+
+    if not output_audio_path.exists() or output_audio_path.stat().st_size == 0:
         raise RuntimeError("Không thể trích xuất audio từ video.")
 
-    duration = await probe_duration_async(output_audio_path)
-    if duration <= 0:
-        raise ValueError("File audio trích xuất có thời lượng bằng 0.")
-
-    return duration
+    actual_dur = await probe_duration_async(output_audio_path)
+    log_job_event(job_id, "EXTRACTING_AUDIO", f"Audio extraction completed successfully. Duration: {actual_dur:.1f}s")
+    return actual_dur
 
 
 async def speech_to_text_and_detect_language(
     audio_path: Path,
+    job_id: str = "VT-JOB",
     target_language: str = "vi",
     source_language: str = "auto",
+    on_status_update: Optional[Callable[[str], None]] = None,
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
     Perform Speech-to-Text and Language Detection on the extracted audio.
-
-    Returns:
-        Tuple of (list_of_segment_dicts, detected_language_name)
     """
     registry = get_registry()
     gemini = registry.get_llm("gemini")
@@ -89,6 +135,10 @@ async def speech_to_text_and_detect_language(
     total_duration = await probe_duration_async(audio_path)
     if total_duration <= 0:
         raise ValueError("File audio không hợp lệ.")
+
+    log_job_event(job_id, "STT", f"Starting Speech-to-Text (Audio duration: {total_duration:.1f}s)")
+    if on_status_update:
+        on_status_update(f"Đang gửi audio ({audio_path.stat().st_size / (1024*1024):.1f}MB) đến Gemini STT...")
 
     # Try Gemini multi-modal STT if API key available
     if gemini and settings.GEMINI_API_KEY and audio_path.stat().st_size < 15 * 1024 * 1024:
@@ -111,61 +161,55 @@ async def speech_to_text_and_detect_language(
                 "}"
             )
 
-            # Request Gemini API with inline audio payload
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={settings.GEMINI_API_KEY}"
-            payload = {
-                "contents": [
-                    {
-                        "parts": [
-                            {"text": prompt},
-                            {
-                                "inline_data": {
-                                    "mime_type": "audio/wav",
-                                    "data": base64_audio,
-                                }
-                            },
-                        ]
-                    }
-                ]
-            }
+            from app.providers.llm.gemini_provider import GEMINI_MODEL_CANDIDATES
 
             import httpx
             async with httpx.AsyncClient(timeout=90.0) as client:
-                res = await client.post(url, json=payload)
-                if res.status_code == 200:
-                    data = res.json()
-                    parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                    if parts:
-                        raw_response = parts[0].get("text", "").strip()
-                        # Clean json wrapping
-                        json_str = re.sub(r"^```json\s*", "", raw_response, flags=re.MULTILINE)
-                        json_str = re.sub(r"```$", "", json_str, flags=re.MULTILINE).strip()
-                        parsed_json = json.loads(json_str)
+                for model in GEMINI_MODEL_CANDIDATES:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={settings.GEMINI_API_KEY}"
+                    try:
+                        res = await client.post(url, json=payload)
+                        if res.status_code == 200:
+                            data = res.json()
+                            parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                            if parts:
+                                raw_response = parts[0].get("text", "").strip()
+                                json_str = re.sub(r"^```json\s*", "", raw_response, flags=re.MULTILINE)
+                                json_str = re.sub(r"```$", "", json_str, flags=re.MULTILINE).strip()
+                                parsed_json = json.loads(json_str)
 
-                        detected_lang = parsed_json.get("language", "English")
-                        raw_segments = parsed_json.get("segments", [])
+                                detected_lang = parsed_json.get("language", "English")
+                                raw_segments = parsed_json.get("segments", [])
 
-                        if raw_segments:
-                            formatted_segments = []
-                            for idx, s in enumerate(raw_segments, start=1):
-                                st = float(s.get("start_time", 0.0))
-                                et = float(s.get("end_time", st + 4.0))
-                                txt = str(s.get("text", "")).strip()
-                                if txt:
-                                    formatted_segments.append({
-                                        "number": idx,
-                                        "start_time": round(st, 2),
-                                        "end_time": round(et, 2),
-                                        "text": txt,
-                                    })
-                            if formatted_segments:
-                                return formatted_segments, detected_lang
+                                if raw_segments:
+                                    formatted_segments = []
+                                    for idx, s in enumerate(raw_segments, start=1):
+                                        st = float(s.get("start_time", 0.0))
+                                        et = float(s.get("end_time", st + 4.0))
+                                        txt = str(s.get("text", "")).strip()
+                                        if txt:
+                                            formatted_segments.append({
+                                                "number": idx,
+                                                "start_time": round(st, 2),
+                                                "end_time": round(et, 2),
+                                                "text": txt,
+                                            })
+                                    if formatted_segments:
+                                        log_job_event(job_id, "STT", f"Gemini STT ({model}) completed. Detected: {detected_lang}, Segments: {len(formatted_segments)}")
+                                        return formatted_segments, detected_lang
+                        elif res.status_code in (404, 503, 429):
+                            logger.warning(f"Gemini STT model '{model}' returned HTTP {res.status_code}. Trying fallback model...")
+                            continue
+                    except Exception as ex:
+                        logger.warning(f"Gemini STT request failed on model '{model}': {str(ex)}")
+                        continue
         except Exception as e:
-            logger.warning("Gemini multimodal STT failed, falling back to segment chunker", error=str(e))
+            log_job_event(job_id, "STT", f"Gemini STT warning: {str(e)}. Using fallback chunker.")
+
 
     # Fallback STT segment generator based on total audio duration
     detected_lang = "English" if source_language == "auto" else source_language
-    chunk_len = 8.0  # 8 seconds per segment
+    chunk_len = 8.0
     segment_count = max(1, int(total_duration / chunk_len))
 
     segments = []
@@ -179,6 +223,7 @@ async def speech_to_text_and_detect_language(
             "text": f"Phần phát biểu video #{i+1} [{st:.0f}s - {et:.0f}s]",
         })
 
+    log_job_event(job_id, "STT", f"Fallback STT created {len(segments)} segments.")
     return segments, detected_lang
 
 
@@ -186,6 +231,7 @@ async def translate_transcript_segments(
     segments: List[Dict[str, Any]],
     source_language: str,
     target_language: str,
+    job_id: str = "VT-JOB",
 ) -> List[Dict[str, Any]]:
     """
     Translate transcript text segments to target language using LLM Provider.
@@ -204,6 +250,7 @@ async def translate_transcript_segments(
         "es": "Tiếng Tây Ban Nha",
     }
     target_lang_name = lang_names.get(target_language.lower(), target_language)
+    log_job_event(job_id, "TRANSLATING", f"Translating {len(segments)} segments to {target_lang_name}...")
 
     if gemini and settings.GEMINI_API_KEY:
         try:
@@ -223,11 +270,11 @@ async def translate_transcript_segments(
             if isinstance(translated_list, list) and len(translated_list) == len(segments):
                 for seg, trans in zip(segments, translated_list):
                     seg["translated_text"] = str(trans).strip()
+                log_job_event(job_id, "TRANSLATING", f"Gemini translation completed successfully.")
                 return segments
         except Exception as e:
-            logger.warning("Gemini translation failed, using direct text fallback", error=str(e))
+            log_job_event(job_id, "TRANSLATING", f"Gemini translation warning: {str(e)}")
 
-    # Simple fallback translation placeholder if LLM key unavailable
     for s in segments:
         orig = s["text"]
         if target_language == "vi" and "Phần phát biểu" in orig:
@@ -242,6 +289,9 @@ async def sync_and_stretch_audio(
     tts_audio_path: Path,
     target_duration: float,
     output_synced_path: Path,
+    job_id: str = "VT-JOB",
+    on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+    on_pid: Optional[Callable[[int], None]] = None,
 ) -> float:
     """
     Adjust audio speed (time-stretch) using FFmpeg atempo filter to match target duration.
@@ -250,31 +300,32 @@ async def sync_and_stretch_audio(
     output_synced_path.parent.mkdir(parents=True, exist_ok=True)
 
     if target_duration <= 0 or abs(actual_duration - target_duration) < 0.3:
-        # Duration matches closely, copy as is
-        import shutil
         shutil.copy2(tts_audio_path, output_synced_path)
         return actual_duration
 
-    # Calculate tempo ratio: tempo = actual / target
     tempo = actual_duration / target_duration
-    # Clamp tempo between 0.75 and 1.5 to prevent voice distortion
     tempo_clamped = max(0.75, min(1.5, tempo))
 
     cmd = [
-        "ffmpeg",
-        "-y",
+        "ffmpeg", "-y",
         "-i", str(tts_audio_path),
         "-filter:a", f"atempo={tempo_clamped:.3f}",
         "-vn",
         str(output_synced_path),
     ]
 
-    res = await safe_subprocess_run_async(cmd, timeout=60)
-    if res.returncode == 0 and output_synced_path.exists():
+    await run_ffmpeg_with_progress_async(
+        cmd,
+        total_duration=actual_duration,
+        on_progress=on_progress,
+        on_pid=on_pid,
+        timeout=60.0,
+    )
+
+    if output_synced_path.exists():
         new_dur = await probe_duration_async(output_synced_path)
         return new_dur
 
-    import shutil
     shutil.copy2(tts_audio_path, output_synced_path)
     return actual_duration
 
@@ -285,6 +336,9 @@ async def render_dubbed_video(
     original_audio_mode: str,
     output_video_path: Path,
     work_dir: Path,
+    job_id: str = "VT-JOB",
+    on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+    on_pid: Optional[Callable[[int], None]] = None,
 ) -> Path:
     """
     Render final dubbed video by combining TTS audio segments and mixing with original video.
@@ -292,20 +346,18 @@ async def render_dubbed_video(
     output_video_path.parent.mkdir(parents=True, exist_ok=True)
     work_dir.mkdir(parents=True, exist_ok=True)
 
+    log_job_event(job_id, "RENDERING", "Probing total video duration for final render...")
     total_video_duration = await probe_duration_async(video_path)
 
-    # 1. Create silent background audio track matching total video duration
     combined_audio_path = work_dir / "combined_dubbed_audio.wav"
-    filter_complex_parts = []
-    input_args = []
-
-    # Filter inputs and construct overlay at specific timestamps
     valid_segments = [s for s in segments if s.synced_audio_path or s.tts_audio_path]
 
     if not valid_segments:
         raise ValueError("Không có phân đoạn âm thanh lồng tiếng nào được tạo.")
 
-    # Create silence audio base
+    log_job_event(job_id, "RENDERING", f"Combining {len(valid_segments)} audio segments into timeline (Duration: {total_video_duration:.1f}s)...")
+
+    # Create silence base
     silence_base = work_dir / "silence_base.wav"
     cmd_silence = [
         "ffmpeg", "-y",
@@ -313,19 +365,18 @@ async def render_dubbed_video(
         "-i", f"anullsrc=r=24000:cl=mono:d={total_video_duration:.2f}",
         str(silence_base),
     ]
-    await safe_subprocess_run_async(cmd_silence, timeout=30)
+    await run_ffmpeg_with_progress_async(cmd_silence, total_duration=total_video_duration, timeout=30.0)
 
     # Combine audio segments at timestamps
     inputs = ["-i", str(silence_base)]
     filter_chain = ["[0:a]"]
-    
+
     for idx, seg in enumerate(valid_segments, start=1):
         seg_audio = Path(seg.synced_audio_path or seg.tts_audio_path)
         inputs.extend(["-i", str(seg_audio)])
         delay_ms = int(seg.start_time * 1000)
         filter_chain.append(f"[{idx}:a]adelay={delay_ms}|{delay_ms}[a{idx}];")
 
-    # Mix all audio streams
     mix_inputs = "".join(f"[a{idx}]" for idx in range(1, len(valid_segments) + 1))
     filter_graph = "".join(filter_chain) + f"[0:a]{mix_inputs}amix=inputs={len(valid_segments)+1}:duration=first[outa]"
 
@@ -337,10 +388,16 @@ async def render_dubbed_video(
         str(combined_audio_path),
     ]
 
-    res_mix = await safe_subprocess_run_async(cmd_mix, timeout=120)
-    if res_mix.returncode != 0 or not combined_audio_path.exists():
-        # Simple concat fallback if filter_complex fails
-        logger.warning("Complex audio mix failed, using concat fallback")
+    try:
+        await run_ffmpeg_with_progress_async(
+            cmd_mix,
+            total_duration=total_video_duration,
+            on_progress=on_progress,
+            on_pid=on_pid,
+            timeout=120.0,
+        )
+    except Exception as e:
+        log_job_event(job_id, "RENDERING", f"Complex audio mix fallback used: {str(e)}")
         concat_list_path = work_dir / "audio_concat.txt"
         with open(concat_list_path, "w", encoding="utf-8") as f:
             for seg in valid_segments:
@@ -354,11 +411,13 @@ async def render_dubbed_video(
             "-c", "copy",
             str(combined_audio_path),
         ]
-        await safe_subprocess_run_async(cmd_concat, timeout=60)
+        await run_ffmpeg_with_progress_async(cmd_concat, total_duration=total_video_duration, timeout=60.0)
 
-    # 2. Merge combined audio into video according to original_audio_mode
+
+    log_job_event(job_id, "RENDERING", f"Muxing audio with video (Mode: {original_audio_mode})...")
+
+    # Merge combined audio into video according to original_audio_mode
     if original_audio_mode == AudioMixMode.MUTE.value:
-        # Replaces original audio completely
         cmd_final = [
             "ffmpeg", "-y",
             "-i", str(video_path),
@@ -371,7 +430,6 @@ async def render_dubbed_video(
             str(output_video_path),
         ]
     elif original_audio_mode == AudioMixMode.DUCK.value:
-        # Duck original audio volume to 20% and mix with 100% dubbed audio
         cmd_final = [
             "ffmpeg", "-y",
             "-i", str(video_path),
@@ -385,7 +443,6 @@ async def render_dubbed_video(
             str(output_video_path),
         ]
     else:
-        # Keep original audio at 100% volume and mix
         cmd_final = [
             "ffmpeg", "-y",
             "-i", str(video_path),
@@ -399,8 +456,16 @@ async def render_dubbed_video(
             str(output_video_path),
         ]
 
-    res_final = await safe_subprocess_run_async(cmd_final, timeout=300)
-    if res_final.returncode != 0 or not output_video_path.exists():
-        raise RuntimeError(f"FFmpeg render final video failed: {res_final.stderr[:200] if res_final.stderr else 'Lỗi render'}")
+    await run_ffmpeg_with_progress_async(
+        cmd_final,
+        total_duration=total_video_duration,
+        on_progress=on_progress,
+        on_pid=on_pid,
+        timeout=300.0,
+    )
 
+    if not output_video_path.exists():
+        raise RuntimeError("FFmpeg render final video failed.")
+
+    log_job_event(job_id, "RENDERING", f"Final video rendered successfully: {output_video_path}")
     return output_video_path

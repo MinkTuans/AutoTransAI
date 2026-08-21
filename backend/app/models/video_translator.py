@@ -92,8 +92,18 @@ class VideoTranslationJob(Base):
     voice_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     original_audio_mode: Mapped[str] = mapped_column(String(20), default=AudioMixMode.MUTE.value)
     status: Mapped[str] = mapped_column(String(30), default=TranslationJobStatus.CREATED.value)
+    stage: Mapped[str] = mapped_column(String(50), default="QUEUED")
+    stage_progress_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    overall_progress_pct: Mapped[float] = mapped_column(Float, default=0.0)
     progress_pct: Mapped[float] = mapped_column(Float, default=0.0)
     current_step: Mapped[str] = mapped_column(String(100), default="Khởi tạo")
+    pid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    last_heartbeat: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    ffmpeg_stats_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    completed_segments_count: Mapped[int] = mapped_column(Integer, default=0)
+    total_segments_count: Mapped[int] = mapped_column(Integer, default=0)
     output_video_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -104,6 +114,7 @@ class VideoTranslationJob(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
 
     # Relationships
     asset: Mapped["VideoAsset"] = relationship(back_populates="jobs")

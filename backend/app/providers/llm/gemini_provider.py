@@ -1,7 +1,8 @@
 """
 Google Gemini LLM Provider implementation.
 
-Calls the official Google Gemini AI Studio API.
+Calls official Google Gemini AI Studio API with automatic multi-model fallback
+(gemini-flash-latest -> gemini-1.5-flash-latest -> gemini-2.0-flash -> gemini-pro-latest).
 """
 
 from __future__ import annotations
@@ -18,6 +19,10 @@ from app.providers.base import (
 
 logger = get_logger(__name__)
 settings = get_settings()
+
+GEMINI_MODEL_CANDIDATES = [
+    "gemini-3.5-flash-lite"
+]
 
 
 class GeminiLLMProvider(LLMProvider):
@@ -55,7 +60,6 @@ class GeminiLLMProvider(LLMProvider):
         if not settings.GEMINI_API_KEY:
             raise ValueError("GEMINI_API_KEY not set in .env")
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={settings.GEMINI_API_KEY}"
         full_text = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
         payload = {
             "contents": [
@@ -65,26 +69,31 @@ class GeminiLLMProvider(LLMProvider):
             ]
         }
 
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                res = await client.post(url, json=payload)
-                if res.status_code != 200:
-                    raise RuntimeError(f"Gemini API error HTTP {res.status_code}: {res.text[:200]}")
+        last_error = None
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            for model in GEMINI_MODEL_CANDIDATES:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={settings.GEMINI_API_KEY}"
+                try:
+                    res = await client.post(url, json=payload)
+                    if res.status_code == 200:
+                        data = res.json()
+                        candidates = data.get("candidates", [])
+                        if candidates:
+                            parts = candidates[0].get("content", {}).get("parts", [])
+                            if parts:
+                                return parts[0].get("text", "").strip()
+                    elif res.status_code in (404, 503, 429):
+                        logger.warning(f"Gemini model '{model}' returned HTTP {res.status_code}. Trying next fallback model...")
+                        last_error = f"HTTP {res.status_code}: {res.text[:150]}"
+                        continue
+                    else:
+                        raise RuntimeError(f"Gemini API error HTTP {res.status_code}: {res.text[:200]}")
+                except (httpx.TimeoutException, httpx.RequestError) as req_err:
+                    logger.warning(f"Gemini request error on '{model}': {str(req_err)}")
+                    last_error = str(req_err)
+                    continue
 
-                data = res.json()
-                candidates = data.get("candidates", [])
-                if not candidates:
-                    raise RuntimeError("Gemini API returned no candidates")
-
-                parts = candidates[0].get("content", {}).get("parts", [])
-                if not parts:
-                    raise RuntimeError("Gemini candidate content empty")
-
-                return parts[0].get("text", "").strip()
-
-        except Exception as e:
-            logger.error("Gemini text generation failed", error=str(e))
-            raise
+        raise RuntimeError(f"Tất cả các model Gemini API đều không khả thi hoặc gặp lỗi: {last_error or 'Unknown error'}")
 
     async def estimate_usage(self, input_text: str) -> list[UsageEstimate]:
         return [

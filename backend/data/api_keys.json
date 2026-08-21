@@ -9,7 +9,7 @@
       "total_requests": 0,
       "successful_requests": 0,
       "failed_requests": 0,
-      "last_used_at": 1787331754.062656,
+      "last_used_at": 1787335826.600893,
       "last_error": null,
       "cooldown_until": null,
       "quota_info": {
@@ -74,7 +74,7 @@
       "total_requests": 0,
       "successful_requests": 0,
       "failed_requests": 0,
-      "last_used_at": 1787331754.0723774,
+      "last_used_at": 1787335826.601895,
       "last_error": null,
       "cooldown_until": null,
       "quota_info": {

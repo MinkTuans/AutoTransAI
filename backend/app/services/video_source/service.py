@@ -124,8 +124,9 @@ class VideoSourceService:
 
         output_dir.mkdir(parents=True, exist_ok=True)
         ext = Path(original_filename).suffix or ".mp4"
-        dest_filename = f"upload_{Path(original_filename).stem}_{source_path.name[:8]}{ext}"
+        dest_filename = f"input_source{ext}"
         dest_path = output_dir / dest_filename
+
 
         if source_path.resolve() != dest_path.resolve():
             shutil.copy2(source_path, dest_path)
