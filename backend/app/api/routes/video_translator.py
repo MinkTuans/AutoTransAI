@@ -47,6 +47,7 @@ from app.services.video_translator import (
 )
 from app.services.video_translator.translator_service import calculate_overall_progress
 from app.services.video_translator.heartbeat import start_job_heartbeat, stop_job_heartbeat, check_and_mark_stalled_jobs
+from app.media.ffprobe import probe_duration_async
 from app.media.ffmpeg_process import FFmpegExecutionError
 
 logger = get_logger(__name__)
@@ -228,6 +229,7 @@ async def create_translation_job(
     return {
         "success": True,
         "data": {
+            "id": job.id,
             "job_id": job.id,
             "asset_id": job.asset_id,
             "status": job.status,
@@ -548,6 +550,7 @@ async def get_translation_job(
     return {
         "success": True,
         "data": {
+            "id": job.id,
             "job_id": job.id,
             "asset": {
                 "id": asset.id if asset else None,

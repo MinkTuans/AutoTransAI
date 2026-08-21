@@ -72,6 +72,7 @@ export const videoTranslatorApi = {
   updateSegments: (jobId, segments) =>
     api.put(`/video-translator/jobs/${jobId}/segments`, { segments }).then(res => res.data),
   renderJob: (jobId) => api.post(`/video-translator/jobs/${jobId}/render`).then(res => res.data),
+  renderFinalVideo: (jobId) => api.post(`/video-translator/jobs/${jobId}/render`).then(res => res.data),
   getLogs: (jobId) => api.get(`/video-translator/jobs/${jobId}/logs`).then(res => res.data),
   cancelJob: (jobId) => api.post(`/video-translator/jobs/${jobId}/cancel`).then(res => res.data),
   retryJob: (jobId) => api.post(`/video-translator/jobs/${jobId}/retry`).then(res => res.data),

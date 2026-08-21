@@ -50,30 +50,46 @@ export default function VideoTranslator() {
       .catch(() => setVoices([]));
   }, [audioProviderId, targetLanguage]);
 
+  const activeJobId = job?.id || job?.job_id;
+  const lastPollTimestampRef = useRef(0);
+
   // Single Source of Truth Polling Effect
   useEffect(() => {
-    if (!job?.id) return;
+    if (!activeJobId) return;
 
-    if (['completed', 'failed', 'cancelled', 'segment_editing'].includes(job.status)) {
+    if (['completed', 'failed', 'cancelled', 'segment_editing'].includes(job?.status)) {
       if (isProcessing) setIsProcessing(false);
     }
 
-    const isFinalTerminal = ['completed', 'failed', 'cancelled'].includes(job.status);
+    const isFinalTerminal = ['completed', 'failed', 'cancelled'].includes(job?.status);
     if (isFinalTerminal) return;
 
     const fetchJobStatus = () => {
+      const reqTimestamp = Date.now();
       const nowStr = new Date().toLocaleTimeString('vi-VN');
       setLastPollTime(nowStr);
-      console.log(`[JOB POLL] Job ID: ${job.id} | Request time: ${nowStr}`);
+      console.log(`[JOB POLL] Job ID: ${activeJobId} | Request time: ${nowStr}`);
 
-      videoTranslatorApi.getJob(job.id)
+      videoTranslatorApi.getJob(activeJobId)
         .then(res => {
           const respTimeStr = new Date().toLocaleTimeString('vi-VN');
           setLastApiResponseTime(respTimeStr);
 
           if (res.success && res.data) {
-            const newJob = res.data;
-            console.log(`[JOB POLL RESPONSE] Job: ${newJob.job_id || newJob.id} | Status: ${newJob.status} | Stage: ${newJob.stage} | Overall: ${newJob.overall_progress_pct}% | StagePct: ${newJob.stage_progress_pct}% | Heartbeat: ${newJob.heartbeat?.active} | FFmpeg: ${newJob.process?.status} | Segments: ${newJob.segments?.length || 0}`);
+            const rawData = res.data;
+            const newJob = {
+              ...rawData,
+              id: rawData.id || rawData.job_id,
+            };
+
+            console.log(`[JOB POLL RESPONSE] Job: ${newJob.id} | Status: ${newJob.status} | Stage: ${newJob.stage} | Overall: ${newJob.overall_progress_pct}% | StagePct: ${newJob.stage_progress_pct}% | Heartbeat: ${newJob.heartbeat?.active} | FFmpeg: ${newJob.process?.status} | Segments: ${newJob.segments?.length || 0}`);
+
+            // Stale response check: reject if request is older than latest received
+            if (reqTimestamp < lastPollTimestampRef.current) {
+              console.warn('[JOB POLL] Ignoring stale response');
+              return;
+            }
+            lastPollTimestampRef.current = reqTimestamp;
 
             setJob(prev => {
               if (prev && ['completed', 'failed', 'cancelled'].includes(prev.status)) {
@@ -106,13 +122,14 @@ export default function VideoTranslator() {
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
-  }, [job?.id, job?.status]);
+  }, [activeJobId, job?.status]);
 
   const fetchLogs = async (jobId) => {
-    if (!jobId) return;
+    const targetId = jobId || activeJobId;
+    if (!targetId) return;
     setIsFetchingLogs(true);
     try {
-      const res = await videoTranslatorApi.getLogs(jobId);
+      const res = await videoTranslatorApi.getLogs(targetId);
       if (res.success) {
         setLogsContent(res.data.logs || 'Chưa có dữ liệu log.');
       }
@@ -124,8 +141,8 @@ export default function VideoTranslator() {
   };
 
   const handleOpenLogs = () => {
-    if (job) {
-      fetchLogs(job.id);
+    if (activeJobId) {
+      fetchLogs(activeJobId);
       setShowLogModal(true);
     }
   };
@@ -176,12 +193,16 @@ export default function VideoTranslator() {
         original_audio_mode: originalAudioMode,
       });
 
-      const newJobId = jobRes.data.job_id;
+      const newJobId = jobRes.data.job_id || jobRes.data.id;
       await videoTranslatorApi.startJob(newJobId);
       const initialJob = await videoTranslatorApi.getJob(newJobId);
-      setJob(initialJob.data);
-      if (initialJob.data.segments && initialJob.data.segments.length > 0) {
-        setSegments(initialJob.data.segments);
+      const normalizedInitial = {
+        ...initialJob.data,
+        id: initialJob.data.id || initialJob.data.job_id,
+      };
+      setJob(normalizedInitial);
+      if (normalizedInitial.segments && normalizedInitial.segments.length > 0) {
+        setSegments(normalizedInitial.segments);
       }
     } catch (err) {
       const detail = err.response?.data?.detail || err.message || 'Không thể bắt đầu dịch video';
@@ -195,16 +216,20 @@ export default function VideoTranslator() {
   };
 
   const handleRenderFinalVideo = async () => {
-    if (!job?.id) return;
+    if (!activeJobId) return;
     setIsProcessing(true);
     setPipelineError(null);
 
     try {
       const updateItems = segments.map(s => ({ id: s.id, translated_text: s.translated_text }));
-      await videoTranslatorApi.updateSegments(job.id, updateItems);
-      await videoTranslatorApi.renderFinalVideo(job.id);
-      const updatedJob = await videoTranslatorApi.getJob(job.id);
-      setJob(updatedJob.data);
+      await videoTranslatorApi.updateSegments(activeJobId, updateItems);
+      await videoTranslatorApi.renderFinalVideo(activeJobId);
+      const updatedJob = await videoTranslatorApi.getJob(activeJobId);
+      const normalizedUpdated = {
+        ...updatedJob.data,
+        id: updatedJob.data.id || updatedJob.data.job_id,
+      };
+      setJob(normalizedUpdated);
     } catch (err) {
       const detail = err.response?.data?.detail || err.message || 'Lỗi render video';
       setPipelineError(detail);
@@ -213,24 +238,36 @@ export default function VideoTranslator() {
   };
 
   const handleCancelJob = async () => {
-    if (!job?.id) return;
+    if (!activeJobId) return;
     try {
-      await videoTranslatorApi.cancelJob(job.id);
-      const res = await videoTranslatorApi.getJob(job.id);
-      if (res.success) setJob(res.data);
+      await videoTranslatorApi.cancelJob(activeJobId);
+      const res = await videoTranslatorApi.getJob(activeJobId);
+      if (res.success) {
+        const normalized = {
+          ...res.data,
+          id: res.data.id || res.data.job_id,
+        };
+        setJob(normalized);
+      }
     } catch (err) {
       alert('Không thể hủy job: ' + (err.message || 'Lỗi hệ thống'));
     }
   };
 
   const handleRetryJob = async () => {
-    if (!job?.id) return;
+    if (!activeJobId) return;
     setIsProcessing(true);
     setPipelineError(null);
     try {
-      await videoTranslatorApi.retryJob(job.id);
-      const res = await videoTranslatorApi.getJob(job.id);
-      if (res.success) setJob(res.data);
+      await videoTranslatorApi.retryJob(activeJobId);
+      const res = await videoTranslatorApi.getJob(activeJobId);
+      if (res.success) {
+        const normalized = {
+          ...res.data,
+          id: res.data.id || res.data.job_id,
+        };
+        setJob(normalized);
+      }
     } catch (err) {
       setPipelineError('Không thể thử lại job: ' + (err.message || 'Lỗi hệ thống'));
       setIsProcessing(false);
