@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import get_settings
 from app.core import setup_logging, get_logger
 from app.database import init_db
-from app.api.routes import projects, providers, system
+from app.api.routes import projects, providers, system, video_translator
 from app.providers.registry import get_registry
 from app.providers.audio.edge_tts_provider import EdgeTTSProvider
 
@@ -99,6 +99,7 @@ app.add_middleware(
 app.include_router(projects.router)
 app.include_router(providers.router)
 app.include_router(system.router)
+app.include_router(video_translator.router)
 
 # Mount Static Files for local media serving
 settings.DATA_DIR.mkdir(parents=True, exist_ok=True)

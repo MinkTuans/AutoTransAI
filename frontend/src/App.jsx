@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard';
 import CreateProject from './pages/CreateProject';
 import ProjectDetail from './pages/ProjectDetail';
 import Settings from './pages/Settings';
+import VideoTranslator from './pages/VideoTranslator';
 import './App.css';
 
 export default function App() {
@@ -46,8 +47,11 @@ export default function App() {
           />
         )}
 
+        {activePage === 'translator' && <VideoTranslator />}
+
         {activePage === 'settings' && <Settings />}
       </main>
     </div>
   );
 }
+

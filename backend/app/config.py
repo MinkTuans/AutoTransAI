@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     VIDEO_TARGET_DURATION: int = 8  # seconds per segment clip
     VIDEO_OUTPUT_RESOLUTION: str = "1080p"
     VIDEO_FORMAT: str = "mp4"
+    VIDEO_MAX_SIZE_MB: int = 500
+    VIDEO_MAX_DURATION_MINUTES: int = 60
+    VIDEO_DOWNLOAD_TIMEOUT: int = 300
 
     # ── Audio ──────────────────────────────────────────────────────────
     AUDIO_FORMAT: str = "wav"

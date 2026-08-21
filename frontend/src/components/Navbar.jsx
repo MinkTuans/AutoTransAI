@@ -32,12 +32,20 @@ export default function Navbar({ activePage, setActivePage }) {
           + New Project
         </button>
         <button
+          className={`nav-link ${activePage === 'translator' ? 'active' : ''}`}
+          onClick={() => setActivePage('translator')}
+          style={{ background: 'none', border: 'none', cursor: 'pointer' }}
+        >
+          🌐 Video Translator
+        </button>
+        <button
           className={`nav-link ${activePage === 'settings' ? 'active' : ''}`}
           onClick={() => setActivePage('settings')}
           style={{ background: 'none', border: 'none', cursor: 'pointer' }}
         >
           Settings
         </button>
+
       </div>
     </nav>
   );

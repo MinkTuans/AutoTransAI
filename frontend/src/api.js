@@ -46,3 +46,31 @@ export const systemApi = {
   health: () => api.get('/system/health').then(res => res.data),
   interrupted: () => api.get('/system/interrupted').then(res => res.data),
 };
+
+export const videoTranslatorApi = {
+  checkUrl: (url) => api.post('/video-translator/check-url', { url }).then(res => res.data),
+  importUrl: (url) => {
+    const formData = new FormData();
+    formData.append('source_type', 'url');
+    formData.append('url', url);
+    return api.post('/video-translator/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }).then(res => res.data);
+  },
+  importUpload: (file) => {
+    const formData = new FormData();
+    formData.append('source_type', 'upload');
+    formData.append('file', file);
+    return api.post('/video-translator/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }).then(res => res.data);
+  },
+  getAsset: (assetId) => api.get(`/video-translator/assets/${assetId}`).then(res => res.data),
+  createJob: (data) => api.post('/video-translator/jobs', data).then(res => res.data),
+  startJob: (jobId) => api.post(`/video-translator/jobs/${jobId}/start`).then(res => res.data),
+  getJob: (jobId) => api.get(`/video-translator/jobs/${jobId}`).then(res => res.data),
+  updateSegments: (jobId, segments) =>
+    api.put(`/video-translator/jobs/${jobId}/segments`, { segments }).then(res => res.data),
+  renderJob: (jobId) => api.post(`/video-translator/jobs/${jobId}/render`).then(res => res.data),
+};
+

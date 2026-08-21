@@ -163,3 +163,47 @@ def probe_media_info(file_path: Path) -> dict:
         raise ValueError(f"FFprobe failed: {result.stderr}")
 
     return json.loads(result.stdout)
+
+
+async def probe_media_info_async(file_path: Path) -> dict:
+    """Async non-blocking version of probe_media_info."""
+    return await asyncio.to_thread(probe_media_info, file_path)
+
+
+def get_video_metadata(file_path: Path) -> dict:
+    """
+    Extract video metadata (duration, width, height, format, has_audio) from media file.
+    """
+    info = probe_media_info(file_path)
+    streams = info.get("streams", [])
+    fmt = info.get("format", {})
+
+    duration = float(fmt.get("duration", 0.0))
+    format_name = fmt.get("format_name", "mp4").split(",")[0]
+    file_size = int(fmt.get("size", file_path.stat().st_size if file_path.exists() else 0))
+
+    width = 0
+    height = 0
+    has_audio = False
+
+    for s in streams:
+        c_type = s.get("codec_type")
+        if c_type == "video" and not width:
+            width = int(s.get("width", 0))
+            height = int(s.get("height", 0))
+        elif c_type == "audio":
+            has_audio = True
+
+    return {
+        "duration": round(duration, 2),
+        "width": width,
+        "height": height,
+        "format": format_name,
+        "file_size": file_size,
+        "has_audio": has_audio,
+    }
+
+
+async def get_video_metadata_async(file_path: Path) -> dict:
+    return await asyncio.to_thread(get_video_metadata, file_path)
+

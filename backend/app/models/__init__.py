@@ -7,6 +7,11 @@ from app.models.asset import Asset
 from app.models.provider import Provider
 from app.models.usage_snapshot import UsageSnapshot
 from app.models.error import Error
+from app.models.video_translator import (
+    VideoAsset,
+    VideoTranslationJob,
+    VideoTranslationSegment,
+)
 
 __all__ = [
     "Project",
@@ -16,4 +21,8 @@ __all__ = [
     "Provider",
     "UsageSnapshot",
     "Error",
+    "VideoAsset",
+    "VideoTranslationJob",
+    "VideoTranslationSegment",
 ]
+
