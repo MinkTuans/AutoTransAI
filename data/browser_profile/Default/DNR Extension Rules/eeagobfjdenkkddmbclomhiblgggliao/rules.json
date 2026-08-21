@@ -1,0 +1,1 @@
+[{"action":{"responseHeaders":[{"header":"content-type","operation":"set","value":"text/html"}],"type":"modifyHeaders"},"condition":{"regexFilter":"\\.user\\.js([?#].*)?$","requestMethods":["get"],"resourceTypes":["main_frame"],"responseHeaders":[{"header":"content-type","values":["*/javascript*","text/plain*"]}]},"id":100}]

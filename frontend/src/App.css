@@ -59,6 +59,14 @@ body {
   text-decoration: none;
 }
 
+.navbar-logo-img {
+  width: 38px;
+  height: 38px;
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.3);
+}
+
 .navbar-brand span {
   color: var(--accent-primary);
 }

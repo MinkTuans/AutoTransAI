@@ -1,0 +1,866 @@
+{
+   "buttonApply": {
+      "message": "Εφαρμογή"
+   },
+   "buttonCancel": {
+      "message": "Ακύρωση"
+   },
+   "buttonClose": {
+      "message": "Κλείσιμο"
+   },
+   "buttonDisable": {
+      "message": "Απενεργοποίηση"
+   },
+   "buttonEdit": {
+      "message": "Επεξεργασία"
+   },
+   "buttonEditClickHint": {
+      "message": "Εναλλακτικά, μπορείτε να κάνετε δεξί κλικ, κλικ κρατώντας το πλήκτρο Ctrl πατημένο ή κλικ με τη ροδέλα του ποντικιού στο όνομα του script."
+   },
+   "buttonEmptyRecycleBin": {
+      "message": "Άδειασμα κάδου ανακύκλωσης"
+   },
+   "buttonEnable": {
+      "message": "Ενεργοποίηση"
+   },
+   "buttonExportData": {
+      "message": "Εξαγωγή σε αρχείο zip"
+   },
+   "buttonHome": {
+      "message": "Αρχική σελίδα"
+   },
+   "buttonImportData": {
+      "message": "Εισαγωγή από αρχείο zip"
+   },
+   "buttonInstallFromURL": {
+      "message": "Εγκατάσταση από διεύθυνση URL"
+   },
+   "buttonNew": {
+      "message": "Νέο"
+   },
+   "buttonNewFromFile": {
+      "message": "New from file"
+   },
+   "buttonOK": {
+      "message": "ΟΚ"
+   },
+   "buttonRecycleBin": {
+      "message": "Κάδος ανακύκλωσης"
+   },
+   "buttonRemove": {
+      "message": "Αφαίρεση"
+   },
+   "buttonReplace": {
+      "message": "Αντικατάσταση"
+   },
+   "buttonReplaceAll": {
+      "message": "Όλα"
+   },
+   "buttonReset": {
+      "message": "Επαναφορά"
+   },
+   "buttonResetSettings": {
+      "message": "Επαναφορά όλων των ρυθμίσεων"
+   },
+   "buttonRestore": {
+      "message": "Επαναφορά"
+   },
+   "buttonSave": {
+      "message": "Αποθήκευση"
+   },
+   "buttonSaveClose": {
+      "message": "Αποθήκευση και κλείσιμο"
+   },
+   "buttonSaved": {
+      "message": "Αποθηκεύτηκε"
+   },
+   "buttonShowEditorState": {
+      "message": "Εμφάνιση κατάστασης επεξεργαστή κειμένου"
+   },
+   "buttonSupport": {
+      "message": "Βοήθεια"
+   },
+   "buttonSyncPullOnce": {
+      "message": "Pull once to local"
+   },
+   "buttonSyncPushOnce": {
+      "message": "Push once to remote"
+   },
+   "buttonUndo": {
+      "message": "Αναίρεση"
+   },
+   "buttonUpdate": {
+      "message": "Ενημέρωση"
+   },
+   "buttonVacuum": {
+      "message": "Εκκαθάριση βάσης δεδομένων"
+   },
+   "buttonVacuumed": {
+      "message": "Η εκκαθάριση ολοκληρώθηκε"
+   },
+   "buttonVacuuming": {
+      "message": "Εκκαθάριση..."
+   },
+   "confirmManualUpdate": {
+      "message": "Αυτό το script δεν ενημερώνεται αυτόματα!\nΚάντε κλικ στο κουμπί «ΟΚ» αν θέλετε να πραγματοποιήσετε την ενημέρωση ούτως ή άλλως."
+   },
+   "confirmNotSaved": {
+      "message": "Οι αλλαγές δεν έχουν αποθηκευτεί!\nΚάντε κλικ στο κουμπί «ΟΚ» για να τις απορρίψετε ή στο κουμπί «Άκυρο» για να παραμείνετε σε αυτή τη σελίδα."
+   },
+   "confirmUndoImport": {
+      "message": "Αναίρεση όλων των αλλαγών που πραγματοποιήθηκαν στη βάση δεδομένων (εισαγωγή, ενημέρωση, επεξεργασία και προσαρμογή)"
+   },
+   "descBlacklist": {
+      "message": "Injection blacklist (τα scripts δε θα τρέχουν στις παρακάτω ιστοσελίδες)"
+   },
+   "descBlacklistNet": {
+      "message": "Blacklist δικτύου (τα scripts δε θα συνδέονται στις παρακάτω ιστοσελίδες ούτε θα έχουν πρόσβαση στα cookies τους)"
+   },
+   "descCustomCSS": {
+      "message": "Προσαρμοσμένος κώδικας CSS για τη σελίδα ρυθμίσεων και την σελίδα εγκατάστασης script. Αν δεν είστε σίγουρος(η) τι είναι αυτό, παρακαλώ μην το αλλάξετε."
+   },
+   "descEditorOptions": {
+      "message": "Επιλογές για το CodeMirror και για πρόσθετα σε αντικείμενα JSON, όπως το \u003Ccode>{\"indentUnit\":2, \"smartIndent\":true}\u003C/code>. Μερικές από τις επιλογές ενδέχεται να μη λειτουργούν με το Violentmonkey. Δείτε \u003Ca href=\"https://codemirror.net/doc/manual.html#config\" target=\"_blank\" rel=\"noopener noreferrer\">την πλήρη λίστα εδώ\u003C/a>."
+   },
+   "descEditorOptionsGeneric": {
+      "message": "Μπορείτε να τροποποιήσετε τις τιμές αληθείας (boolean) κάνοντας διπλό κλικ στην αντίστοιχη τιμή: \u003Ccode>true\u003C/code> = ενεργοποιημένο, \u003Ccode>false\u003C/code> = απενεργοποιημένο. Οι αριθμητικές τιμές των επιλογών που λήγουν σε \u003Ccode>Delay\u003C/code>, \u003Ccode>Interval\u003C/code>, \u003Ccode>Rate\u003C/code>, \u003Ccode>Time\u003C/code> αναφέρονται σε χρόνο και μετριούνται σε χιλιοστά του δευτερολέπτου (milliseconds)."
+   },
+   "descEditorOptionsVM": {
+      "message": "Άτυπες επιλογές: η τιμή της επιλογής \u003Ccode>autocompleteOnTyping\u003C/code> είναι η καθυστέρηση σε χιλιοστά του δευτερολέπτου πριν την εμφάνιση υποδείξεων αυτόματης συμπλήρωσης (\u003Ccode>0\u003C/code> = απενεργοποίηση επιλογής), η επιλογή \u003Ccode>killTrailingSpaceOnSave\u003C/code> αφαιρεί αυτόματα μετά την αποθήκευση τυχόν διαστήματα στο τέλος του κειμένου, ενώ τέλος η επιλογή \u003Ccode>showTrailingSpace\u003C/code> επιτρέπει την προβολή των διαστημάτων στο τέλος του κειμένου ως τελείες."
+   },
+   "descScriptTemplate": {
+      "message": "Υποστηριζόμενες μεταβλητές: \u003C{{name}}>, \u003C{{url}}>, \u003C{{icon}}>, \u003C{{date}}>, \u003C{{date:format}}>. Η μορφή πρέπει να είναι συμβατή με το πακέτο MomentJS, για παράδειγμα \u003C{{date:YYYY-MM-DD}}>."
+   },
+   "disabledScriptsGroup": {
+      "message": "ομαδοποίηση"
+   },
+   "disabledScriptsHide": {
+      "message": "απόκρυψη"
+   },
+   "disabledScriptsSelector": {
+      "message": "Απενεργοποιημένα script:"
+   },
+   "disabledScriptsShow": {
+      "message": "εμφάνιση"
+   },
+   "editHelpDocumentation": {
+      "message": "Οδηγίες για τα μεταδεδομένα και τεκμηρίωση για το \u003Ccode>GM\u003C/code> API"
+   },
+   "editHelpKeyboard": {
+      "message": "Συντομεύσεις πληκτρολογίου:"
+   },
+   "editHowToHint": {
+      "message": "Θέλετε να χρησιμοποιήσετε κάποιον άλλο επεξεργαστή κώδικα;"
+   },
+   "editLabelMeta": {
+      "message": "Προσαρμοσμένα μεταδεδομένα"
+   },
+   "editLabelSettings": {
+      "message": "Ρυθμίσεις script"
+   },
+   "editLongLine": {
+      "message": "Αυτή η γραμμή είναι πολύ μεγάλη"
+   },
+   "editLongLineTooltip": {
+      "message": "Αυτή η γραμμή περιέχει υπερβολικά πολλούς χαρακτήρες και δεν εμφανίζεται ολόκληρη προκειμένου να μην υπάρξουν καθυστερήσεις στην επεξεργασία.\nΜπορείτε να τροποποιήσετε το όριο στις ρυθμίσεις για προχωρημένους, όπως στο εξής παράδειγμα:\n\"maxDisplayLength\": 20000"
+   },
+   "editNavCode": {
+      "message": "Κώδικας"
+   },
+   "editNavSettings": {
+      "message": "Ρυθμίσεις"
+   },
+   "editNavValues": {
+      "message": "Τιμές"
+   },
+   "editValueAllHint": {
+      "message": "Εμφάνιση/επεξεργασία όλων των αποθηκευμένων τιμών του script"
+   },
+   "extDescription": {
+      "message": "Μία ανοιχτού κώδικα επέκταση διαχείρισης userscript, η οποία προσφέρει υποστήριξη για πολλά διαφορετικά προγράμματα περιήγησης"
+   },
+   "extName": {
+      "message": "Violentmonkey"
+   },
+   "failureReasonBlacklisted": {
+      "message": "Αποκλεισμένη από τις ρυθμίσεις του Violentmonkey"
+   },
+   "failureReasonNoninjectable": {
+      "message": "Το Violentmonkey δεν μπορεί να εκτελέσει  userscripts σε αυτήν τη σελίδα\n(πιθανότατα βρίσκεστε σε μία από τις εξής σελίδες: σελίδα διεπαφής του προγράμματος περιήγησης, σελίδα μιας επέκτασης, σελίδα αποκλεισμένη από κάποια πολιτική του προγράμματος περιήγησης, ιστοσελίδα μηχανής αναζήτησης στο Opera)"
+   },
+   "failureReasonRestarted": {
+      "message": "Έγινε επανεκκίνηση του Violentmonkey. Παρακαλούμε επαναφορτώστε την καρτέλα προκειμένου να εκτελεστούν τα userscripts."
+   },
+   "fileInstallBlocked": {
+      "message": "Υπάρχουν πολλοί τρόποι να εγκαταστήσετε ή να παρακολουθήσετε τις αλλαγές σε ένα τοπικό αρχείο: \u003C1>Μεταφέρετε και αποθέστε το αρχείο σε μία ανοιχτή σελίδα του Violentmonkey, όπως αυτή εδώ. \u003C2>Εγκαταστήστε έναν τοπικό διακομιστή HTTP για αυτό το αρχείο και ανοίξτε τον μέσω της διεύθυνσης URL http://localhost. \u003C3>Μεταβείτε στη σελίδα chrome://extensions, κάντε κλικ στο κουμπί «Λεπτομέρειες» κάτω από την επέκταση Violentmonkey και στη συνέχεια ενεργοποιήστε την επιλογή «Να επιτρέπεται η πρόσβαση σε διευθύνσεις URL αρχείων». Σημειώνουμε, πάντως, πως η ενεργοποίηση αυτής της ρύθμισης είναι επικίνδυνη επειδή δίνει σε κάθε userscript τη δυνατότητα ανάγνωσης όλων των τοπικών αρχείων."
+   },
+   "fileInstallBlockedFF": {
+      "message": "Open about:addons, click \"Violentmonkey\", click \"Permissions and data\", enable \"Access local files on your computer\"."
+   },
+   "filterAlphabeticalOrder": {
+      "message": "αλφαβητικά"
+   },
+   "filterExecutionOrder": {
+      "message": "σειρά εκτέλεσης"
+   },
+   "filterLastUpdateOrder": {
+      "message": "τελευταία ενημέρωση"
+   },
+   "filterLastVisitOrder": {
+      "message": "last visit time"
+   },
+   "filterLastVisitOrderTooltip": {
+      "message": "The last time you visited any site targeted by this script."
+   },
+   "filterSize": {
+      "message": "μέγεθος"
+   },
+   "genericError": {
+      "message": "Σφάλμα"
+   },
+   "genericOff": {
+      "message": "απενεργοποιημένο"
+   },
+   "genericOn": {
+      "message": "ενεργοποιημένο"
+   },
+   "genericUseGlobal": {
+      "message": "χρήση καθολικής ρύθμισης"
+   },
+   "hashPatternWarning": {
+      "message": "Τα μοτίβα \"#\" λειτουργούν μόνο κατά το αρχικό άνοιγμα μιας ιστοσελίδας ή με την επαναφόρτωση μιας καρτέλας: $1"
+   },
+   "headerRecycleBin": {
+      "message": "Κάδος Ανακύκλωσης"
+   },
+   "helpForLocalFile": {
+      "message": "Show help when a local script can't be installed"
+   },
+   "hintForBatchAction": {
+      "message": "θα εφαρμοστεί σε $1 script"
+   },
+   "hintGrantNone": {
+      "message": "`@grant none` disables all other `@grant` keys."
+   },
+   "hintGrantless": {
+      "message": "A sandboxed script cannot change these global properties: $1.\nTo fix the script either add `@grant none` to disable the sandbox,\nor use `unsafeWindow` instead of `window`."
+   },
+   "hintInputURL": {
+      "message": "Εισάγετε τη διεύθυνση URL:"
+   },
+   "hintRecycleBin": {
+      "message": "Τα scripts που διαγράφονται φαίνονται εδώ και διατηρούνται για 7 ημέρες."
+   },
+   "hintUseDownloadURL": {
+      "message": "Χρήση @downloadURL"
+   },
+   "hintVacuum": {
+      "message": "Απόρριψη των περιττών δεδομένων και προσπάθεια επαναφόρτωσης των πόρων που λείπουν στη μνήμη cache."
+   },
+   "install": {
+      "message": "Εγκατάσταση"
+   },
+   "installFrom": {
+      "message": "Εγκατάσταση από $1"
+   },
+   "installOptionTrackTooltip": {
+      "message": "Η καρτέλα του πρωτότυπου αρχείου πρέπει να μένει ανοιχτή στις νεότερες εκδόσεις του Firefox (68 και εξής)."
+   },
+   "labelAdvanced": {
+      "message": "Για προχωρημένους"
+   },
+   "labelAllowUpdate": {
+      "message": "Να επιτρέπεται ο έλεγχος για ενημερώσεις"
+   },
+   "labelAuthor": {
+      "message": "Συντάκτης: "
+   },
+   "labelAutoReloadCurrentTab": {
+      "message": "Επαναφόρτωση τρέχουσας καρτέλας μετά την ενεργοποίηση/απενεργοποίηση ενός script από το μενού"
+   },
+   "labelAutoUpdate": {
+      "message": "Έλεγχος για ενημερώσεις κάθε $1 ημέρα/ημέρες (πληκτρολογήστε 0 για απενεργοποίηση)"
+   },
+   "labelBackup": {
+      "message": "Backup"
+   },
+   "labelBackupMaintenance": {
+      "message": "Αντίγραφα ασφαλείας και συντήρηση"
+   },
+   "labelBadge": {
+      "message": "Σήμα:"
+   },
+   "labelBadgeColors": {
+      "message": "Χρώματα σήματος: "
+   },
+   "labelBadgeNone": {
+      "message": "τίποτα"
+   },
+   "labelBadgeTotal": {
+      "message": "πλήθος script που εκτελούνται"
+   },
+   "labelBadgeUnique": {
+      "message": "πλήθος μοναδικών script που εκτελούνται"
+   },
+   "labelBlacklist": {
+      "message": "Blacklist"
+   },
+   "labelComment": {
+      "message": "Comment"
+   },
+   "labelContributors": {
+      "message": "Συνεισφέροντες"
+   },
+   "labelCurrentLang": {
+      "message": "Τρέχουσα γλώσσα: "
+   },
+   "labelCustomCSS": {
+      "message": "Προσαρμοσμένο στυλ"
+   },
+   "labelDownloadURL": {
+      "message": "Διεύθυνση URL λήψης:"
+   },
+   "labelEditValue": {
+      "message": "Επεξεργασία τιμής script"
+   },
+   "labelEditValueAll": {
+      "message": "Επεξεργασία αποθηκευτικού χώρου του script"
+   },
+   "labelEditor": {
+      "message": "Επεξεργαστής κώδικα"
+   },
+   "labelEnabledScriptsOnly": {
+      "message": "Ενημέρωση μόνο των ενεργοποιημένων script"
+   },
+   "labelExclude": {
+      "message": "Κανόνες @exclude"
+   },
+   "labelExcludeMatch": {
+      "message": "Κανόνες @exclude-match"
+   },
+   "labelExportScriptData": {
+      "message": "Εξαγωγή δεδομένων script"
+   },
+   "labelExposeStatus": {
+      "message": "Εμφάνιση της εγκατεστημένης έκδοσης σε ιστοσελίδες με καταλόγους userscript: $1"
+   },
+   "labelFastInject": {
+      "message": "Εναλλακτική λειτουργία $1"
+   },
+   "labelFastInjectHint": {
+      "message": "Ένας εναλλακτικός τρόπος εκτέλεσης για τα script που χρησιμοποιούν το \u003Cdocument-start>, και ο οποίος είναι γρηγορότερος από τον προεπιλεγμένο. Όπως και με την επιλογή «Λειτουργία συγχρονισμένης σελίδας», η ρύθμιση αυτή έχει ως αποτέλεσμα τη δέσμευση περισσότερης μνήμης. Σε περίπτωση, δηλαδή, που τα script λειτουργούν κανονικά χωρίς αυτή τη ρύθμιση, ίσως είναι καλύτερο να την απενεργοποιήσετε."
+   },
+   "labelFeedback": {
+      "message": "Σχόλια"
+   },
+   "labelFirefoxPatchCsp": {
+      "message": "Bypass CSP in Firefox"
+   },
+   "labelFirefoxPatchCspHint": {
+      "message": "Adds a random value to the CSP of webpages that only Violentmonkey can use to run scripts in the $1 injection mode, otherwise scripts have to be edited to use $2."
+   },
+   "labelFirefoxPatchCspPopup": {
+      "message": "Isolated $1 mode may limit functionality, see \"$2\" in the options."
+   },
+   "labelGmDownloadViaApi": {
+      "message": "Use browser download API"
+   },
+   "labelGmDownloadViaApiHint": {
+      "message": "Allows scripts to save files into subfolders inside your downloads directory and shows download progress in the browser's download bar."
+   },
+   "labelGrantPermission": {
+      "message": "Grant permission"
+   },
+   "labelHelpTranslate": {
+      "message": "Βοηθήστε στη μετάφραση"
+   },
+   "labelHomepage": {
+      "message": "Αρχική σελίδα"
+   },
+   "labelHomepageURL": {
+      "message": "Διεύθυνση URL αρχικής σελίδας:"
+   },
+   "labelHttpOnlyCookie": {
+      "message": "Allow GM_cookie to access HTTP-only cookies"
+   },
+   "labelHttpOnlyCookieHint": {
+      "message": "When enabled, scripts can read and write cookies with the HTTP-only flag. This allows scripts to access cookies that cannot be accessed via JavaScript. Use with caution as it may pose security risks."
+   },
+   "labelIconURL": {
+      "message": "Διεύθυνση URL εικονιδίου:"
+   },
+   "labelImportScriptData": {
+      "message": "Εισαγωγή δεδομένων script"
+   },
+   "labelImportSettings": {
+      "message": "Ρυθμίσεις εισαγωγής"
+   },
+   "labelInclude": {
+      "message": "Κανόνες @include"
+   },
+   "labelInjectionMode": {
+      "message": "Λειτουργία εφαρμογής (injection mode): "
+   },
+   "labelInstall": {
+      "message": "Γίνεται εγκατάσταση του script"
+   },
+   "labelKeepOriginal": {
+      "message": "Διατήρηση πρωτοτύπου"
+   },
+   "labelLastUpdatedAt": {
+      "message": "Τελευταία ενημέρωση στις $1"
+   },
+   "labelLineNumber": {
+      "message": "Αριθμός γραμμής: "
+   },
+   "labelMatch": {
+      "message": "Κανόνες @match"
+   },
+   "labelName": {
+      "message": "Όνομα:"
+   },
+   "labelNoFrames": {
+      "message": "Εκτέλεση στα frames: "
+   },
+   "labelNoName": {
+      "message": "Χωρίς όνομα"
+   },
+   "labelNoSearchScripts": {
+      "message": "Δε βρέθηκε κανένα script."
+   },
+   "labelNotifyThisUpdated": {
+      "message": " Ειδοποιήσεις:"
+   },
+   "labelNotifyUpdates": {
+      "message": "Εμφάνιση ειδοποιήσεων όταν υπάρχει διαθέσιμη ενημέρωση script"
+   },
+   "labelNotifyUpdatesGlobal": {
+      "message": "αγνόηση των ρυθμίσεων κάθε script για ειδοποιήσεις"
+   },
+   "labelPageMenuCommands": {
+      "message": "Show script commands in page menu"
+   },
+   "labelPrivacyPolicy": {
+      "message": "Πολιτική Απορρήτου"
+   },
+   "labelReinstall": {
+      "message": "Γίνεται επανεγκατάσταση του script"
+   },
+   "labelRelated": {
+      "message": "Σχετικοί σύνδεσμοι: "
+   },
+   "labelRemovedAt": {
+      "message": "Διαγράφηκε στις $1"
+   },
+   "labelReplace": {
+      "message": "Αντικατάσταση με: "
+   },
+   "labelRunAt": {
+      "message": "Run-at: "
+   },
+   "labelRunAtDefault": {
+      "message": "(Προκαθορισμένο)"
+   },
+   "labelScriptOptionRequired": {
+      "message": "(only for scripts with this option enabled in their settings)"
+   },
+   "labelScriptOptionRequiredGlobal": {
+      "message": "(this option must be also enabled in global settings)"
+   },
+   "labelScriptTemplate": {
+      "message": "Προσαρμοσμένα πρότυπα script"
+   },
+   "labelSearch": {
+      "message": "Αναζήτηση για: "
+   },
+   "labelSearchScript": {
+      "message": "Αναζήτηση σεναρίων..."
+   },
+   "labelSettings": {
+      "message": "Ρυθμίσεις"
+   },
+   "labelShowOrder": {
+      "message": "Εμφάνιση της σειράς εκτέλεσης των script"
+   },
+   "labelShowVisited": {
+      "message": "Show last visit time"
+   },
+   "labelSync": {
+      "message": "Συγχρονισμός"
+   },
+   "labelSyncAnonymous": {
+      "message": "Χρήση ανώνυμου λογαριασμού"
+   },
+   "labelSyncAuthorize": {
+      "message": "Εξουσιοδότηση"
+   },
+   "labelSyncAuthorizing": {
+      "message": "Εξουσιοδότηση..."
+   },
+   "labelSyncAutomatically": {
+      "message": "Sync automatically"
+   },
+   "labelSyncDisabled": {
+      "message": "Να μη γίνεται συγχρονισμός"
+   },
+   "labelSyncPassword": {
+      "message": "Κωδικός πρόσβασης: "
+   },
+   "labelSyncRevoke": {
+      "message": "Ανάκληση εξουσιοδότησης"
+   },
+   "labelSyncS3AccessKeyId": {
+      "message": "Access Key ID: "
+   },
+   "labelSyncS3Bucket": {
+      "message": "Bucket: "
+   },
+   "labelSyncS3Endpoint": {
+      "message": "Custom Endpoint: "
+   },
+   "labelSyncS3Prefix": {
+      "message": "Key Prefix: "
+   },
+   "labelSyncS3Region": {
+      "message": "Region: "
+   },
+   "labelSyncS3SecretAccessKey": {
+      "message": "Secret Access Key: "
+   },
+   "labelSyncScriptStatus": {
+      "message": "Κατάσταση συγχρονισμού script"
+   },
+   "labelSyncServerUrl": {
+      "message": "Διεύθυνση URL διακομιστή: "
+   },
+   "labelSyncService": {
+      "message": "Συγχρονισμός σε"
+   },
+   "labelSyncUsername": {
+      "message": "Όνομα χρήστη: "
+   },
+   "labelTags": {
+      "message": "@tag / ετικέτες"
+   },
+   "labelTheme": {
+      "message": "Θέμα: "
+   },
+   "labelUpdateURL": {
+      "message": "Διεύθυνση URL λήψης ενημερώσεων:"
+   },
+   "labelViewSingleColumn": {
+      "message": "Εμφάνιση σε μία στήλη"
+   },
+   "labelViewTable": {
+      "message": "Εμφάνιση σε μορφή πίνακα"
+   },
+   "labelWidth": {
+      "message": "Πλάτος:"
+   },
+   "labelXhrInject": {
+      "message": "Λειτουργία συγχρονισμένου $1"
+   },
+   "labelXhrInjectHint": {
+      "message": "Ενεργοποιήστε αυτή τη ρύθμιση μόνο αν κάποιο script χρειάζεται να εκτελεστεί πριν τη φόρτωση της σελίδας και προς το παρόν εκτελείται σε πολύ μεταγενέστερο χρόνο. Όπως και στη λειτουργία Instant injection στην επέκταση Tampermonkey, αυτή η επιλογή χρησιμοποιεί το συγχρονισμένο (synchronous) και πλέον απαρχαιωμένο XHR. Αυτό έχει ως αποτέλεσμα την εμφάνιση προειδοποιήσεων στην κονσόλα των εργαλείων για προγραμματιστές στο Chrome/Chromium, τις οποίες όμως μπορείτε να αγνοήσετε με ασφάλεια, αφού η χρήση του XHR στη συγκεκριμένη περίπτωση έχει αμελητέα επίδραση στις επιδόσεις του προγράμματος περιήγησης. Μάλιστα, μπορείτε να αποκρύψετε όλες τις σχετικές προειδοποιήσεις κάνοντας δεξί κλικ σε μια από αυτές."
+   },
+   "labelXhrInjectNote": {
+      "message": "(εκτός από καρτέλες ανώνυμης περιήγησης και ιστοσελίδες με απενεργοποιημένα cookies)"
+   },
+   "lastSync": {
+      "message": "Ο τελευταίος συγχρονισμός πραγματοποιήθηκε στις $1"
+   },
+   "learnBlacklist": {
+      "message": "Μάθετε περισσότερα για τα πρότυπα της blacklist."
+   },
+   "learnInjectionMode": {
+      "message": "Μάθετε περισσότερα για της λειτουργίες εκτέλεσης των script (injection modes)"
+   },
+   "linkManageRemoteFiles": {
+      "message": "Manage remote files"
+   },
+   "menuDashboard": {
+      "message": "Άνοιγμα πίνακα ελέγχου"
+   },
+   "menuExclude": {
+      "message": "Εξαίρεση..."
+   },
+   "menuExcludeHint": {
+      "message": "Αν έχετε ενεργοποιήσει αυτή την επιλογή στις γενικές ρυθμίσεις, θα πραγματοποιηθεί αυτόματη επαναφόρτωση αυτής της καρτέλας.\nΓια να εφαρμόσετε τις αλλαγές που έχετε πραγματοποιήσει σε όλες τις υπόλοιπες καρτέλες, επαναφορτώστε καθεμία από αυτές.\nΧρησιμοποιήστε την καρτέλα «Ρυθμίσεις» του επεξεργαστή κώδικα για περισσότερη ευελιξία."
+   },
+   "menuFeedback": {
+      "message": "Σχόλια"
+   },
+   "menuFindScripts": {
+      "message": "Βρείτε script για αυτή την σελίδα"
+   },
+   "menuInjectionFailed": {
+      "message": "Δεν ήταν δυνατή η εκτέλεση ορισμένων script"
+   },
+   "menuInjectionFailedFix": {
+      "message": "Εκ νέου προσπάθεια στη λειτουργία «auto»"
+   },
+   "menuMatchedDisabledScripts": {
+      "message": "Απενεργοποιημένα script που αντιστοιχούν"
+   },
+   "menuMatchedFrameScripts": {
+      "message": "Script που εκτελούνται σε sub-frames"
+   },
+   "menuMatchedScripts": {
+      "message": "Script που αντιστοιχούν"
+   },
+   "menuNewScript": {
+      "message": "Δημιουργία νέου script"
+   },
+   "menuScriptDisabled": {
+      "message": "Τα script απενεργοποιήθηκαν"
+   },
+   "menuScriptEnabled": {
+      "message": "Τα script ενεργοποιήθηκαν"
+   },
+   "msgCheckingForUpdate": {
+      "message": "Έλεγχος για ενημερώσεις..."
+   },
+   "msgDateFormatInfo": {
+      "message": "Κάντε κλικ εδώ για να ανοίξετε την τεκμηρίωση του MomentJS σε νέα καρτέλα. Επιτρέπονται τα εξής tokens: $1. Χρησιμοποιήστε [αγκύλες] για να περικλείσετε απλό κείμενο."
+   },
+   "msgErrorFetchingResource": {
+      "message": "Δεν ήταν δυνατή η λήψη ενός πόρου του script!"
+   },
+   "msgErrorFetchingScript": {
+      "message": "Δεν ήταν δυνατή η λήψη του script!"
+   },
+   "msgErrorFetchingUpdateInfo": {
+      "message": "Δεν ήταν δυνατή η λήψη πληροφοριών ενημέρωσης."
+   },
+   "msgErrorLoadingData": {
+      "message": "Δεν ήταν δυνατή η φόρτωση των δεδομένων του script."
+   },
+   "msgErrorLoadingDependency": {
+      "message": "Δεν ήταν δυνατή η φόρτωση των εξαρτήσεων (dependencies) του script."
+   },
+   "msgImported": {
+      "message": "$1 αντικείμενο(α) εισήχθη(σαν)."
+   },
+   "msgIncognitoChanges": {
+      "message": "Οι αλλαγές που θα πραγματοποιήσετε στην ανώνυμη περιήγηση θα εφαρμοστούν και στο κυρίως προφίλ σας."
+   },
+   "msgInstalled": {
+      "message": "Το script εγκαταστάθηκε."
+   },
+   "msgInvalidScript": {
+      "message": "Μη έγκυρο script!"
+   },
+   "msgLoadingData": {
+      "message": "Φόρτωση δεδομένων script..."
+   },
+   "msgLoadingDependency": {
+      "message": "Φόρτωση εξαρτήσεων... ($1/$2)"
+   },
+   "msgMissingResources": {
+      "message": "Απουσιάζουν απαραίτητοι πόροι"
+   },
+   "msgNamespaceConflict": {
+      "message": "Ένα script με ίδιο όνομα με αυτό είναι ήδη εγκατεστημένο.\nΠαρακαλούμε είτε χρησιμοποιήστε διαφορετικό @name και @namespace είτε επεξεργαστείτε το script."
+   },
+   "msgNamespaceConflictRestore": {
+      "message": "Ένα script με ίδιο @name και @namespace είναι ήδη εγκατεστημένο."
+   },
+   "msgNewVersion": {
+      "message": "Μια νέα έκδοση είναι διαθέσιμη."
+   },
+   "msgNoUpdate": {
+      "message": "Δε βρέθηκε καμία ενημέρωση."
+   },
+   "msgOpenUpdateErrors": {
+      "message": "Δεν ήταν δυνατή η ενημέρωση των script. Κάντε κλικ για να τα ανοίξετε."
+   },
+   "msgReinstallScripts": {
+      "message": "Παρακαλούμε αποθηκεύστε ξανά ή εγκαταστήστε εκ νέου τα εξής script:"
+   },
+   "msgSameCode": {
+      "message": "(ο κώδικας παρέμεινε ίδιος)"
+   },
+   "msgScriptUpdated": {
+      "message": "Το script [$1] είναι ενημερωμένο!"
+   },
+   "msgShowHide": {
+      "message": "Εμφάνιση/απόκρυψη"
+   },
+   "msgSyncError": {
+      "message": "Δεν ήταν δυνατός ο συγχρονισμός!"
+   },
+   "msgSyncInit": {
+      "message": "Αρχικοποίηση..."
+   },
+   "msgSyncInitError": {
+      "message": "Δεν ήταν δυνατή η αρχικοποίηση!"
+   },
+   "msgSyncNoAuthYet": {
+      "message": "Δεν έχει παρασχεθεί εξουσιοδότηση."
+   },
+   "msgSyncing": {
+      "message": "Ο συγχρονισμός βρίσκεται σε εξέλιξη..."
+   },
+   "msgSyntaxError": {
+      "message": "Συντακτικό σφάλμα;"
+   },
+   "msgTardyMatch": {
+      "message": "Το script δεν υπήρχε ή δεν υπήρξε αντιστοιχία με τη διεύθυνση URL της ιστοσελίδας όταν αυτή φορτώθηκε αρχικά, γεγονός που συμβαίνει με τις ιστοσελίδες της μορφής Single-Page Application (εφαρμογές μίας σελίδας) όπως το Facebook και το Instagram, οι οποίες χρησιμοποιούν ένα είδος «ψεύτικης» πλοήγησης. Μπορείτε να επαναφορτώσετε την καρτέλα για να εκτελέσετε το script. Εναλλακτικά, μπορείτε να επεξεργαστείτε το script αλλάζοντας τον κανόνα @match ώστε να περιλαμβάνει κάθε σελίδα του τομέα και τροποποιώντας τον κώδικα ώστε τυχόν αλλαγές στη διεύθυνση URL να παρακολουθούνται - για τον σκοπό αυτό, μπορείτε να χρησιμοποιήσετε την κλάση MutationObserver και το API window.navigation."
+   },
+   "msgUpdated": {
+      "message": "Το script ενημερώθηκε."
+   },
+   "msgUpdating": {
+      "message": "Ενημέρωση..."
+   },
+   "noValues": {
+      "message": "Καμία τιμή δεν έχει αποθηκευτεί στον χώρο αποθήκευσης του script"
+   },
+   "optionEditorWindow": {
+      "message": "Άνοιγμα επεξεργαστή κώδικα από το αναδυόμενο παράθυρο σε νέο παράθυρο"
+   },
+   "optionEditorWindowHint": {
+      "message": "Η θέση του παραθύρου του επεξεργαστή κώδικα θα αποθηκεύεται κάθε φορά που αλλάζετε το μέγεθος του παραθύρου και κάθε φορά που κάνετε αποθήκευση το script"
+   },
+   "optionEditorWindowSimple": {
+      "message": "Απόκρυψη omnibox"
+   },
+   "optionPopup": {
+      "message": "Αναδυόμενο παράθυρο μενού και εικονίδιο"
+   },
+   "optionPopupEnabledFirst": {
+      "message": "Πρώτα τα ενεργοποιημένα"
+   },
+   "optionPopupGroupRunAt": {
+      "message": "Ομαδοποίηση με βάση την τιμή του @run-at"
+   },
+   "optionShowEnabledFirst": {
+      "message": "Εμφάνιση των ενεργοποιημένων script πρώτα"
+   },
+   "optionUiTheme": {
+      "message": "Θέμα διεπαφής χρήστη: "
+   },
+   "optionUiThemeAuto": {
+      "message": "να εντοπίζεται αυτόματα"
+   },
+   "optionUiThemeDark": {
+      "message": "σκουρόχρωμο"
+   },
+   "optionUiThemeLight": {
+      "message": "ανοιχτόχρωμο"
+   },
+   "optionUpdate": {
+      "message": "Ενημέρωση"
+   },
+   "popupSettings": {
+      "message": "Ρυθμίσεις αναδυόμενου παραθύρου"
+   },
+   "popupSettingsHint": {
+      "message": "Δεξί κλικ: ρυθμίσεις αναδυόμενου παραθύρου"
+   },
+   "readonly": {
+      "message": "Μόνο για ανάγνωση"
+   },
+   "readonlyNote": {
+      "message": "Αυτό το script λαμβάνει ενημερώσεις αυτόματα και για τον λόγο αυτό βρίσκεται σε λειτουργία μόνο ανάγνωσης. Για να απενεργοποιήσετε αυτή τη λειτουργία, απενεργοποιήστε τον έλεγχο για ενημερώσεις σε αυτό το script η ενεργοποιήστε την επιλογή «Να επιτρέπεται η επεξεργασία»."
+   },
+   "readonlyOpt": {
+      "message": "Να επιτρέπεται η επεξεργασία"
+   },
+   "readonlyOptWarn": {
+      "message": "(η εγκατάσταση της επόμενης ενημέρωσης θα αντικαταστήσει τυχόν αλλαγές που θα πραγματοποιήσετε)"
+   },
+   "reinstall": {
+      "message": "Επανεγκατάσταση"
+   },
+   "reloadTab": {
+      "message": "Επαναφόρτωση καρτέλας"
+   },
+   "reloadTabTrackHint": {
+      "message": "Εάν η επιλογή αυτή είναι ενεργοποιημένα, η ενεργή καρτέλα θα ανανεώνεται κάθε φορά που εντοπίζονται αλλαγές στο script, υπό την προϋπόθεση πως η διεύθυνση URL της καρτέλας ταιριάζει με τους κανόνες @match και @include του script."
+   },
+   "searchCaseSensitive": {
+      "message": "Διάκριση πεζών-κεφαλαίων"
+   },
+   "searchUseRegex": {
+      "message": "Χρήση Regex"
+   },
+   "sideMenuAbout": {
+      "message": "Σχετικά"
+   },
+   "sideMenuInstalled": {
+      "message": "Εγκατεστημένα script"
+   },
+   "sideMenuScripts": {
+      "message": "Scripts"
+   },
+   "sideMenuSettings": {
+      "message": "Ρυθμίσεις"
+   },
+   "skipScripts": {
+      "message": "Επαναφορά της καρτέλας χωρίς userscripts"
+   },
+   "skipScriptsMsg": {
+      "message": "Έχετε απενεργοποιήσει τα userscripts για αυτή τη σελίδα. Για να τα εκτελέσετε ξανά, επαναφορτώστε την καρτέλα ή πλοηγηθείτε σε αυτήν."
+   },
+   "sortOrder": {
+      "message": "Ταξινόμηση:"
+   },
+   "stopTracking": {
+      "message": "Διακοπή παρακολούθησης"
+   },
+   "titleBadgeColor": {
+      "message": "Κανονικό χρώμα σήματος"
+   },
+   "titleBadgeColorBlocked": {
+      "message": "Χρώμα σήματος όταν δεν εκτελούνται script επειδή η ιστοσελίδα είναι στη λίστα blacklist ή επειδή δεν υποστηρίζεται η εκτέλεση script σε αυτήν"
+   },
+   "titleSearchHintV2": {
+      "message": "* Το πλήκτρο \u003Ckbd>Enter\u003C/kbd> προσθέτει το κείμενο στο ιστορικό αυτόματης συμπλήρωσης\n* Σε όλους τους όρους γίνεται διάκριση πεζών-κεφαλαίων\n* Όροι που διαχωρίζονται με διαστήματα μπορούν να ενωθούν\n* Αναζήτηση με βάση τα μεταδεδομένα: \u003Ccode>\"Awesome Script\" \"Description\"\u003C/code>\n* Αναζήτηση με βάση της ετικέτες: \u003Ccode>#tag1 #tag2\u003C/code>\n* Αναζήτηση με βάση το όνομα του script: \u003Ccode>name:\"awesome name\"\u003C/code>\n* Αναζήτηση με βάση τον κώδικα του script: \u003Ccode>code:\"awesome code\"\u003C/code>\n* Αντίστροφη αναζήτηση: \u003Ccode>!#tag2 !name:\"unwanted\"\u003C/code>\n* Regular expressions: \u003Ccode>/\\w+?/\u003C/code>, \u003Ccode>/\\w+?/gi\u003C/code>, \u003Ccode>name:/\\w+?/\u003C/code>, \u003Ccode>name+re:\"\\w+? with space\"\u003C/code>"
+   },
+   "toggleInjection": {
+      "message": "Εναλλαγή εφαρμογής (injection) userscript"
+   },
+   "trackEdits": {
+      "message": "Παρακολούθηση αλλαγών από άλλες πηγές"
+   },
+   "trackEditsNote": {
+      "message": "Κρατήστε αυτή τη σελίδα ανοικτή για να παρακολουθείτε τις αλλαγές που κάνετε σε τοπικό αρχείο"
+   },
+   "updateListedCmd": {
+      "message": "Ενημέρωση script ($1)"
+   },
+   "updateScript": {
+      "message": "Ενημέρωση"
+   },
+   "updateScriptForced": {
+      "message": "Right-click or long touch to force-update including dependencies"
+   },
+   "updateScriptsAll": {
+      "message": "Ενημέρωση όλων των scripts"
+   },
+   "updateScriptsInTab": {
+      "message": "Ενημέρωση των script που εκτελούνται σε αυτήν την καρτέλα"
+   },
+   "userScriptsPermissionNote": {
+      "message": "Please enable \"Allow User Scripts\" in details for Violentmonkey in chrome://extensions and reload the tab"
+   },
+   "userScriptsPermissionNoteOld": {
+      "message": "Please enable \"Developer Mode\" in chrome://extensions and reload the tab"
+   },
+   "valueLabelKey": {
+      "message": "Κλειδί (συμβολοσειρά)"
+   },
+   "valueLabelValue": {
+      "message": "Τιμή (σε μορφή JSON)"
+   },
+   "valueLabelValueAll": {
+      "message": "Όλες οι τιμές (σε μορφή JSON)"
+   },
+   "valueLabelValueOr": {
+      "message": "Value (serialized as JSON or $1)"
+   },
+   "valueLabelValueString": {
+      "message": "$1 string"
+   }
+}

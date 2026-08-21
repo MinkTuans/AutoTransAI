@@ -1,0 +1,29 @@
+/*!
+ * @license
+ * TradingView Lightweight Charts™ v5.2.0
+ * Copyright (c) 2026 TradingView, Inc.
+ * Licensed under Apache License 2.0 https://www.apache.org/licenses/LICENSE-2.0
+ */
+
+/*! @license DOMPurify 3.4.12 | (c) Cure53 and other contributors | Released under the Apache license 2.0 and Mozilla Public License 2.0 | github.com/cure53/DOMPurify/blob/3.4.12/LICENSE */
+
+/**
+ * @license React
+ * react.production.js
+ *
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+/**
+ * react-router v7.18.1
+ *
+ * Copyright (c) Remix Software Inc.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE.md file in the root directory of this source tree.
+ *
+ * @license MIT
+ */

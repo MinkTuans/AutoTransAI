@@ -1,0 +1,402 @@
+import { createHotContext as __vite__createHotContext } from "/@vite/client";import.meta.hot = __vite__createHotContext("/src/pages/CreateProject.jsx");import __vite__cjsImport0_react_jsxDevRuntime from "/node_modules/.vite/deps/react_jsx-dev-runtime.js?v=f9e4ebc7"; const jsxDEV = __vite__cjsImport0_react_jsxDevRuntime["jsxDEV"];
+import * as RefreshRuntime from "/@react-refresh";
+const inWebWorker = typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScope;
+let prevRefreshReg;
+let prevRefreshSig;
+if (import.meta.hot && !inWebWorker) {
+  if (!window.$RefreshReg$) {
+    throw new Error(
+      "@vitejs/plugin-react can't detect preamble. Something is wrong."
+    );
+  }
+  prevRefreshReg = window.$RefreshReg$;
+  prevRefreshSig = window.$RefreshSig$;
+  window.$RefreshReg$ = RefreshRuntime.getRefreshReg("C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx");
+  window.$RefreshSig$ = RefreshRuntime.createSignatureFunctionForTransform;
+}
+var _s = $RefreshSig$();
+import __vite__cjsImport3_react from "/node_modules/.vite/deps/react.js?v=f9e4ebc7"; const React = __vite__cjsImport3_react.__esModule ? __vite__cjsImport3_react.default : __vite__cjsImport3_react; const useState = __vite__cjsImport3_react["useState"]; const useMemo = __vite__cjsImport3_react["useMemo"];
+import { projectsApi } from "/src/api.js";
+const SAMPLE_SCRIPT = `Phân đoạn 1: Hello everyone! Welcome to our video production workflow demonstration.
+Phân đoạn 2: In this project, we process your script locally, segment by segment.
+Phân đoạn 3: Audio and video generated per segment are perfectly synchronized using FFmpeg.
+Phân đoạn 4: Enjoy smooth, error-resilient video production right on your computer.`;
+export default function CreateProject({ onProjectCreated }) {
+  _s();
+  const [title, setTitle] = useState("My Video Project");
+  const [script, setScript] = useState(SAMPLE_SCRIPT);
+  const [workflowMode, setWorkflowMode] = useState("audio_video");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+  const stats = useMemo(() => {
+    if (!script.trim()) return { segments: 0, chars: 0, estDuration: 0 };
+    const phanDoanMatches = script.match(/Phân\s+đoạn\s+\d+/gi);
+    const segmentMatches = script.match(/Segment\s+\d+/gi);
+    const numberedMatches = script.match(/^\d+[\:\.]/gm);
+    let count = 0;
+    if (phanDoanMatches) count = phanDoanMatches.length;
+    else if (segmentMatches) count = segmentMatches.length;
+    else if (numberedMatches) count = numberedMatches.length;
+    else
+      count = script.split(/\n\s*\n/).filter((p) => p.trim()).length;
+    const chars = script.length;
+    const estDurationSec = Math.round(chars / 13);
+    return {
+      segments: count,
+      chars,
+      estDurationSec
+    };
+  }, [script]);
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!script.trim()) {
+      setError("Script cannot be empty");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await projectsApi.create({
+        title,
+        script,
+        workflow_mode: workflowMode
+      });
+      if (res.success) {
+        onProjectCreated(res.data.project_id);
+      } else {
+        setError(res.error?.message || "Failed to create project");
+      }
+    } catch (err) {
+      setError(err.response?.data?.detail || "Failed to create project");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `~${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  };
+  return /* @__PURE__ */ jsxDEV("div", { children: [
+    /* @__PURE__ */ jsxDEV("div", { className: "page-header", children: /* @__PURE__ */ jsxDEV("div", { children: [
+      /* @__PURE__ */ jsxDEV("h1", { className: "page-title", children: "Create New Project" }, void 0, false, {
+        fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+        lineNumber: 99,
+        columnNumber: 11
+      }, this),
+      /* @__PURE__ */ jsxDEV("p", { className: "page-subtitle", children: "Paste your structured script below" }, void 0, false, {
+        fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+        lineNumber: 100,
+        columnNumber: 11
+      }, this)
+    ] }, void 0, true, {
+      fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+      lineNumber: 98,
+      columnNumber: 9
+    }, this) }, void 0, false, {
+      fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+      lineNumber: 97,
+      columnNumber: 7
+    }, this),
+    error && /* @__PURE__ */ jsxDEV("div", { className: "banner banner-danger", children: /* @__PURE__ */ jsxDEV("span", { children: [
+      "❌ ",
+      error
+    ] }, void 0, true, {
+      fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+      lineNumber: 106,
+      columnNumber: 11
+    }, this) }, void 0, false, {
+      fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+      lineNumber: 105,
+      columnNumber: 7
+    }, this),
+    /* @__PURE__ */ jsxDEV("form", { onSubmit: handleSubmit, children: /* @__PURE__ */ jsxDEV("div", { className: "card", children: [
+      /* @__PURE__ */ jsxDEV("div", { className: "form-group", children: [
+        /* @__PURE__ */ jsxDEV("label", { className: "form-label", children: "Project Title" }, void 0, false, {
+          fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+          lineNumber: 113,
+          columnNumber: 13
+        }, this),
+        /* @__PURE__ */ jsxDEV(
+          "input",
+          {
+            type: "text",
+            className: "form-control",
+            value: title,
+            onChange: (e) => setTitle(e.target.value),
+            placeholder: "e.g. AI Video Demo",
+            required: true
+          },
+          void 0,
+          false,
+          {
+            fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+            lineNumber: 114,
+            columnNumber: 13
+          },
+          this
+        )
+      ] }, void 0, true, {
+        fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+        lineNumber: 112,
+        columnNumber: 11
+      }, this),
+      /* @__PURE__ */ jsxDEV("div", { className: "form-group", children: [
+        /* @__PURE__ */ jsxDEV("label", { className: "form-label", children: "Workflow Mode" }, void 0, false, {
+          fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+          lineNumber: 125,
+          columnNumber: 13
+        }, this),
+        /* @__PURE__ */ jsxDEV("div", { className: "radio-cards", children: [
+          /* @__PURE__ */ jsxDEV(
+            "div",
+            {
+              className: `radio-card ${workflowMode === "audio_only" ? "selected" : ""}`,
+              onClick: () => setWorkflowMode("audio_only"),
+              children: [
+                /* @__PURE__ */ jsxDEV(
+                  "input",
+                  {
+                    type: "radio",
+                    name: "mode",
+                    checked: workflowMode === "audio_only",
+                    onChange: () => setWorkflowMode("audio_only")
+                  },
+                  void 0,
+                  false,
+                  {
+                    fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+                    lineNumber: 131,
+                    columnNumber: 17
+                  },
+                  this
+                ),
+                /* @__PURE__ */ jsxDEV("div", { children: [
+                  /* @__PURE__ */ jsxDEV("strong", { children: "🎙️ Mode 1: Audio Only" }, void 0, false, {
+                    fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+                    lineNumber: 138,
+                    columnNumber: 19
+                  }, this),
+                  /* @__PURE__ */ jsxDEV("p", { style: { fontSize: "0.8rem", color: "var(--text-secondary)" }, children: "Generates WAV audio files for each segment using Text-to-Speech." }, void 0, false, {
+                    fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+                    lineNumber: 139,
+                    columnNumber: 19
+                  }, this)
+                ] }, void 0, true, {
+                  fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+                  lineNumber: 137,
+                  columnNumber: 17
+                }, this)
+              ]
+            },
+            void 0,
+            true,
+            {
+              fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+              lineNumber: 127,
+              columnNumber: 15
+            },
+            this
+          ),
+          /* @__PURE__ */ jsxDEV(
+            "div",
+            {
+              className: `radio-card ${workflowMode === "audio_video" ? "selected" : ""}`,
+              onClick: () => setWorkflowMode("audio_video"),
+              children: [
+                /* @__PURE__ */ jsxDEV(
+                  "input",
+                  {
+                    type: "radio",
+                    name: "mode",
+                    checked: workflowMode === "audio_video",
+                    onChange: () => setWorkflowMode("audio_video")
+                  },
+                  void 0,
+                  false,
+                  {
+                    fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+                    lineNumber: 149,
+                    columnNumber: 17
+                  },
+                  this
+                ),
+                /* @__PURE__ */ jsxDEV("div", { children: [
+                  /* @__PURE__ */ jsxDEV("strong", { children: "🎥 Mode 2: Audio + Video" }, void 0, false, {
+                    fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+                    lineNumber: 156,
+                    columnNumber: 19
+                  }, this),
+                  /* @__PURE__ */ jsxDEV("p", { style: { fontSize: "0.8rem", color: "var(--text-secondary)" }, children: "Generates Audio + Video clips per segment, syncs timing, and merges into final MP4." }, void 0, false, {
+                    fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+                    lineNumber: 157,
+                    columnNumber: 19
+                  }, this)
+                ] }, void 0, true, {
+                  fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+                  lineNumber: 155,
+                  columnNumber: 17
+                }, this)
+              ]
+            },
+            void 0,
+            true,
+            {
+              fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+              lineNumber: 145,
+              columnNumber: 15
+            },
+            this
+          )
+        ] }, void 0, true, {
+          fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+          lineNumber: 126,
+          columnNumber: 13
+        }, this)
+      ] }, void 0, true, {
+        fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+        lineNumber: 124,
+        columnNumber: 11
+      }, this),
+      /* @__PURE__ */ jsxDEV("div", { className: "form-group", children: [
+        /* @__PURE__ */ jsxDEV("label", { className: "form-label", children: "Script Input" }, void 0, false, {
+          fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+          lineNumber: 166,
+          columnNumber: 13
+        }, this),
+        /* @__PURE__ */ jsxDEV(
+          "textarea",
+          {
+            className: "form-textarea",
+            value: script,
+            onChange: (e) => setScript(e.target.value),
+            placeholder: "Phân đoạn 1: Hello everyone..."
+          },
+          void 0,
+          false,
+          {
+            fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+            lineNumber: 167,
+            columnNumber: 13
+          },
+          this
+        )
+      ] }, void 0, true, {
+        fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+        lineNumber: 165,
+        columnNumber: 11
+      }, this),
+      /* @__PURE__ */ jsxDEV("div", { className: "card", style: { backgroundColor: "var(--bg-primary)", marginBottom: "1rem" }, children: /* @__PURE__ */ jsxDEV("div", { style: { display: "flex", justifyContent: "space-around", textAlign: "center" }, children: [
+        /* @__PURE__ */ jsxDEV("div", { children: [
+          /* @__PURE__ */ jsxDEV("span", { style: { fontSize: "1.5rem", fontWeight: "700", color: "var(--accent-primary)" }, children: stats.segments }, void 0, false, {
+            fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+            lineNumber: 179,
+            columnNumber: 17
+          }, this),
+          /* @__PURE__ */ jsxDEV("p", { style: { fontSize: "0.8rem", color: "var(--text-secondary)" }, children: "Segments" }, void 0, false, {
+            fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+            lineNumber: 182,
+            columnNumber: 17
+          }, this)
+        ] }, void 0, true, {
+          fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+          lineNumber: 178,
+          columnNumber: 15
+        }, this),
+        /* @__PURE__ */ jsxDEV("div", { children: [
+          /* @__PURE__ */ jsxDEV("span", { style: { fontSize: "1.5rem", fontWeight: "700", color: "var(--accent-primary)" }, children: stats.chars.toLocaleString() }, void 0, false, {
+            fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+            lineNumber: 185,
+            columnNumber: 17
+          }, this),
+          /* @__PURE__ */ jsxDEV("p", { style: { fontSize: "0.8rem", color: "var(--text-secondary)" }, children: "Characters" }, void 0, false, {
+            fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+            lineNumber: 188,
+            columnNumber: 17
+          }, this)
+        ] }, void 0, true, {
+          fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+          lineNumber: 184,
+          columnNumber: 15
+        }, this),
+        /* @__PURE__ */ jsxDEV("div", { children: [
+          /* @__PURE__ */ jsxDEV("span", { style: { fontSize: "1.5rem", fontWeight: "700", color: "var(--accent-primary)" }, children: formatTime(stats.estDurationSec) }, void 0, false, {
+            fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+            lineNumber: 191,
+            columnNumber: 17
+          }, this),
+          /* @__PURE__ */ jsxDEV("p", { style: { fontSize: "0.8rem", color: "var(--text-secondary)" }, children: "Est. Audio Duration" }, void 0, false, {
+            fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+            lineNumber: 194,
+            columnNumber: 17
+          }, this)
+        ] }, void 0, true, {
+          fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+          lineNumber: 190,
+          columnNumber: 15
+        }, this)
+      ] }, void 0, true, {
+        fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+        lineNumber: 177,
+        columnNumber: 13
+      }, this) }, void 0, false, {
+        fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+        lineNumber: 176,
+        columnNumber: 11
+      }, this),
+      /* @__PURE__ */ jsxDEV("div", { style: { display: "flex", justifyContent: "flex-end", gap: "1rem" }, children: /* @__PURE__ */ jsxDEV(
+        "button",
+        {
+          type: "submit",
+          className: "btn btn-primary",
+          disabled: submitting || stats.segments === 0,
+          children: submitting ? "Parsing & Creating..." : "Continue to Configuration →"
+        },
+        void 0,
+        false,
+        {
+          fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+          lineNumber: 200,
+          columnNumber: 13
+        },
+        this
+      ) }, void 0, false, {
+        fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+        lineNumber: 199,
+        columnNumber: 11
+      }, this)
+    ] }, void 0, true, {
+      fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+      lineNumber: 111,
+      columnNumber: 9
+    }, this) }, void 0, false, {
+      fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+      lineNumber: 110,
+      columnNumber: 7
+    }, this)
+  ] }, void 0, true, {
+    fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx",
+    lineNumber: 96,
+    columnNumber: 5
+  }, this);
+}
+_s(CreateProject, "ZbA314FJOqLloou5Q3ZPllCusl8=");
+_c = CreateProject;
+var _c;
+$RefreshReg$(_c, "CreateProject");
+if (import.meta.hot && !inWebWorker) {
+  window.$RefreshReg$ = prevRefreshReg;
+  window.$RefreshSig$ = prevRefreshSig;
+}
+if (import.meta.hot && !inWebWorker) {
+  RefreshRuntime.__hmr_import(import.meta.url).then((currentExports) => {
+    RefreshRuntime.registerExportsForReactRefresh("C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx", currentExports);
+    import.meta.hot.accept((nextExports) => {
+      if (!nextExports) return;
+      const invalidateMessage = RefreshRuntime.validateRefreshBoundaryAndEnqueueUpdate("C:/Hack/WorkflowVdAi/frontend/src/pages/CreateProject.jsx", currentExports, nextExports);
+      if (invalidateMessage) import.meta.hot.invalidate(invalidateMessage);
+    });
+  });
+}
+
+//# sourceMappingURL=data:application/json;base64,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R0Y7QUFBQTtBQUFBO0FBQUE7QUFBQSxXQW1HQTtBQUFBLE9BakhGO0FBQUE7QUFBQTtBQUFBO0FBQUEsU0FrSEE7QUFFSjtBQUFDUCxHQXhMdUJGLGVBQWE7QUFBQSxLQUFiQTtBQUFhLElBQUE4RDtBQUFBLGFBQUFBLElBQUEiLCJuYW1lcyI6WyJSZWFjdCIsInVzZVN0YXRlIiwidXNlTWVtbyIsInByb2plY3RzQXBpIiwiU0FNUExFX1NDUklQVCIsIkNyZWF0ZVByb2plY3QiLCJvblByb2plY3RDcmVhdGVkIiwiX3MiLCJ0aXRsZSIsInNldFRpdGxlIiwic2NyaXB0Iiwic2V0U2NyaXB0Iiwid29ya2Zsb3dNb2RlIiwic2V0V29ya2Zsb3dNb2RlIiwic3VibWl0dGluZyIsInNldFN1Ym1pdHRpbmciLCJlcnJvciIsInNldEVycm9yIiwic3RhdHMiLCJ0cmltIiwic2VnbWVudHMiLCJjaGFycyIsImVzdER1cmF0aW9uIiwicGhhbkRvYW5NYXRjaGVzIiwibWF0Y2giLCJzZWdtZW50TWF0Y2hlcyIsIm51bWJlcmVkTWF0Y2hlcyIsImNvdW50IiwibGVuZ3RoIiwic3BsaXQiLCJmaWx0ZXIiLCJwIiwiZXN0RHVyYXRpb25TZWMiLCJNYXRoIiwicm91bmQiLCJoYW5kbGVTdWJtaXQiLCJlIiwicHJldmVudERlZmF1bHQiLCJyZXMiLCJjcmVhdGUiLCJ3b3JrZmxvd19tb2RlIiwic3VjY2VzcyIsImRhdGEiLCJwcm9qZWN0X2lkIiwibWVzc2FnZSIsImVyciIsInJlc3BvbnNlIiwiZGV0YWlsIiwiZm9ybWF0VGltZSIsInNlY29uZHMiLCJtaW5zIiwiZmxvb3IiLCJzZWNzIiwiU3RyaW5nIiwicGFkU3RhcnQiLCJ0YXJnZXQiLCJ2YWx1ZSIsImZvbnRTaXplIiwiY29sb3IiLCJiYWNrZ3JvdW5kQ29sb3IiLCJtYXJnaW5Cb3R0b20iLCJkaXNwbGF5IiwianVzdGlmeUNvbnRlbnQiLCJ0ZXh0QWxpZ24iLCJmb250V2VpZ2h0IiwidG9Mb2NhbGVTdHJpbmciLCJnYXAiLCJfYyJdLCJpZ25vcmVMaXN0IjpbXSwic291cmNlcyI6WyJDcmVhdGVQcm9qZWN0LmpzeCJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgUmVhY3QsIHsgdXNlU3RhdGUsIHVzZU1lbW8gfSBmcm9tICdyZWFjdCc7XG5pbXBvcnQgeyBwcm9qZWN0c0FwaSB9IGZyb20gJy4uL2FwaSc7XG5cbmNvbnN0IFNBTVBMRV9TQ1JJUFQgPSBgUGjDom4gxJFv4bqhbiAxOiBIZWxsbyBldmVyeW9uZSEgV2VsY29tZSB0byBvdXIgdmlkZW8gcHJvZHVjdGlvbiB3b3JrZmxvdyBkZW1vbnN0cmF0aW9uLlxuUGjDom4gxJFv4bqhbiAyOiBJbiB0aGlzIHByb2plY3QsIHdlIHByb2Nlc3MgeW91ciBzY3JpcHQgbG9jYWxseSwgc2VnbWVudCBieSBzZWdtZW50LlxuUGjDom4gxJFv4bqhbiAzOiBBdWRpbyBhbmQgdmlkZW8gZ2VuZXJhdGVkIHBlciBzZWdtZW50IGFyZSBwZXJmZWN0bHkgc3luY2hyb25pemVkIHVzaW5nIEZGbXBlZy5cblBow6JuIMSRb+G6oW4gNDogRW5qb3kgc21vb3RoLCBlcnJvci1yZXNpbGllbnQgdmlkZW8gcHJvZHVjdGlvbiByaWdodCBvbiB5b3VyIGNvbXB1dGVyLmA7XG5cbmV4cG9ydCBkZWZhdWx0IGZ1bmN0aW9uIENyZWF0ZVByb2plY3QoeyBvblByb2plY3RDcmVhdGVkIH0pIHtcbiAgY29uc3QgW3RpdGxlLCBzZXRUaXRsZV0gPSB1c2VTdGF0ZSgnTXkgVmlkZW8gUHJvamVjdCcpO1xuICBjb25zdCBbc2NyaXB0LCBzZXRTY3JpcHRdID0gdXNlU3RhdGUoU0FNUExFX1NDUklQVCk7XG4gIGNvbnN0IFt3b3JrZmxvd01vZGUsIHNldFdvcmtmbG93TW9kZV0gPSB1c2VTdGF0ZSgnYXVkaW9fdmlkZW8nKTtcbiAgY29uc3QgW3N1Ym1pdHRpbmcsIHNldFN1Ym1pdHRpbmddID0gdXNlU3RhdGUoZmFsc2UpO1xuICBjb25zdCBbZXJyb3IsIHNldEVycm9yXSA9IHVzZVN0YXRlKG51bGwpO1xuXG4gIC8vIExpdmUgcGFyc2luZyBzdGF0cyBjYWxjdWxhdGlvblxuICBjb25zdCBzdGF0cyA9IHVzZU1lbW8oKCkgPT4ge1xuICAgIGlmICghc2NyaXB0LnRyaW0oKSkgcmV0dXJuIHsgc2VnbWVudHM6IDAsIGNoYXJzOiAwLCBlc3REdXJhdGlvbjogMCB9O1xuICAgIFxuICAgIC8vIFF1aWNrIHJlZ2V4IHNlZ21lbnQgbWF0Y2hcbiAgICBjb25zdCBwaGFuRG9hbk1hdGNoZXMgPSBzY3JpcHQubWF0Y2goL1Bow6JuXFxzK8SRb+G6oW5cXHMrXFxkKy9naSk7XG4gICAgY29uc3Qgc2VnbWVudE1hdGNoZXMgPSBzY3JpcHQubWF0Y2goL1NlZ21lbnRcXHMrXFxkKy9naSk7XG4gICAgY29uc3QgbnVtYmVyZWRNYXRjaGVzID0gc2NyaXB0Lm1hdGNoKC9eXFxkK1tcXDpcXC5dL2dtKTtcbiAgICBcbiAgICBsZXQgY291bnQgPSAwO1xuICAgIGlmIChwaGFuRG9hbk1hdGNoZXMpIGNvdW50ID0gcGhhbkRvYW5NYXRjaGVzLmxlbmd0aDtcbiAgICBlbHNlIGlmIChzZWdtZW50TWF0Y2hlcykgY291bnQgPSBzZWdtZW50TWF0Y2hlcy5sZW5ndGg7XG4gICAgZWxzZSBpZiAobnVtYmVyZWRNYXRjaGVzKSBjb3VudCA9IG51bWJlcmVkTWF0Y2hlcy5sZW5ndGg7XG4gICAgZWxzZSBjb3VudCA9IHNjcmlwdC5zcGxpdCgvXFxuXFxzKlxcbi8pLmZpbHRlcihwID0+IHAudHJpbSgpKS5sZW5ndGg7XG5cbiAgICBjb25zdCBjaGFycyA9IHNjcmlwdC5sZW5ndGg7XG4gICAgY29uc3QgZXN0RHVyYXRpb25TZWMgPSBNYXRoLnJvdW5kKGNoYXJzIC8gMTMpOyAvLyB+MTMgY2hhcnMvc2VjIGVzdGltYXRlXG5cbiAgICByZXR1cm4ge1xuICAgICAgc2VnbWVudHM6IGNvdW50LFxuICAgICAgY2hhcnMsXG4gICAgICBlc3REdXJhdGlvblNlYyxcbiAgICB9O1xuICB9LCBbc2NyaXB0XSk7XG5cbiAgY29uc3QgaGFuZGxlU3VibWl0ID0gYXN5bmMgKGUpID0+IHtcbiAgICBlLnByZXZlbnREZWZhdWx0KCk7XG4gICAgaWYgKCFzY3JpcHQudHJpbSgpKSB7XG4gICAgICBzZXRFcnJvcignU2NyaXB0IGNhbm5vdCBiZSBlbXB0eScpO1xuICAgICAgcmV0dXJuO1xuICAgIH1cblxuICAgIHNldFN1Ym1pdHRpbmcodHJ1ZSk7XG4gICAgc2V0RXJyb3IobnVsbCk7XG5cbiAgICB0cnkge1xuICAgICAgY29uc3QgcmVzID0gYXdhaXQgcHJvamVjdHNBcGkuY3JlYXRlKHtcbiAgICAgICAgdGl0bGUsXG4gICAgICAgIHNjcmlwdCxcbiAgICAgICAgd29ya2Zsb3dfbW9kZTogd29ya2Zsb3dNb2RlLFxuICAgICAgfSk7XG5cbiAgICAgIGlmIChyZXMuc3VjY2Vzcykge1xuICAgICAgICBvblByb2plY3RDcmVhdGVkKHJlcy5kYXRhLnByb2plY3RfaWQpO1xuICAgICAgfSBlbHNlIHtcbiAgICAgICAgc2V0RXJyb3IocmVzLmVycm9yPy5tZXNzYWdlIHx8ICdGYWlsZWQgdG8gY3JlYXRlIHByb2plY3QnKTtcbiAgICAgIH1cbiAgICB9IGNhdGNoIChlcnIpIHtcbiAgICAgIHNldEVycm9yKGVyci5yZXNwb25zZT8uZGF0YT8uZGV0YWlsIHx8ICdGYWlsZWQgdG8gY3JlYXRlIHByb2plY3QnKTtcbiAgICB9IGZpbmFsbHkge1xuICAgICAgc2V0U3VibWl0dGluZyhmYWxzZSk7XG4gICAgfVxuICB9O1xuXG4gIGNvbnN0IGZvcm1hdFRpbWUgPSAoc2Vjb25kcykgPT4ge1xuICAgIGNvbnN0IG1pbnMgPSBNYXRoLmZsb29yKHNlY29uZHMgLyA2MCk7XG4gICAgY29uc3Qgc2VjcyA9IHNlY29uZHMgJSA2MDtcbiAgICByZXR1cm4gYH4ke1N0cmluZyhtaW5zKS5wYWRTdGFydCgyLCAnMCcpfToke1N0cmluZyhzZWNzKS5wYWRTdGFydCgyLCAnMCcpfWA7XG4gIH07XG5cbiAgcmV0dXJuIChcbiAgICA8ZGl2PlxuICAgICAgPGRpdiBjbGFzc05hbWU9XCJwYWdlLWhlYWRlclwiPlxuICAgICAgICA8ZGl2PlxuICAgICAgICAgIDxoMSBjbGFzc05hbWU9XCJwYWdlLXRpdGxlXCI+Q3JlYXRlIE5ldyBQcm9qZWN0PC9oMT5cbiAgICAgICAgICA8cCBjbGFzc05hbWU9XCJwYWdlLXN1YnRpdGxlXCI+UGFzdGUgeW91ciBzdHJ1Y3R1cmVkIHNjcmlwdCBiZWxvdzwvcD5cbiAgICAgICAgPC9kaXY+XG4gICAgICA8L2Rpdj5cblxuICAgICAge2Vycm9yICYmIChcbiAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJiYW5uZXIgYmFubmVyLWRhbmdlclwiPlxuICAgICAgICAgIDxzcGFuPuKdjCB7ZXJyb3J9PC9zcGFuPlxuICAgICAgICA8L2Rpdj5cbiAgICAgICl9XG5cbiAgICAgIDxmb3JtIG9uU3VibWl0PXtoYW5kbGVTdWJtaXR9PlxuICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImNhcmRcIj5cbiAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImZvcm0tZ3JvdXBcIj5cbiAgICAgICAgICAgIDxsYWJlbCBjbGFzc05hbWU9XCJmb3JtLWxhYmVsXCI+UHJvamVjdCBUaXRsZTwvbGFiZWw+XG4gICAgICAgICAgICA8aW5wdXRcbiAgICAgICAgICAgICAgdHlwZT1cInRleHRcIlxuICAgICAgICAgICAgICBjbGFzc05hbWU9XCJmb3JtLWNvbnRyb2xcIlxuICAgICAgICAgICAgICB2YWx1ZT17dGl0bGV9XG4gICAgICAgICAgICAgIG9uQ2hhbmdlPXsoZSkgPT4gc2V0VGl0bGUoZS50YXJnZXQudmFsdWUpfVxuICAgICAgICAgICAgICBwbGFjZWhvbGRlcj1cImUuZy4gQUkgVmlkZW8gRGVtb1wiXG4gICAgICAgICAgICAgIHJlcXVpcmVkXG4gICAgICAgICAgICAvPlxuICAgICAgICAgIDwvZGl2PlxuXG4gICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJmb3JtLWdyb3VwXCI+XG4gICAgICAgICAgICA8bGFiZWwgY2xhc3NOYW1lPVwiZm9ybS1sYWJlbFwiPldvcmtmbG93IE1vZGU8L2xhYmVsPlxuICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJyYWRpby1jYXJkc1wiPlxuICAgICAgICAgICAgICA8ZGl2XG4gICAgICAgICAgICAgICAgY2xhc3NOYW1lPXtgcmFkaW8tY2FyZCAke3dvcmtmbG93TW9kZSA9PT0gJ2F1ZGlvX29ubHknID8gJ3NlbGVjdGVkJyA6ICcnfWB9XG4gICAgICAgICAgICAgICAgb25DbGljaz17KCkgPT4gc2V0V29ya2Zsb3dNb2RlKCdhdWRpb19vbmx5Jyl9XG4gICAgICAgICAgICAgID5cbiAgICAgICAgICAgICAgICA8aW5wdXRcbiAgICAgICAgICAgICAgICAgIHR5cGU9XCJyYWRpb1wiXG4gICAgICAgICAgICAgICAgICBuYW1lPVwibW9kZVwiXG4gICAgICAgICAgICAgICAgICBjaGVja2VkPXt3b3JrZmxvd01vZGUgPT09ICdhdWRpb19vbmx5J31cbiAgICAgICAgICAgICAgICAgIG9uQ2hhbmdlPXsoKSA9PiBzZXRXb3JrZmxvd01vZGUoJ2F1ZGlvX29ubHknKX1cbiAgICAgICAgICAgICAgICAvPlxuICAgICAgICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICAgICAgICA8c3Ryb25nPvCfjpnvuI8gTW9kZSAxOiBBdWRpbyBPbmx5PC9zdHJvbmc+XG4gICAgICAgICAgICAgICAgICA8cCBzdHlsZT17eyBmb250U2l6ZTogJzAuOHJlbScsIGNvbG9yOiAndmFyKC0tdGV4dC1zZWNvbmRhcnkpJyB9fT5cbiAgICAgICAgICAgICAgICAgICAgR2VuZXJhdGVzIFdBViBhdWRpbyBmaWxlcyBmb3IgZWFjaCBzZWdtZW50IHVzaW5nIFRleHQtdG8tU3BlZWNoLlxuICAgICAgICAgICAgICAgICAgPC9wPlxuICAgICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgICA8L2Rpdj5cblxuICAgICAgICAgICAgICA8ZGl2XG4gICAgICAgICAgICAgICAgY2xhc3NOYW1lPXtgcmFkaW8tY2FyZCAke3dvcmtmbG93TW9kZSA9PT0gJ2F1ZGlvX3ZpZGVvJyA/ICdzZWxlY3RlZCcgOiAnJ31gfVxuICAgICAgICAgICAgICAgIG9uQ2xpY2s9eygpID0+IHNldFdvcmtmbG93TW9kZSgnYXVkaW9fdmlkZW8nKX1cbiAgICAgICAgICAgICAgPlxuICAgICAgICAgICAgICAgIDxpbnB1dFxuICAgICAgICAgICAgICAgICAgdHlwZT1cInJhZGlvXCJcbiAgICAgICAgICAgICAgICAgIG5hbWU9XCJtb2RlXCJcbiAgICAgICAgICAgICAgICAgIGNoZWNrZWQ9e3dvcmtmbG93TW9kZSA9PT0gJ2F1ZGlvX3ZpZGVvJ31cbiAgICAgICAgICAgICAgICAgIG9uQ2hhbmdlPXsoKSA9PiBzZXRXb3JrZmxvd01vZGUoJ2F1ZGlvX3ZpZGVvJyl9XG4gICAgICAgICAgICAgICAgLz5cbiAgICAgICAgICAgICAgICA8ZGl2PlxuICAgICAgICAgICAgICAgICAgPHN0cm9uZz7wn46lIE1vZGUgMjogQXVkaW8gKyBWaWRlbzwvc3Ryb25nPlxuICAgICAgICAgICAgICAgICAgPHAgc3R5bGU9e3sgZm9udFNpemU6ICcwLjhyZW0nLCBjb2xvcjogJ3ZhcigtLXRleHQtc2Vjb25kYXJ5KScgfX0+XG4gICAgICAgICAgICAgICAgICAgIEdlbmVyYXRlcyBBdWRpbyArIFZpZGVvIGNsaXBzIHBlciBzZWdtZW50LCBzeW5jcyB0aW1pbmcsIGFuZCBtZXJnZXMgaW50byBmaW5hbCBNUDQuXG4gICAgICAgICAgICAgICAgICA8L3A+XG4gICAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgPC9kaXY+XG5cbiAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImZvcm0tZ3JvdXBcIj5cbiAgICAgICAgICAgIDxsYWJlbCBjbGFzc05hbWU9XCJmb3JtLWxhYmVsXCI+U2NyaXB0IElucHV0PC9sYWJlbD5cbiAgICAgICAgICAgIDx0ZXh0YXJlYVxuICAgICAgICAgICAgICBjbGFzc05hbWU9XCJmb3JtLXRleHRhcmVhXCJcbiAgICAgICAgICAgICAgdmFsdWU9e3NjcmlwdH1cbiAgICAgICAgICAgICAgb25DaGFuZ2U9eyhlKSA9PiBzZXRTY3JpcHQoZS50YXJnZXQudmFsdWUpfVxuICAgICAgICAgICAgICBwbGFjZWhvbGRlcj1cIlBow6JuIMSRb+G6oW4gMTogSGVsbG8gZXZlcnlvbmUuLi5cIlxuICAgICAgICAgICAgLz5cbiAgICAgICAgICA8L2Rpdj5cblxuICAgICAgICAgIHsvKiBMaXZlIFBhcnNlIFN0YXRzIFByZXZpZXcgKi99XG4gICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJjYXJkXCIgc3R5bGU9e3sgYmFja2dyb3VuZENvbG9yOiAndmFyKC0tYmctcHJpbWFyeSknLCBtYXJnaW5Cb3R0b206ICcxcmVtJyB9fT5cbiAgICAgICAgICAgIDxkaXYgc3R5bGU9e3sgZGlzcGxheTogJ2ZsZXgnLCBqdXN0aWZ5Q29udGVudDogJ3NwYWNlLWFyb3VuZCcsIHRleHRBbGlnbjogJ2NlbnRlcicgfX0+XG4gICAgICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICAgICAgPHNwYW4gc3R5bGU9e3sgZm9udFNpemU6ICcxLjVyZW0nLCBmb250V2VpZ2h0OiAnNzAwJywgY29sb3I6ICd2YXIoLS1hY2NlbnQtcHJpbWFyeSknIH19PlxuICAgICAgICAgICAgICAgICAge3N0YXRzLnNlZ21lbnRzfVxuICAgICAgICAgICAgICAgIDwvc3Bhbj5cbiAgICAgICAgICAgICAgICA8cCBzdHlsZT17eyBmb250U2l6ZTogJzAuOHJlbScsIGNvbG9yOiAndmFyKC0tdGV4dC1zZWNvbmRhcnkpJyB9fT5TZWdtZW50czwvcD5cbiAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICAgIDxkaXY+XG4gICAgICAgICAgICAgICAgPHNwYW4gc3R5bGU9e3sgZm9udFNpemU6ICcxLjVyZW0nLCBmb250V2VpZ2h0OiAnNzAwJywgY29sb3I6ICd2YXIoLS1hY2NlbnQtcHJpbWFyeSknIH19PlxuICAgICAgICAgICAgICAgICAge3N0YXRzLmNoYXJzLnRvTG9jYWxlU3RyaW5nKCl9XG4gICAgICAgICAgICAgICAgPC9zcGFuPlxuICAgICAgICAgICAgICAgIDxwIHN0eWxlPXt7IGZvbnRTaXplOiAnMC44cmVtJywgY29sb3I6ICd2YXIoLS10ZXh0LXNlY29uZGFyeSknIH19PkNoYXJhY3RlcnM8L3A+XG4gICAgICAgICAgICAgIDwvZGl2PlxuICAgICAgICAgICAgICA8ZGl2PlxuICAgICAgICAgICAgICAgIDxzcGFuIHN0eWxlPXt7IGZvbnRTaXplOiAnMS41cmVtJywgZm9udFdlaWdodDogJzcwMCcsIGNvbG9yOiAndmFyKC0tYWNjZW50LXByaW1hcnkpJyB9fT5cbiAgICAgICAgICAgICAgICAgIHtmb3JtYXRUaW1lKHN0YXRzLmVzdER1cmF0aW9uU2VjKX1cbiAgICAgICAgICAgICAgICA8L3NwYW4+XG4gICAgICAgICAgICAgICAgPHAgc3R5bGU9e3sgZm9udFNpemU6ICcwLjhyZW0nLCBjb2xvcjogJ3ZhcigtLXRleHQtc2Vjb25kYXJ5KScgfX0+RXN0LiBBdWRpbyBEdXJhdGlvbjwvcD5cbiAgICAgICAgICAgICAgPC9kaXY+XG4gICAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgICA8L2Rpdj5cblxuICAgICAgICAgIDxkaXYgc3R5bGU9e3sgZGlzcGxheTogJ2ZsZXgnLCBqdXN0aWZ5Q29udGVudDogJ2ZsZXgtZW5kJywgZ2FwOiAnMXJlbScgfX0+XG4gICAgICAgICAgICA8YnV0dG9uXG4gICAgICAgICAgICAgIHR5cGU9XCJzdWJtaXRcIlxuICAgICAgICAgICAgICBjbGFzc05hbWU9XCJidG4gYnRuLXByaW1hcnlcIlxuICAgICAgICAgICAgICBkaXNhYmxlZD17c3VibWl0dGluZyB8fCBzdGF0cy5zZWdtZW50cyA9PT0gMH1cbiAgICAgICAgICAgID5cbiAgICAgICAgICAgICAge3N1Ym1pdHRpbmcgPyAnUGFyc2luZyAmIENyZWF0aW5nLi4uJyA6ICdDb250aW51ZSB0byBDb25maWd1cmF0aW9uIOKGkid9XG4gICAgICAgICAgICA8L2J1dHRvbj5cbiAgICAgICAgICA8L2Rpdj5cbiAgICAgICAgPC9kaXY+XG4gICAgICA8L2Zvcm0+XG4gICAgPC9kaXY+XG4gICk7XG59XG4iXSwiZmlsZSI6IkM6L0hhY2svV29ya2Zsb3dWZEFpL2Zyb250ZW5kL3NyYy9wYWdlcy9DcmVhdGVQcm9qZWN0LmpzeCJ9

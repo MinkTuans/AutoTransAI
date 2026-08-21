@@ -1,0 +1,866 @@
+{
+   "buttonApply": {
+      "message": "تطبيق"
+   },
+   "buttonCancel": {
+      "message": "إلغاء"
+   },
+   "buttonClose": {
+      "message": "إغلاق"
+   },
+   "buttonDisable": {
+      "message": "تعطيل"
+   },
+   "buttonEdit": {
+      "message": "تعديل"
+   },
+   "buttonEditClickHint": {
+      "message": "يمكنك أيضًا النقر بزر الماوس الأيمن، أو Ctrl+نقر، أو نقر عجلة الماوس على اسم السكربت."
+   },
+   "buttonEmptyRecycleBin": {
+      "message": "أفرغ سلة المحذوفات الآن!"
+   },
+   "buttonEnable": {
+      "message": "تفعيل"
+   },
+   "buttonExportData": {
+      "message": "تصدير إلى ملف مضغوط (zip)"
+   },
+   "buttonHome": {
+      "message": "الصفحة الرئيسية"
+   },
+   "buttonImportData": {
+      "message": "استيراد من ملف مضغوط (zip)"
+   },
+   "buttonInstallFromURL": {
+      "message": "تثبيت من عنوان URL"
+   },
+   "buttonNew": {
+      "message": "جديد"
+   },
+   "buttonNewFromFile": {
+      "message": "جديد من الملف"
+   },
+   "buttonOK": {
+      "message": "موافق"
+   },
+   "buttonRecycleBin": {
+      "message": "سلة المحذوفات"
+   },
+   "buttonRemove": {
+      "message": "إزالة"
+   },
+   "buttonReplace": {
+      "message": "استبدال"
+   },
+   "buttonReplaceAll": {
+      "message": "الكل"
+   },
+   "buttonReset": {
+      "message": "إعادة تعيين"
+   },
+   "buttonResetSettings": {
+      "message": "إعادة تعيين الإعدادات"
+   },
+   "buttonRestore": {
+      "message": "استعادة"
+   },
+   "buttonSave": {
+      "message": "حفظ"
+   },
+   "buttonSaveClose": {
+      "message": "حفظ وإغلاق"
+   },
+   "buttonSaved": {
+      "message": "تم الحفظ"
+   },
+   "buttonShowEditorState": {
+      "message": "عرض حالة المحرر"
+   },
+   "buttonSupport": {
+      "message": "صفحة الدعم"
+   },
+   "buttonSyncPullOnce": {
+      "message": "سحب مرة واحدة إلى المحلي"
+   },
+   "buttonSyncPushOnce": {
+      "message": "اضغط مرة واحدة للتحكم عن بعد"
+   },
+   "buttonUndo": {
+      "message": "تراجع"
+   },
+   "buttonUpdate": {
+      "message": "تحديث"
+   },
+   "buttonVacuum": {
+      "message": "تنظيف قاعدة البيانات"
+   },
+   "buttonVacuumed": {
+      "message": "تم تنظيف البيانات"
+   },
+   "buttonVacuuming": {
+      "message": "جارٍ تنظيف البيانات..."
+   },
+   "confirmManualUpdate": {
+      "message": "التحديث التلقائي معطّل لهذا السكربت!\nانقر \"موافق\" لتحديثه على أي حال."
+   },
+   "confirmNotSaved": {
+      "message": "لم يتم حفظ التعديلات!\nانقر \"موافق\" لتجاهلها أو \"إلغاء\" للبقاء."
+   },
+   "confirmUndoImport": {
+      "message": "هل تريد التراجع عن جميع التغييرات التي أجريتها على قاعدة البيانات (الاستيراد، التحديث، التعديل، التخصيص)؟"
+   },
+   "descBlacklist": {
+      "message": "قائمة الحظر للحقن (لن يتم تشغيل السكربتات في المواقع المطابقة)"
+   },
+   "descBlacklistNet": {
+      "message": "قائمة الحظر الشبكية (لن تتصل السكربتات بالمواقع المطابقة ولا بملفات تعريف الارتباط الخاصة بها)"
+   },
+   "descCustomCSS": {
+      "message": "CSS مخصص لصفحة الإعدادات وصفحة تثبيت السكربتات. إذا لم تكن متأكدًا من الغرض من هذا الحقل، فالرجاء عدم تعديله."
+   },
+   "descEditorOptions": {
+      "message": "خيارات مخصصة لـ CodeMirror والإضافات الخاصة به بصيغة كائن JSON مثل \u003Ccode>{\"indentUnit\":2, \"smartIndent\":true}\u003C/code>، مع ملاحظة أن بعضها قد لا يعمل في Violentmonkey. راجع \u003Ca href=\"https://codemirror.net/doc/manual.html#config\" target=\"_blank\" rel=\"noopener noreferrer\">القائمة الكاملة\u003C/a>."
+   },
+   "descEditorOptionsGeneric": {
+      "message": "يمكن تبديل الخيارات المنطقية (Boolean) بالنقر المزدوج على القيمة: \u003Ccode>true\u003C/code> = مفعّل، \u003Ccode>false\u003C/code> = معطّل. الخيارات الرقمية التي تنتهي بـ \u003Ccode>Delay\u003C/code> أو \u003Ccode>Interval\u003C/code> أو \u003Ccode>Rate\u003C/code> أو \u003Ccode>Time\u003C/code> تكون بوحدة الملي ثانية."
+   },
+   "descEditorOptionsVM": {
+      "message": "خيارات غير قياسية: \u003Ccode>autocompleteOnTyping\u003C/code> هو تأخير بالمللي ثانية لعرض اقتراحات الإكمال التلقائي بعد الكتابة (\u003Ccode>0\u003C/code> = تعطيل)، \u003Ccode>killTrailingSpaceOnSave\u003C/code> يزيل تلقائيًا المسافات الزائدة في نهاية كل سطر عند الحفظ، و\u003Ccode>showTrailingSpace\u003C/code> يعرض المسافات الزائدة كنقاط."
+   },
+   "descScriptTemplate": {
+      "message": "المتغيرات المدعومة: \u003C{{name}}>, \u003C{{url}}>, \u003C{{icon}}>, \u003C{{date}}>, \u003C{{date:format}}> بصيغة متوافقة مع MomentJS، على سبيل المثال \u003C{{date:YYYY-MM-DD}}>."
+   },
+   "disabledScriptsGroup": {
+      "message": "مجموعة"
+   },
+   "disabledScriptsHide": {
+      "message": "إخفاء"
+   },
+   "disabledScriptsSelector": {
+      "message": "السكربتات المعطّلة:"
+   },
+   "disabledScriptsShow": {
+      "message": "عرض"
+   },
+   "editHelpDocumentation": {
+      "message": "الوثائق الخاصة بكتلة البيانات الوصفية للسكربتات وواجهة برمجة \u003Ccode>GM\u003C/code>:"
+   },
+   "editHelpKeyboard": {
+      "message": "اختصارات لوحة المفاتيح:"
+   },
+   "editHowToHint": {
+      "message": "هل ترغب في استخدام محرر آخر؟"
+   },
+   "editLabelMeta": {
+      "message": "بيانات وصفية مخصصة"
+   },
+   "editLabelSettings": {
+      "message": "إعدادات السكربت"
+   },
+   "editLongLine": {
+      "message": "السطر طويل جدًّا"
+   },
+   "editLongLineTooltip": {
+      "message": "هذا السطر طويل جدًّا، لذا تم طي نصه لتجنب التأخير أثناء التعديل.\nيمكنك ضبط الحد في الإعدادات المتقدمة، على سبيل المثال:\n\"maxDisplayLength\": 20000"
+   },
+   "editNavCode": {
+      "message": "الكود"
+   },
+   "editNavSettings": {
+      "message": "الإعدادات"
+   },
+   "editNavValues": {
+      "message": "القيم"
+   },
+   "editValueAllHint": {
+      "message": "عرض/تعديل كامل مساحة تخزين القيم الخاصة بالسكربت"
+   },
+   "extDescription": {
+      "message": "مدير سكربتات مفتوح المصدر يدعم العديد من المتصفحات"
+   },
+   "extName": {
+      "message": "Violentmonkey"
+   },
+   "failureReasonBlacklisted": {
+      "message": "موجود في قائمة الحظر في إعدادات Violentmonkey"
+   },
+   "failureReasonNoninjectable": {
+      "message": "لا يمكن لـ Violentmonkey تشغيل سكربتات المستخدم في هذه الصفحة\n(أمثلة شائعة: واجهة المتصفح، إضافة، محظور عبر سياسات، موقع محرك بحث في Opera)"
+   },
+   "failureReasonRestarted": {
+      "message": "تم إعادة تشغيل Violentmonkey. يُرجى إعادة تحميل علامة التبويب لتشغيل سكربتات المستخدم."
+   },
+   "fileInstallBlocked": {
+      "message": "توجد عدة طرق لتثبيت ملف محلي أو تتبع تعديلاته: \u003C1> اسحب الملف وأفلته في صفحة Violentmonkey المفتوحة أو في النافذة المنبثقة، بما في ذلك هذه الصفحة. \u003C2> قم بتشغيل خادم HTTP محلي لهذا الملف وافتحه عبر http://localhost. \u003C3> فعّل خيار \"السماح بالوصول إلى عناوين الملفات\" في صفحة تفاصيل Violentmonkey في chrome://extensions. هذا الخيار خطير لأن أي سكربت مستخدم قد يقرأ أي ملف محلي."
+   },
+   "fileInstallBlockedFF": {
+      "message": "افتح صفحة about:addons، انقر فوق \"Violentmonkey\"، انقر فوق \"الأذونات والبيانات\"، وقم بتمكين \"الوصول إلى الملفات المحلية على جهاز الكمبيوتر الخاص بك\"."
+   },
+   "filterAlphabeticalOrder": {
+      "message": "أبجدي"
+   },
+   "filterExecutionOrder": {
+      "message": "ترتيب التنفيذ"
+   },
+   "filterLastUpdateOrder": {
+      "message": "وقت آخر تحديث"
+   },
+   "filterLastVisitOrder": {
+      "message": "آخر وقت للزيارة"
+   },
+   "filterLastVisitOrderTooltip": {
+      "message": "آخر مرة قمت فيها بزيارة أي موقع مستهدف بواسطة هذا السكريبت."
+   },
+   "filterSize": {
+      "message": "الحجم"
+   },
+   "genericError": {
+      "message": "خطأ"
+   },
+   "genericOff": {
+      "message": "معطّل"
+   },
+   "genericOn": {
+      "message": "مفعّل"
+   },
+   "genericUseGlobal": {
+      "message": "استخدام الإعداد العام"
+   },
+   "hashPatternWarning": {
+      "message": "أنماط \"#\" تعمل فقط عند فتح الموقع أول مرة أو عند إعادة تحميل علامة التبويب: $1"
+   },
+   "headerRecycleBin": {
+      "message": "سلة المحذوفات"
+   },
+   "helpForLocalFile": {
+      "message": "عرض المساعدة عند تعذر تثبيت برنامج نصي محلي"
+   },
+   "hintForBatchAction": {
+      "message": "لـ $1 سكربتًا مطابقًا"
+   },
+   "hintGrantNone": {
+      "message": "`@grant none` يقوم بتعطيل جميع مفاتيح `@grant` الأخرى."
+   },
+   "hintGrantless": {
+      "message": "لا يمكن للنص البرمجي المعزول تغيير هذه الخصائص العامة: $1.\nلإصلاح النص البرمجي إما أضف `@grant none` لتعطيل العزل،\nأو استخدم `unsafeWindow` بدلاً من `window`."
+   },
+   "hintInputURL": {
+      "message": "أدخل عنوان URL:"
+   },
+   "hintRecycleBin": {
+      "message": "السكربتات المحذوفة مدرجة هنا وستُحتفظ بها لمدة 7 أيام."
+   },
+   "hintUseDownloadURL": {
+      "message": "استخدم @downloadURL"
+   },
+   "hintVacuum": {
+      "message": "تجاهل الزوائد ومحاولة إعادة تحميل الموارد المفقودة من الذاكرة المؤقتة."
+   },
+   "install": {
+      "message": "تثبيت"
+   },
+   "installFrom": {
+      "message": "تثبيت من $1"
+   },
+   "installOptionTrackTooltip": {
+      "message": "يجب ترك علامة تبويب الملف المصدر مفتوحة في Firefox 68 والإصدارات الأحدث."
+   },
+   "labelAdvanced": {
+      "message": "متقدم"
+   },
+   "labelAllowUpdate": {
+      "message": "السماح بالتحديث"
+   },
+   "labelAuthor": {
+      "message": "المؤلف: "
+   },
+   "labelAutoReloadCurrentTab": {
+      "message": "إعادة تحميل علامة التبويب الحالية بعد تفعيل/تعطيل سكربت من القائمة"
+   },
+   "labelAutoUpdate": {
+      "message": "التحقق من تحديثات السكربتات كل $1 يوم/أيام، استخدم 0 لتعطيل الميزة"
+   },
+   "labelBackup": {
+      "message": "النسخ الاحتياطي"
+   },
+   "labelBackupMaintenance": {
+      "message": "النسخ الاحتياطي والصيانة"
+   },
+   "labelBadge": {
+      "message": "الشارة:"
+   },
+   "labelBadgeColors": {
+      "message": "ألوان الشارة: "
+   },
+   "labelBadgeNone": {
+      "message": "بدون"
+   },
+   "labelBadgeTotal": {
+      "message": "عدد السكربتات قيد التشغيل"
+   },
+   "labelBadgeUnique": {
+      "message": "عدد السكربتات الفريدة قيد التشغيل"
+   },
+   "labelBlacklist": {
+      "message": "قائمة الحظر"
+   },
+   "labelComment": {
+      "message": "تعليق"
+   },
+   "labelContributors": {
+      "message": "المساهمون"
+   },
+   "labelCurrentLang": {
+      "message": "اللغة الحالية: "
+   },
+   "labelCustomCSS": {
+      "message": "نمط مخصص"
+   },
+   "labelDownloadURL": {
+      "message": "عنوان التنزيل:"
+   },
+   "labelEditValue": {
+      "message": "تعديل قيمة السكربت"
+   },
+   "labelEditValueAll": {
+      "message": "تعديل مساحة تخزين السكربت"
+   },
+   "labelEditor": {
+      "message": "المحرر"
+   },
+   "labelEnabledScriptsOnly": {
+      "message": "السكربتات المفعّلة فقط"
+   },
+   "labelExclude": {
+      "message": "قواعد @exclude"
+   },
+   "labelExcludeMatch": {
+      "message": "قواعد @exclude-match"
+   },
+   "labelExportScriptData": {
+      "message": "تصدير بيانات السكربت"
+   },
+   "labelExposeStatus": {
+      "message": "إظهار الإصدار المثبت على مواقع كتالوج سكربتات المستخدم: $1"
+   },
+   "labelFastInject": {
+      "message": "الوضع $1البديل"
+   },
+   "labelFastInjectHint": {
+      "message": "طريقة حقن بديلة للبرامج\u003Cdocument-start> النصية، أسرع من الوضع الافتراضي. وكما هو الحال مع \"وضع الصفحة المتزامن\"، فإنها تزيد أيضًا من استهلاك الذاكرة، لذا قد ترغب في تعطيلها إذا كانت برامجك النصية تعمل بشكل صحيح بدون هذا الخيار."
+   },
+   "labelFeedback": {
+      "message": "ملاحظات"
+   },
+   "labelFirefoxPatchCsp": {
+      "message": "تجاوز سياسة أمان المحتوى في فايرفوكس"
+   },
+   "labelFirefoxPatchCspHint": {
+      "message": "يُضيف قيمة عشوائية إلى CSP لصفحات الويب، لا يمكن لـ Violentmonkey استخدامها إلا لتشغيل السكربتات في وضع الحقن،$1 وإلا فسيكون من الضروري تعديل السكربتات لاستخدام $2."
+   },
+   "labelFirefoxPatchCspPopup": {
+      "message": "قد يحد$1 الوضع المعزول من الوظائف، راجع \"$2\" في الخيارات."
+   },
+   "labelGmDownloadViaApi": {
+      "message": "استخدم واجهة برمجة تطبيقات تنزيل المتصفح"
+   },
+   "labelGmDownloadViaApiHint": {
+      "message": "يسمح هذا البرنامج للبرامج النصية بحفظ الملفات في مجلدات فرعية داخل دليل التنزيلات الخاص بك، ويعرض تقدم التنزيل في شريط التنزيل الخاص بالمتصفح."
+   },
+   "labelGrantPermission": {
+      "message": "منح الإذن"
+   },
+   "labelHelpTranslate": {
+      "message": "المساعدة في الترجمة"
+   },
+   "labelHomepage": {
+      "message": "الصفحة الرئيسية"
+   },
+   "labelHomepageURL": {
+      "message": "عنوان الصفحة الرئيسية:"
+   },
+   "labelHttpOnlyCookie": {
+      "message": "السماح لـ GM_cookie بالوصول إلى ملفات تعريف الارتباط من نوع HTTP-only"
+   },
+   "labelHttpOnlyCookieHint": {
+      "message": "عند التمكين، يمكن للسكريبتات قراءة وكتابة ملفات تعريف الارتباط التي تحمل علامة HTTP-only. وهذا يسمح للسكريبتات بالوصول إلى ملفات تعريف الارتباط التي لا يمكن الوصول إليها عبر جافا سكريبت. يُرجى استخدام هذا الخيار بحذر لأنه قد يشكل مخاطر أمنية."
+   },
+   "labelIconURL": {
+      "message": "عنوان الأيقونة:"
+   },
+   "labelImportScriptData": {
+      "message": "استيراد بيانات السكربت"
+   },
+   "labelImportSettings": {
+      "message": "استيراد الإعدادات"
+   },
+   "labelInclude": {
+      "message": "قواعد @include"
+   },
+   "labelInjectionMode": {
+      "message": "وضع الحقن: "
+   },
+   "labelInstall": {
+      "message": "جارٍ تثبيت السكربت"
+   },
+   "labelKeepOriginal": {
+      "message": "الاحتفاظ بالأصل"
+   },
+   "labelLastUpdatedAt": {
+      "message": "آخر تحديث في $1"
+   },
+   "labelLineNumber": {
+      "message": "رقم السطر: "
+   },
+   "labelMatch": {
+      "message": "قواعد @match"
+   },
+   "labelName": {
+      "message": "الاسم:"
+   },
+   "labelNoFrames": {
+      "message": "التشغيل في الإطارات: "
+   },
+   "labelNoName": {
+      "message": "بدون اسم"
+   },
+   "labelNoSearchScripts": {
+      "message": "لم يتم العثور على أي سكربت."
+   },
+   "labelNotifyThisUpdated": {
+      "message": "، ثم إشعار:"
+   },
+   "labelNotifyUpdates": {
+      "message": "إشعار بتحديثات السكربتات"
+   },
+   "labelNotifyUpdatesGlobal": {
+      "message": "تجاهل إشعارات كل سكربت على حدة (من علامة التبويب \"الإعدادات\" في المحرر)"
+   },
+   "labelPageMenuCommands": {
+      "message": "عرض أوامر البرمجة النصية في قائمة الصفحة"
+   },
+   "labelPrivacyPolicy": {
+      "message": "سياسة الخصوصية"
+   },
+   "labelReinstall": {
+      "message": "إعادة تثبيت السكربت"
+   },
+   "labelRelated": {
+      "message": "روابط ذات صلة: "
+   },
+   "labelRemovedAt": {
+      "message": "تمت إزالته في $1"
+   },
+   "labelReplace": {
+      "message": "استبدال بـ: "
+   },
+   "labelRunAt": {
+      "message": "Run-At: "
+   },
+   "labelRunAtDefault": {
+      "message": "(افتراضي)"
+   },
+   "labelScriptOptionRequired": {
+      "message": "(فقط للسكريبتات التي تم تمكين هذا الخيار في إعداداتها)"
+   },
+   "labelScriptOptionRequiredGlobal": {
+      "message": "(يجب أيضًا تمكين هذا الخيار في الإعدادات العامة)"
+   },
+   "labelScriptTemplate": {
+      "message": "قالب سكربت مخصص"
+   },
+   "labelSearch": {
+      "message": "البحث عن: "
+   },
+   "labelSearchScript": {
+      "message": "البحث في السكربتات..."
+   },
+   "labelSettings": {
+      "message": "الإعدادات"
+   },
+   "labelShowOrder": {
+      "message": "عرض مواضع ترتيب التنفيذ"
+   },
+   "labelShowVisited": {
+      "message": "عرض وقت آخر زيارة"
+   },
+   "labelSync": {
+      "message": "المزامنة"
+   },
+   "labelSyncAnonymous": {
+      "message": "استخدام حساب مجهول"
+   },
+   "labelSyncAuthorize": {
+      "message": "تفويض"
+   },
+   "labelSyncAuthorizing": {
+      "message": "جارٍ التفويض"
+   },
+   "labelSyncAutomatically": {
+      "message": "المزامنة تلقائياً"
+   },
+   "labelSyncDisabled": {
+      "message": "بدون"
+   },
+   "labelSyncPassword": {
+      "message": "كلمة المرور: "
+   },
+   "labelSyncRevoke": {
+      "message": "إلغاء التفويض"
+   },
+   "labelSyncS3AccessKeyId": {
+      "message": "معرّف مفتاح الوصول: "
+   },
+   "labelSyncS3Bucket": {
+      "message": "دلو: "
+   },
+   "labelSyncS3Endpoint": {
+      "message": "نقطة نهاية مخصصة: "
+   },
+   "labelSyncS3Prefix": {
+      "message": "بادئة المفتاح: "
+   },
+   "labelSyncS3Region": {
+      "message": "منطقة: "
+   },
+   "labelSyncS3SecretAccessKey": {
+      "message": "مفتاح الوصول السري: "
+   },
+   "labelSyncScriptStatus": {
+      "message": "مزامنة حالة السكربت"
+   },
+   "labelSyncServerUrl": {
+      "message": "عنوان الخادم: "
+   },
+   "labelSyncService": {
+      "message": "المزامنة مع"
+   },
+   "labelSyncUsername": {
+      "message": "اسم المستخدم: "
+   },
+   "labelTags": {
+      "message": "الوسوم @tag"
+   },
+   "labelTheme": {
+      "message": "السمة: "
+   },
+   "labelUpdateURL": {
+      "message": "عنوان التحديث:"
+   },
+   "labelViewSingleColumn": {
+      "message": "عمود واحد"
+   },
+   "labelViewTable": {
+      "message": "عرض جدولي"
+   },
+   "labelWidth": {
+      "message": "العرض:"
+   },
+   "labelXhrInject": {
+      "message": "وضع $1 متزامن"
+   },
+   "labelXhrInjectHint": {
+      "message": "فعّله فقط إذا كان لديك سكربت يحتاج للتشغيل قبل بدء تحميل الصفحة، وهو حاليًا يُنفَّذ متأخرًا جدًّا. مثل وضع الحقن الفوري في Tampermonkey، يستخدم هذا الخيار XHR المتزامن المُهمَل، لذا ستظهر تحذيرات في وحدة تحكم أدوات المطور في Chrome/Chromium، لكن يمكنك تجاهلها بأمان لأن تأثيراتها السلبية ضئيلة في هذه الحالة. يمكنك إخفاء التحذيرات نهائيًا بالنقر بزر الماوس الأيمن على أحدها."
+   },
+   "labelXhrInjectNote": {
+      "message": "(باستثناء وضع التصفح المتخفي والمواقع التي تم تعطيل ملفات تعريف الارتباط فيها)"
+   },
+   "lastSync": {
+      "message": "آخر مزامنة في $1"
+   },
+   "learnBlacklist": {
+      "message": "معرفة المزيد عن أنماط قائمة الحظر."
+   },
+   "learnInjectionMode": {
+      "message": "معرفة المزيد عن أنماط الحقن."
+   },
+   "linkManageRemoteFiles": {
+      "message": "إدارة الملفات عن بعد"
+   },
+   "menuDashboard": {
+      "message": "فتح لوحة التحكم"
+   },
+   "menuExclude": {
+      "message": "استبعاد..."
+   },
+   "menuExcludeHint": {
+      "message": "ستُعاد تلقائيًا تحميل علامة التبويب الحالية إذا كنت قد فعّلت هذا الخيار في الإعدادات العامة.\nلتطبيق التغييرات على باقي العلامات، يُرجى إعادة تحميلها يدويًا.\nاستخدم علامة التبويب \"الإعدادات\" في المحرر لمزيد من المرونة."
+   },
+   "menuFeedback": {
+      "message": "ملاحظات"
+   },
+   "menuFindScripts": {
+      "message": "البحث عن سكربتات لهذا الموقع"
+   },
+   "menuInjectionFailed": {
+      "message": "تعذّر حقن بعض السكربتات."
+   },
+   "menuInjectionFailedFix": {
+      "message": "إعادة المحاولة في الوضع \"التلقائي\""
+   },
+   "menuMatchedDisabledScripts": {
+      "message": "السكربتات المطابقة والمعطّلة"
+   },
+   "menuMatchedFrameScripts": {
+      "message": "سكربتات الإطارات الفرعية فقط"
+   },
+   "menuMatchedScripts": {
+      "message": "السكربتات المطابقة"
+   },
+   "menuNewScript": {
+      "message": "إنشاء سكربت جديد"
+   },
+   "menuScriptDisabled": {
+      "message": "السكربتات معطّلة"
+   },
+   "menuScriptEnabled": {
+      "message": "السكربتات مفعّلة"
+   },
+   "msgCheckingForUpdate": {
+      "message": "جارٍ التحقق من وجود تحديثات..."
+   },
+   "msgDateFormatInfo": {
+      "message": "انقر لفتح وثائق MomentJS. الرموز المسموحة: $1. استخدم [الأقواس المربعة] لحماية النص الحرفي."
+   },
+   "msgErrorFetchingResource": {
+      "message": "خطأ في جلب المورد!"
+   },
+   "msgErrorFetchingScript": {
+      "message": "خطأ في جلب السكربت!"
+   },
+   "msgErrorFetchingUpdateInfo": {
+      "message": "فشل في جلب معلومات التحديث."
+   },
+   "msgErrorLoadingData": {
+      "message": "خطأ في تحميل بيانات السكربت."
+   },
+   "msgErrorLoadingDependency": {
+      "message": "خطأ في تحميل التبعيات."
+   },
+   "msgImported": {
+      "message": "$1 عنصر/عناصر تم استيرادها."
+   },
+   "msgIncognitoChanges": {
+      "message": "التعديلات التي تقوم بها في وضع التصفح المتخفي تنطبق أيضًا على ملف التعريف الرئيسي."
+   },
+   "msgInstalled": {
+      "message": "تم تثبيت السكربت."
+   },
+   "msgInvalidScript": {
+      "message": "سكربت غير صالح!"
+   },
+   "msgLoadingData": {
+      "message": "جارٍ تحميل بيانات السكربت..."
+   },
+   "msgLoadingDependency": {
+      "message": "جارٍ تحميل التبعيات... ($1/$2)"
+   },
+   "msgMissingResources": {
+      "message": "الموارد المطلوبة مفقودة."
+   },
+   "msgNamespaceConflict": {
+      "message": "سكربت مشابه مثبّت بالفعل.\nيرجى استخدام @name و@namespace مختلفين هنا، أو تعديل ذلك السكربت بدلًا من ذلك."
+   },
+   "msgNamespaceConflictRestore": {
+      "message": "سكربت بنفس @name و@namespace مثبّت بالفعل."
+   },
+   "msgNewVersion": {
+      "message": "تم العثور على إصدار جديد."
+   },
+   "msgNoUpdate": {
+      "message": "لم يتم العثور على تحديث."
+   },
+   "msgOpenUpdateErrors": {
+      "message": "خطأ في تحديث السكربتات. انقر لفتحها."
+   },
+   "msgReinstallScripts": {
+      "message": "يرجى إعادة الحفظ أو إعادة تثبيت هذه السكربتات:"
+   },
+   "msgSameCode": {
+      "message": " (الكود نفسه)"
+   },
+   "msgScriptUpdated": {
+      "message": "تم تحديث السكربت [$1]!"
+   },
+   "msgShowHide": {
+      "message": "عرض/إخفاء"
+   },
+   "msgSyncError": {
+      "message": "خطأ في المزامنة!"
+   },
+   "msgSyncInit": {
+      "message": "جارٍ التهيئة..."
+   },
+   "msgSyncInitError": {
+      "message": "خطأ في التهيئة!"
+   },
+   "msgSyncNoAuthYet": {
+      "message": "لم يتم التفويض بعد."
+   },
+   "msgSyncing": {
+      "message": "المزامنة قيد التنفيذ..."
+   },
+   "msgSyntaxError": {
+      "message": "هل هناك خطأ نحوي؟"
+   },
+   "msgTardyMatch": {
+      "message": "السكربت لم يكن موجودًا أو لم يتطابق مع عنوان URL عند تحميل الصفحة، وهو ما يحدث في مواقع تطبيقات الصفحات الواحدة (SPA) مثل Facebook أو Instagram التي تستخدم التنقّل الوهمي. يمكنك إعادة تحميل علامة التبويب لتشغيل السكربت. ولإصلاح المشكلة، استخدم @match للموقع بأكمله ثم اكتشف التغييرات باستخدام MutationObserver أو واجهة برمجة window.navigation."
+   },
+   "msgUpdated": {
+      "message": "تم تحديث السكربت."
+   },
+   "msgUpdating": {
+      "message": "جارٍ التحديث..."
+   },
+   "noValues": {
+      "message": "لم يتم تخزين أي قيمة"
+   },
+   "optionEditorWindow": {
+      "message": "فتح المحرر من النافذة المنبثقة في نافذة جديدة"
+   },
+   "optionEditorWindowHint": {
+      "message": "سيتم حفظ موضع نافذة المحرر فقط عند تغيير حجمها أو حفظها"
+   },
+   "optionEditorWindowSimple": {
+      "message": "إخفاء شريط العناوين"
+   },
+   "optionPopup": {
+      "message": "القائمة المنبثقة والأيقونة"
+   },
+   "optionPopupEnabledFirst": {
+      "message": "المفعّلة أولًا"
+   },
+   "optionPopupGroupRunAt": {
+      "message": "تجميع حسب مرحلة @run-at"
+   },
+   "optionShowEnabledFirst": {
+      "message": "عرض السكربتات المفعّلة أولًا"
+   },
+   "optionUiTheme": {
+      "message": "سمة واجهة المستخدم: "
+   },
+   "optionUiThemeAuto": {
+      "message": "تلقائي"
+   },
+   "optionUiThemeDark": {
+      "message": "داكن"
+   },
+   "optionUiThemeLight": {
+      "message": "فاتح"
+   },
+   "optionUpdate": {
+      "message": "تحديث"
+   },
+   "popupSettings": {
+      "message": "إعدادات النافذة المنبثقة"
+   },
+   "popupSettingsHint": {
+      "message": "النقر بزر الماوس الأيمن: إعدادات النافذة المنبثقة"
+   },
+   "readonly": {
+      "message": "للقراءة فقط"
+   },
+   "readonlyNote": {
+      "message": "السكربت الذي يتم تحديثه تلقائيًا للقراءة فقط ما لم تعطّل التحديثات أو تسمح بالتعديل."
+   },
+   "readonlyOpt": {
+      "message": "السماح بالتعديل"
+   },
+   "readonlyOptWarn": {
+      "message": "(سيتم استبدال التعديلات في التحديث القادم)"
+   },
+   "reinstall": {
+      "message": "إعادة التثبيت"
+   },
+   "reloadTab": {
+      "message": "إعادة تحميل علامة التبويب"
+   },
+   "reloadTabTrackHint": {
+      "message": "إذا تم تفعيله، فسيتم إعادة تحميل علامة التبويب النشطة عند اكتشاف تغييرات وتطابق هذا السكربت مع عنوان URL الخاص بها."
+   },
+   "searchCaseSensitive": {
+      "message": "حساس لحالة الأحرف"
+   },
+   "searchUseRegex": {
+      "message": "استخدام التعبيرات النمطية (Regex)"
+   },
+   "sideMenuAbout": {
+      "message": "حول"
+   },
+   "sideMenuInstalled": {
+      "message": "السكربتات المثبّتة"
+   },
+   "sideMenuScripts": {
+      "message": "النصوص"
+   },
+   "sideMenuSettings": {
+      "message": "الإعدادات"
+   },
+   "skipScripts": {
+      "message": "إعادة تحميل الصفحة بدون سكربتات المستخدم"
+   },
+   "skipScriptsMsg": {
+      "message": "لقد عطّلت سكربتات المستخدم لهذه الصفحة. لتشغيلها، أعد تحميل الصفحة أو انتقل إلى علامة تبويب أخرى."
+   },
+   "sortOrder": {
+      "message": "ترتيب الفرز:"
+   },
+   "stopTracking": {
+      "message": "إيقاف التتبع"
+   },
+   "titleBadgeColor": {
+      "message": "لون الشارة العادي"
+   },
+   "titleBadgeColorBlocked": {
+      "message": "لون الشارة عندما يكون الموقع غير قابل للحقن (في قائمة الحظر أو غير مدعوم)"
+   },
+   "titleSearchHintV2": {
+      "message": "* مفتاح \u003Ckbd>Enter\u003C/kbd> يضيف النص إلى سجل الإكمال التلقائي\n* جميع الشروط غير حساسة لحالة الأحرف\n* يمكن دمج الشروط المفصولة بمسافات\n* البحث حسب البيانات الوصفية: \u003Ccode>\"Awesome Script\" \"Description\"\u003C/code>\n* البحث حسب الوسوم: \u003Ccode>#tag1 #tag2\u003C/code>\n* البحث حسب اسم السكربت: \u003Ccode>name:\"awesome name\"\u003C/code>\n* البحث حسب كود السكربت: \u003Ccode>code:\"awesome code\"\u003C/code>\n* البحث السلبي: \u003Ccode>!#tag2 !name:\"unwanted\"\u003C/code>\n* التعبيرات النمطية: \u003Ccode>/\\w+?/\u003C/code>, \u003Ccode>/\\w+?/gi\u003C/code>, \u003Ccode>name:/\\w+?/\u003C/code>, \u003Ccode>name+re:\"\\w+? with space\"\u003C/code>"
+   },
+   "toggleInjection": {
+      "message": "تبديل حقن سكربتات المستخدم"
+   },
+   "trackEdits": {
+      "message": "تتبع التعديلات الخارجية"
+   },
+   "trackEditsNote": {
+      "message": "ابقَ هذه الصفحة مفتوحة لتتبع تعديلاتك على الملف المحلي"
+   },
+   "updateListedCmd": {
+      "message": "تحديث السكربتات ($1)"
+   },
+   "updateScript": {
+      "message": "تحديث"
+   },
+   "updateScriptForced": {
+      "message": "انقر بزر الماوس الأيمن أو المس مع الاستمرار لتحديث إجباري يشمل التبعيات"
+   },
+   "updateScriptsAll": {
+      "message": "تحديث جميع السكربتات"
+   },
+   "updateScriptsInTab": {
+      "message": "تحديث سكربتات علامة التبويب الحالية"
+   },
+   "userScriptsPermissionNote": {
+      "message": "يرجى تمكين \"السماح بسكربتات المستخدم\" في تفاصيل Violentmonkey عبر chrome://extensions وإعادة تحميل علامة التبويب."
+   },
+   "userScriptsPermissionNoteOld": {
+      "message": "يرجى تفعيل \"وضع المطور\" في chrome://extensions وإعادة تحميل علامة التبويب"
+   },
+   "valueLabelKey": {
+      "message": "المفتاح (نص)"
+   },
+   "valueLabelValue": {
+      "message": "القيمة (مُسلسلة بصيغة JSON)"
+   },
+   "valueLabelValueAll": {
+      "message": "جميع القيم (مُسلسلة بصيغة JSON)"
+   },
+   "valueLabelValueOr": {
+      "message": "القيمة (مسلسلة كـ JSON أو $1)"
+   },
+   "valueLabelValueString": {
+      "message": "سلسلة نصية $1"
+   }
+}

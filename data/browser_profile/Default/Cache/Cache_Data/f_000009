@@ -1,0 +1,282 @@
+import { createHotContext as __vite__createHotContext } from "/@vite/client";import.meta.hot = __vite__createHotContext("/src/pages/Settings.jsx");import __vite__cjsImport0_react_jsxDevRuntime from "/node_modules/.vite/deps/react_jsx-dev-runtime.js?v=f9e4ebc7"; const jsxDEV = __vite__cjsImport0_react_jsxDevRuntime["jsxDEV"];
+import * as RefreshRuntime from "/@react-refresh";
+const inWebWorker = typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScope;
+let prevRefreshReg;
+let prevRefreshSig;
+if (import.meta.hot && !inWebWorker) {
+  if (!window.$RefreshReg$) {
+    throw new Error(
+      "@vitejs/plugin-react can't detect preamble. Something is wrong."
+    );
+  }
+  prevRefreshReg = window.$RefreshReg$;
+  prevRefreshSig = window.$RefreshSig$;
+  window.$RefreshReg$ = RefreshRuntime.getRefreshReg("C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx");
+  window.$RefreshSig$ = RefreshRuntime.createSignatureFunctionForTransform;
+}
+var _s = $RefreshSig$();
+import __vite__cjsImport3_react from "/node_modules/.vite/deps/react.js?v=f9e4ebc7"; const React = __vite__cjsImport3_react.__esModule ? __vite__cjsImport3_react.default : __vite__cjsImport3_react; const useState = __vite__cjsImport3_react["useState"]; const useEffect = __vite__cjsImport3_react["useEffect"];
+import { providersApi } from "/src/api.js";
+export default function Settings() {
+  _s();
+  const [providers, setProviders] = useState({ audio: [], video: [], llm: [] });
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    providersApi.list().then((res) => {
+      if (res.success) setProviders(res.data);
+    }).catch((err) => console.error(err)).finally(() => setLoading(false));
+  }, []);
+  return /* @__PURE__ */ jsxDEV("div", { children: [
+    /* @__PURE__ */ jsxDEV("div", { className: "page-header", children: /* @__PURE__ */ jsxDEV("div", { children: [
+      /* @__PURE__ */ jsxDEV("h1", { className: "page-title", children: "Provider & System Settings" }, void 0, false, {
+        fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+        lineNumber: 40,
+        columnNumber: 11
+      }, this),
+      /* @__PURE__ */ jsxDEV("p", { className: "page-subtitle", children: "Configure local AI provider integration keys" }, void 0, false, {
+        fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+        lineNumber: 41,
+        columnNumber: 11
+      }, this)
+    ] }, void 0, true, {
+      fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+      lineNumber: 39,
+      columnNumber: 9
+    }, this) }, void 0, false, {
+      fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+      lineNumber: 38,
+      columnNumber: 7
+    }, this),
+    /* @__PURE__ */ jsxDEV("div", { className: "banner banner-warning", children: /* @__PURE__ */ jsxDEV("span", { children: [
+      "🔒 ",
+      /* @__PURE__ */ jsxDEV("strong", { children: "API Key Security:" }, void 0, false, {
+        fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+        lineNumber: 46,
+        columnNumber: 18
+      }, this),
+      " All API keys are stored strictly on your local machine in the ",
+      /* @__PURE__ */ jsxDEV("code", { children: ".env" }, void 0, false, {
+        fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+        lineNumber: 46,
+        columnNumber: 115
+      }, this),
+      " file. They are never sent to external servers except directly to provider APIs."
+    ] }, void 0, true, {
+      fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+      lineNumber: 46,
+      columnNumber: 9
+    }, this) }, void 0, false, {
+      fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+      lineNumber: 45,
+      columnNumber: 7
+    }, this),
+    loading ? /* @__PURE__ */ jsxDEV("p", { style: { color: "var(--text-secondary)" }, children: "Loading settings..." }, void 0, false, {
+      fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+      lineNumber: 50,
+      columnNumber: 7
+    }, this) : /* @__PURE__ */ jsxDEV("div", { children: [
+      /* @__PURE__ */ jsxDEV("div", { className: "card", children: [
+        /* @__PURE__ */ jsxDEV("div", { className: "card-title", children: /* @__PURE__ */ jsxDEV("span", { children: "🎙️ Text-to-Speech (Audio) Providers" }, void 0, false, {
+          fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+          lineNumber: 56,
+          columnNumber: 15
+        }, this) }, void 0, false, {
+          fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+          lineNumber: 55,
+          columnNumber: 13
+        }, this),
+        /* @__PURE__ */ jsxDEV("table", { className: "table", children: [
+          /* @__PURE__ */ jsxDEV("thead", { children: /* @__PURE__ */ jsxDEV("tr", { children: [
+            /* @__PURE__ */ jsxDEV("th", { children: "Provider" }, void 0, false, {
+              fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+              lineNumber: 62,
+              columnNumber: 19
+            }, this),
+            /* @__PURE__ */ jsxDEV("th", { children: "Type" }, void 0, false, {
+              fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+              lineNumber: 63,
+              columnNumber: 19
+            }, this),
+            /* @__PURE__ */ jsxDEV("th", { children: "API Key Required" }, void 0, false, {
+              fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+              lineNumber: 64,
+              columnNumber: 19
+            }, this),
+            /* @__PURE__ */ jsxDEV("th", { children: "Status" }, void 0, false, {
+              fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+              lineNumber: 65,
+              columnNumber: 19
+            }, this)
+          ] }, void 0, true, {
+            fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+            lineNumber: 61,
+            columnNumber: 17
+          }, this) }, void 0, false, {
+            fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+            lineNumber: 60,
+            columnNumber: 15
+          }, this),
+          /* @__PURE__ */ jsxDEV("tbody", { children: providers.audio.map(
+            (p) => /* @__PURE__ */ jsxDEV("tr", { children: [
+              /* @__PURE__ */ jsxDEV("td", { style: { fontWeight: "600" }, children: p.name }, void 0, false, {
+                fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+                lineNumber: 71,
+                columnNumber: 21
+              }, this),
+              /* @__PURE__ */ jsxDEV("td", { children: p.free_tier ? "Free Tier / Open" : "Paid" }, void 0, false, {
+                fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+                lineNumber: 72,
+                columnNumber: 21
+              }, this),
+              /* @__PURE__ */ jsxDEV("td", { children: p.api_key_set ? "No key required" : "Requires key" }, void 0, false, {
+                fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+                lineNumber: 73,
+                columnNumber: 21
+              }, this),
+              /* @__PURE__ */ jsxDEV("td", { children: /* @__PURE__ */ jsxDEV("span", { className: "badge badge-success", children: "Configured ✅" }, void 0, false, {
+                fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+                lineNumber: 75,
+                columnNumber: 23
+              }, this) }, void 0, false, {
+                fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+                lineNumber: 74,
+                columnNumber: 21
+              }, this)
+            ] }, p.id, true, {
+              fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+              lineNumber: 70,
+              columnNumber: 15
+            }, this)
+          ) }, void 0, false, {
+            fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+            lineNumber: 68,
+            columnNumber: 15
+          }, this)
+        ] }, void 0, true, {
+          fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+          lineNumber: 59,
+          columnNumber: 13
+        }, this)
+      ] }, void 0, true, {
+        fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+        lineNumber: 54,
+        columnNumber: 11
+      }, this),
+      /* @__PURE__ */ jsxDEV("div", { className: "card", children: [
+        /* @__PURE__ */ jsxDEV("div", { className: "card-title", children: /* @__PURE__ */ jsxDEV("span", { children: "🎥 Text-to-Video Providers" }, void 0, false, {
+          fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+          lineNumber: 86,
+          columnNumber: 15
+        }, this) }, void 0, false, {
+          fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+          lineNumber: 85,
+          columnNumber: 13
+        }, this),
+        /* @__PURE__ */ jsxDEV("table", { className: "table", children: [
+          /* @__PURE__ */ jsxDEV("thead", { children: /* @__PURE__ */ jsxDEV("tr", { children: [
+            /* @__PURE__ */ jsxDEV("th", { children: "Provider" }, void 0, false, {
+              fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+              lineNumber: 92,
+              columnNumber: 19
+            }, this),
+            /* @__PURE__ */ jsxDEV("th", { children: "Type" }, void 0, false, {
+              fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+              lineNumber: 93,
+              columnNumber: 19
+            }, this),
+            /* @__PURE__ */ jsxDEV("th", { children: "API Key Required" }, void 0, false, {
+              fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+              lineNumber: 94,
+              columnNumber: 19
+            }, this),
+            /* @__PURE__ */ jsxDEV("th", { children: "Status" }, void 0, false, {
+              fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+              lineNumber: 95,
+              columnNumber: 19
+            }, this)
+          ] }, void 0, true, {
+            fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+            lineNumber: 91,
+            columnNumber: 17
+          }, this) }, void 0, false, {
+            fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+            lineNumber: 90,
+            columnNumber: 15
+          }, this),
+          /* @__PURE__ */ jsxDEV("tbody", { children: providers.video.map(
+            (p) => /* @__PURE__ */ jsxDEV("tr", { children: [
+              /* @__PURE__ */ jsxDEV("td", { style: { fontWeight: "600" }, children: p.name }, void 0, false, {
+                fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+                lineNumber: 101,
+                columnNumber: 21
+              }, this),
+              /* @__PURE__ */ jsxDEV("td", { children: p.free_tier ? "Free Tier" : "Pay-as-you-go" }, void 0, false, {
+                fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+                lineNumber: 102,
+                columnNumber: 21
+              }, this),
+              /* @__PURE__ */ jsxDEV("td", { children: "Yes" }, void 0, false, {
+                fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+                lineNumber: 103,
+                columnNumber: 21
+              }, this),
+              /* @__PURE__ */ jsxDEV("td", { children: /* @__PURE__ */ jsxDEV("span", { className: "badge badge-warning", children: "Configure in .env" }, void 0, false, {
+                fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+                lineNumber: 105,
+                columnNumber: 23
+              }, this) }, void 0, false, {
+                fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+                lineNumber: 104,
+                columnNumber: 21
+              }, this)
+            ] }, p.id, true, {
+              fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+              lineNumber: 100,
+              columnNumber: 15
+            }, this)
+          ) }, void 0, false, {
+            fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+            lineNumber: 98,
+            columnNumber: 15
+          }, this)
+        ] }, void 0, true, {
+          fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+          lineNumber: 89,
+          columnNumber: 13
+        }, this)
+      ] }, void 0, true, {
+        fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+        lineNumber: 84,
+        columnNumber: 11
+      }, this)
+    ] }, void 0, true, {
+      fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+      lineNumber: 52,
+      columnNumber: 7
+    }, this)
+  ] }, void 0, true, {
+    fileName: "C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx",
+    lineNumber: 37,
+    columnNumber: 5
+  }, this);
+}
+_s(Settings, "VN03UTAxOu5R1mxOw4zDKKxHDLc=");
+_c = Settings;
+var _c;
+$RefreshReg$(_c, "Settings");
+if (import.meta.hot && !inWebWorker) {
+  window.$RefreshReg$ = prevRefreshReg;
+  window.$RefreshSig$ = prevRefreshSig;
+}
+if (import.meta.hot && !inWebWorker) {
+  RefreshRuntime.__hmr_import(import.meta.url).then((currentExports) => {
+    RefreshRuntime.registerExportsForReactRefresh("C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx", currentExports);
+    import.meta.hot.accept((nextExports) => {
+      if (!nextExports) return;
+      const invalidateMessage = RefreshRuntime.validateRefreshBoundaryAndEnqueueUpdate("C:/Hack/WorkflowVdAi/frontend/src/pages/Settings.jsx", currentExports, nextExports);
+      if (invalidateMessage) import.meta.hot.invalidate(invalidateMessage);
+    });
+  });
+}
+
+//# sourceMappingURL=data:application/json;base64,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QUFBO0FBQUEscUJBQTBDO0FBQUEsY0FDMUMsdUJBQUMsUUFBSUYsWUFBRUcsWUFBWSxjQUFjLG1CQUFqQztBQUFBO0FBQUE7QUFBQTtBQUFBLHFCQUFpRDtBQUFBLGNBQ2pELHVCQUFDLFFBQUcsbUJBQUo7QUFBQTtBQUFBO0FBQUE7QUFBQSxxQkFBTztBQUFBLGNBQ1AsdUJBQUMsUUFDQyxpQ0FBQyxVQUFLLFdBQVUsdUJBQXNCLGlDQUF0QztBQUFBO0FBQUE7QUFBQTtBQUFBLHFCQUF1RCxLQUR6RDtBQUFBO0FBQUE7QUFBQTtBQUFBLHFCQUVBO0FBQUEsaUJBTk9ILEVBQUVLLElBQVg7QUFBQTtBQUFBO0FBQUE7QUFBQSxtQkFPQTtBQUFBLFVBQ0QsS0FWSDtBQUFBO0FBQUE7QUFBQTtBQUFBLGlCQVdBO0FBQUEsYUFwQkY7QUFBQTtBQUFBO0FBQUE7QUFBQSxlQXFCQTtBQUFBLFdBMUJGO0FBQUE7QUFBQTtBQUFBO0FBQUEsYUEyQkE7QUFBQSxTQTNERjtBQUFBO0FBQUE7QUFBQTtBQUFBLFdBNERBO0FBQUEsT0EzRUo7QUFBQTtBQUFBO0FBQUE7QUFBQSxTQTZFQTtBQUVKO0FBQUN6QixHQTdGdUJELFVBQVE7QUFBQSxLQUFSQTtBQUFRLElBQUEyQjtBQUFBLGFBQUFBLElBQUEiLCJuYW1lcyI6WyJSZWFjdCIsInVzZVN0YXRlIiwidXNlRWZmZWN0IiwicHJvdmlkZXJzQXBpIiwiU2V0dGluZ3MiLCJfcyIsInByb3ZpZGVycyIsInNldFByb3ZpZGVycyIsImF1ZGlvIiwidmlkZW8iLCJsbG0iLCJsb2FkaW5nIiwic2V0TG9hZGluZyIsImxpc3QiLCJ0aGVuIiwicmVzIiwic3VjY2VzcyIsImRhdGEiLCJjYXRjaCIsImVyciIsImNvbnNvbGUiLCJlcnJvciIsImZpbmFsbHkiLCJjb2xvciIsIm1hcCIsInAiLCJmb250V2VpZ2h0IiwibmFtZSIsImZyZWVfdGllciIsImFwaV9rZXlfc2V0IiwiaWQiLCJfYyJdLCJpZ25vcmVMaXN0IjpbXSwic291cmNlcyI6WyJTZXR0aW5ncy5qc3giXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0IFJlYWN0LCB7IHVzZVN0YXRlLCB1c2VFZmZlY3QgfSBmcm9tICdyZWFjdCc7XG5pbXBvcnQgeyBwcm92aWRlcnNBcGkgfSBmcm9tICcuLi9hcGknO1xuXG5leHBvcnQgZGVmYXVsdCBmdW5jdGlvbiBTZXR0aW5ncygpIHtcbiAgY29uc3QgW3Byb3ZpZGVycywgc2V0UHJvdmlkZXJzXSA9IHVzZVN0YXRlKHsgYXVkaW86IFtdLCB2aWRlbzogW10sIGxsbTogW10gfSk7XG4gIGNvbnN0IFtsb2FkaW5nLCBzZXRMb2FkaW5nXSA9IHVzZVN0YXRlKHRydWUpO1xuXG4gIHVzZUVmZmVjdCgoKSA9PiB7XG4gICAgcHJvdmlkZXJzQXBpLmxpc3QoKVxuICAgICAgLnRoZW4ocmVzID0+IHtcbiAgICAgICAgaWYgKHJlcy5zdWNjZXNzKSBzZXRQcm92aWRlcnMocmVzLmRhdGEpO1xuICAgICAgfSlcbiAgICAgIC5jYXRjaChlcnIgPT4gY29uc29sZS5lcnJvcihlcnIpKVxuICAgICAgLmZpbmFsbHkoKCkgPT4gc2V0TG9hZGluZyhmYWxzZSkpO1xuICB9LCBbXSk7XG5cbiAgcmV0dXJuIChcbiAgICA8ZGl2PlxuICAgICAgPGRpdiBjbGFzc05hbWU9XCJwYWdlLWhlYWRlclwiPlxuICAgICAgICA8ZGl2PlxuICAgICAgICAgIDxoMSBjbGFzc05hbWU9XCJwYWdlLXRpdGxlXCI+UHJvdmlkZXIgJiBTeXN0ZW0gU2V0dGluZ3M8L2gxPlxuICAgICAgICAgIDxwIGNsYXNzTmFtZT1cInBhZ2Utc3VidGl0bGVcIj5Db25maWd1cmUgbG9jYWwgQUkgcHJvdmlkZXIgaW50ZWdyYXRpb24ga2V5czwvcD5cbiAgICAgICAgPC9kaXY+XG4gICAgICA8L2Rpdj5cblxuICAgICAgPGRpdiBjbGFzc05hbWU9XCJiYW5uZXIgYmFubmVyLXdhcm5pbmdcIj5cbiAgICAgICAgPHNwYW4+8J+UkiA8c3Ryb25nPkFQSSBLZXkgU2VjdXJpdHk6PC9zdHJvbmc+IEFsbCBBUEkga2V5cyBhcmUgc3RvcmVkIHN0cmljdGx5IG9uIHlvdXIgbG9jYWwgbWFjaGluZSBpbiB0aGUgPGNvZGU+LmVudjwvY29kZT4gZmlsZS4gVGhleSBhcmUgbmV2ZXIgc2VudCB0byBleHRlcm5hbCBzZXJ2ZXJzIGV4Y2VwdCBkaXJlY3RseSB0byBwcm92aWRlciBBUElzLjwvc3Bhbj5cbiAgICAgIDwvZGl2PlxuXG4gICAgICB7bG9hZGluZyA/IChcbiAgICAgICAgPHAgc3R5bGU9e3sgY29sb3I6ICd2YXIoLS10ZXh0LXNlY29uZGFyeSknIH19PkxvYWRpbmcgc2V0dGluZ3MuLi48L3A+XG4gICAgICApIDogKFxuICAgICAgICA8ZGl2PlxuICAgICAgICAgIHsvKiBBdWRpbyBQcm92aWRlcnMgKi99XG4gICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJjYXJkXCI+XG4gICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImNhcmQtdGl0bGVcIj5cbiAgICAgICAgICAgICAgPHNwYW4+8J+Ome+4jyBUZXh0LXRvLVNwZWVjaCAoQXVkaW8pIFByb3ZpZGVyczwvc3Bhbj5cbiAgICAgICAgICAgIDwvZGl2PlxuXG4gICAgICAgICAgICA8dGFibGUgY2xhc3NOYW1lPVwidGFibGVcIj5cbiAgICAgICAgICAgICAgPHRoZWFkPlxuICAgICAgICAgICAgICAgIDx0cj5cbiAgICAgICAgICAgICAgICAgIDx0aD5Qcm92aWRlcjwvdGg+XG4gICAgICAgICAgICAgICAgICA8dGg+VHlwZTwvdGg+XG4gICAgICAgICAgICAgICAgICA8dGg+QVBJIEtleSBSZXF1aXJlZDwvdGg+XG4gICAgICAgICAgICAgICAgICA8dGg+U3RhdHVzPC90aD5cbiAgICAgICAgICAgICAgICA8L3RyPlxuICAgICAgICAgICAgICA8L3RoZWFkPlxuICAgICAgICAgICAgICA8dGJvZHk+XG4gICAgICAgICAgICAgICAge3Byb3ZpZGVycy5hdWRpby5tYXAocCA9PiAoXG4gICAgICAgICAgICAgICAgICA8dHIga2V5PXtwLmlkfT5cbiAgICAgICAgICAgICAgICAgICAgPHRkIHN0eWxlPXt7IGZvbnRXZWlnaHQ6ICc2MDAnIH19PntwLm5hbWV9PC90ZD5cbiAgICAgICAgICAgICAgICAgICAgPHRkPntwLmZyZWVfdGllciA/ICdGcmVlIFRpZXIgLyBPcGVuJyA6ICdQYWlkJ308L3RkPlxuICAgICAgICAgICAgICAgICAgICA8dGQ+e3AuYXBpX2tleV9zZXQgPyAnTm8ga2V5IHJlcXVpcmVkJyA6ICdSZXF1aXJlcyBrZXknfTwvdGQ+XG4gICAgICAgICAgICAgICAgICAgIDx0ZD5cbiAgICAgICAgICAgICAgICAgICAgICA8c3BhbiBjbGFzc05hbWU9XCJiYWRnZSBiYWRnZS1zdWNjZXNzXCI+Q29uZmlndXJlZCDinIU8L3NwYW4+XG4gICAgICAgICAgICAgICAgICAgIDwvdGQ+XG4gICAgICAgICAgICAgICAgICA8L3RyPlxuICAgICAgICAgICAgICAgICkpfVxuICAgICAgICAgICAgICA8L3Rib2R5PlxuICAgICAgICAgICAgPC90YWJsZT5cbiAgICAgICAgICA8L2Rpdj5cblxuICAgICAgICAgIHsvKiBWaWRlbyBQcm92aWRlcnMgKi99XG4gICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJjYXJkXCI+XG4gICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImNhcmQtdGl0bGVcIj5cbiAgICAgICAgICAgICAgPHNwYW4+8J+OpSBUZXh0LXRvLVZpZGVvIFByb3ZpZGVyczwvc3Bhbj5cbiAgICAgICAgICAgIDwvZGl2PlxuXG4gICAgICAgICAgICA8dGFibGUgY2xhc3NOYW1lPVwidGFibGVcIj5cbiAgICAgICAgICAgICAgPHRoZWFkPlxuICAgICAgICAgICAgICAgIDx0cj5cbiAgICAgICAgICAgICAgICAgIDx0aD5Qcm92aWRlcjwvdGg+XG4gICAgICAgICAgICAgICAgICA8dGg+VHlwZTwvdGg+XG4gICAgICAgICAgICAgICAgICA8dGg+QVBJIEtleSBSZXF1aXJlZDwvdGg+XG4gICAgICAgICAgICAgICAgICA8dGg+U3RhdHVzPC90aD5cbiAgICAgICAgICAgICAgICA8L3RyPlxuICAgICAgICAgICAgICA8L3RoZWFkPlxuICAgICAgICAgICAgICA8dGJvZHk+XG4gICAgICAgICAgICAgICAge3Byb3ZpZGVycy52aWRlby5tYXAocCA9PiAoXG4gICAgICAgICAgICAgICAgICA8dHIga2V5PXtwLmlkfT5cbiAgICAgICAgICAgICAgICAgICAgPHRkIHN0eWxlPXt7IGZvbnRXZWlnaHQ6ICc2MDAnIH19PntwLm5hbWV9PC90ZD5cbiAgICAgICAgICAgICAgICAgICAgPHRkPntwLmZyZWVfdGllciA/ICdGcmVlIFRpZXInIDogJ1BheS1hcy15b3UtZ28nfTwvdGQ+XG4gICAgICAgICAgICAgICAgICAgIDx0ZD5ZZXM8L3RkPlxuICAgICAgICAgICAgICAgICAgICA8dGQ+XG4gICAgICAgICAgICAgICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwiYmFkZ2UgYmFkZ2Utd2FybmluZ1wiPkNvbmZpZ3VyZSBpbiAuZW52PC9zcGFuPlxuICAgICAgICAgICAgICAgICAgICA8L3RkPlxuICAgICAgICAgICAgICAgICAgPC90cj5cbiAgICAgICAgICAgICAgICApKX1cbiAgICAgICAgICAgICAgPC90Ym9keT5cbiAgICAgICAgICAgIDwvdGFibGU+XG4gICAgICAgICAgPC9kaXY+XG4gICAgICAgIDwvZGl2PlxuICAgICAgKX1cbiAgICA8L2Rpdj5cbiAgKTtcbn1cbiJdLCJmaWxlIjoiQzovSGFjay9Xb3JrZmxvd1ZkQWkvZnJvbnRlbmQvc3JjL3BhZ2VzL1NldHRpbmdzLmpzeCJ9

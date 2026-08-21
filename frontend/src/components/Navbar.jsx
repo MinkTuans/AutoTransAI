@@ -1,10 +1,20 @@
 import React from 'react';
+import appLogo from '../assets/app-logo.png';
 
 export default function Navbar({ activePage, setActivePage }) {
   return (
     <nav className="navbar">
-      <a href="#" onClick={(e) => { e.preventDefault(); setActivePage('dashboard'); }} className="navbar-brand">
-        🎬 <span>WorkflowVdAi</span>
+      <a
+        href="#"
+        onClick={(e) => { e.preventDefault(); setActivePage('dashboard'); }}
+        className="navbar-brand"
+      >
+        <img
+          src={appLogo}
+          alt="WorkflowVdAi Logo"
+          className="navbar-logo-img"
+        />
+        <span>WorkflowVdAi</span>
       </a>
       <div className="navbar-links">
         <button

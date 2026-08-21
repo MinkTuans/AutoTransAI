@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunk_solflare_extension=self.webpackChunk_solflare_extension||[]).push([[232],{80232(e){e.exports=JSON.parse('{"name":"@solflare/locales","version":"0.1.0","private":true}')}}]);

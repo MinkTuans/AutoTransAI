@@ -1,0 +1,68 @@
+{
+   "action": {
+      "default_icon": {
+         "128": "static/assets/logo-128.png",
+         "16": "static/assets/logo-16.png",
+         "24": "static/assets/logo-24.png",
+         "32": "static/assets/logo-32.png",
+         "48": "static/assets/logo-48.png"
+      },
+      "default_popup": "app_popup.html",
+      "default_title": "Solflare"
+   },
+   "background": {
+      "service_worker": "background.js",
+      "type": "module"
+   },
+   "commands": {
+      "_execute_action": {
+         "description": "Open Solflare extension",
+         "suggested_key": {
+            "chromeos": "Alt+Shift+S",
+            "linux": "Alt+Shift+S",
+            "mac": "Alt+Shift+S",
+            "windows": "Alt+Shift+S"
+         }
+      },
+      "toggle-side-panel": {
+         "description": "Toggle Solflare side panel",
+         "suggested_key": {
+            "chromeos": "Alt+Shift+X",
+            "linux": "Alt+Shift+X",
+            "mac": "Alt+Shift+X",
+            "windows": "Alt+Shift+X"
+         }
+      }
+   },
+   "content_scripts": [ {
+      "all_frames": true,
+      "js": [ "content.js" ],
+      "matches": [ "\u003Call_urls>" ],
+      "run_at": "document_start"
+   } ],
+   "description": "The most powerful wallet on Solana, trusted by 4M+ users managing $20B+ in assets.",
+   "host_permissions": [ "http://*/*", "https://*/*" ],
+   "icons": {
+      "128": "static/assets/logo-128.png",
+      "16": "static/assets/logo-16.png",
+      "24": "static/assets/logo-24.png",
+      "32": "static/assets/logo-32.png",
+      "48": "static/assets/logo-48.png"
+   },
+   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAghKHQJa2CF5V998h+HYYDwCqX52t02ONpp2DFyHPhNWVyI5EZpqVB8LjEA6M8Dw1yqSU4lL/Iu5Rfq9jzsZkXBZfMzlnG3/Dc9HXCrwlZlU6DAwyZVuPS1NvT/ajQ3coSMgZmGGisl9QSURryzm4NqW4YfAbBPellhtNf1Q3axbhOXs4MP4FunwnhEufEErLj28d4vUPq6BEszcb7hEfkogh3Uo4BOOJDtEGGWb6IgvzGyM9XXAVCboWQYb4MrtyJOf5Vzb9xxbBJFFWE/d6/vUazlb6PWKQ2UknRO0voon4gGF81m/Uu68cU0Pjs0jpnj18hhnohgm8Gqdyw/gbVQIDAQAB",
+   "manifest_version": 3,
+   "name": "Solflare Wallet",
+   "permissions": [ "storage", "activeTab", "tabs", "alarms", "unlimitedStorage", "offscreen", "webRequest", "sidePanel", "webNavigation" ],
+   "side_panel": {
+      "default_path": "side_panel.html"
+   },
+   "update_url": "https://clients2.google.com/service/update2/crx",
+   "version": "2.34.0",
+   "web_accessible_resources": [ {
+      "matches": [ "\u003Call_urls>" ],
+      "resources": [ "inpage.js" ]
+   }, {
+      "matches": [ "https://dflow.net/*" ],
+      "resources": [ "success_kyc.html" ]
+   } ]
+}
