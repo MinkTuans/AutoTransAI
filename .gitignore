@@ -41,8 +41,20 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Data (media files)
-data/projects/
+# Data (media files & runtime assets)
+data/
+backend/data/
+backend/scratch/
+*.wav
+*.mp4
+*.mp3
+*.aac
+*.m4a
+*.webm
+*.avi
+*.mov
+*.mkv
+*.flac
 
 # Logs
 *.log

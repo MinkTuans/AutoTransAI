@@ -194,56 +194,12 @@ async def list_projects(session: AsyncSession = Depends(get_session)):
 
 
 async def _delete_single_item(item_id: str, session: AsyncSession) -> bool:
-    import shutil
-    # 1. Check if Standard Project
-    std_res = await session.execute(select(Project).where(Project.id == item_id))
-    std_proj = std_res.scalar_one_or_none()
-    if std_proj:
-        if item_id in _running_workflows:
-            _running_workflows[item_id].cancel()
-        if std_proj.r2_key:
-            await storage_service.delete_file(std_proj.r2_key)
-        await session.execute(delete(Segment).where(Segment.project_id == item_id))
-        await session.delete(std_proj)
-        await session.commit()
-        delete_project_files(item_id)
-        return True
+    from app.services.cleanup_service import FileCleanupService
+    if item_id in _running_workflows:
+        _running_workflows[item_id].cancel()
 
-    # 2. Check if Video Translation Job
-    vt_res = await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == item_id))
-    vt_job = vt_res.scalar_one_or_none()
-    if vt_job:
-        asset_id = vt_job.asset_id
-        if vt_job.r2_key:
-            await storage_service.delete_file(vt_job.r2_key)
-        await storage_service.delete_file(f"translator/jobs/{item_id}/final_dubbed_video.mp4")
-        
-        await session.execute(delete(VideoTranslationSegment).where(VideoTranslationSegment.job_id == item_id))
-        await session.delete(vt_job)
-        await session.commit()
-
-        # Check if asset used by other jobs
-        other_jobs = await session.execute(
-            select(func.count(VideoTranslationJob.id)).where(VideoTranslationJob.asset_id == asset_id)
-        )
-        if (other_jobs.scalar() or 0) == 0:
-            asset_res = await session.execute(select(VideoAsset).where(VideoAsset.id == asset_id))
-            asset = asset_res.scalar_one_or_none()
-            if asset:
-                if asset.r2_key:
-                    await storage_service.delete_file(asset.r2_key)
-                await session.delete(asset)
-                await session.commit()
-                asset_disk = settings.DATA_DIR / "translator" / "assets" / asset_id
-                if asset_disk.exists():
-                    shutil.rmtree(asset_disk, ignore_errors=True)
-
-        job_disk = settings.DATA_DIR / "translator" / "jobs" / item_id
-        if job_disk.exists():
-            shutil.rmtree(job_disk, ignore_errors=True)
-        return True
-
-    return False
+    res = await FileCleanupService.cleanup_project(item_id, session)
+    return res.get("status") == "success"
 
 
 @router.post("/batch-delete", response_model=dict)

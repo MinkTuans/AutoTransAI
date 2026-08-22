@@ -129,6 +129,18 @@ async def run_ffmpeg_with_progress_async(
         nonlocal current_stats
         last_callback_time = 0.0
 
+        # Read stderr stream concurrently in background thread to prevent pipe buffer deadlock
+        def _read_stderr():
+            if process.stderr:
+                for line in process.stderr:
+                    l_str = line.strip()
+                    if l_str:
+                        stderr_lines.append(l_str)
+
+        import threading
+        stderr_thread = threading.Thread(target=_read_stderr, daemon=True)
+        stderr_thread.start()
+
         # Read stdout stream for real-time progress
         if process.stdout:
             for line in process.stdout:
@@ -162,12 +174,7 @@ async def run_ffmpeg_with_progress_async(
                     snap = dict(current_stats)
                     loop.call_soon_threadsafe(on_progress, snap)
 
-        # Read stderr stream
-        if process.stderr:
-            for line in process.stderr:
-                l_str = line.strip()
-                if l_str:
-                    stderr_lines.append(l_str)
+        stderr_thread.join(timeout=5.0)
 
         try:
             return process.wait(timeout=timeout)
@@ -189,8 +196,8 @@ async def run_ffmpeg_with_progress_async(
         raise FFmpegExecutionError(err_msg, exit_code=-1, stderr_text=err_msg, cmd=full_cmd) from ex
 
     if returncode != 0:
-        err_msg = "\n".join(stderr_lines[-10:]) if stderr_lines else f"FFmpeg error exit code {returncode}"
-        logger.error("FFmpeg process failed", pid=process.pid, returncode=returncode, error=err_msg[:200])
+        err_msg = "\n".join(stderr_lines[-50:]) if stderr_lines else f"FFmpeg error exit code {returncode}"
+        logger.error("FFmpeg process failed", pid=process.pid, returncode=returncode, error=err_msg[:300])
         raise FFmpegExecutionError(
             f"FFmpeg thất bại với mã lỗi (exit code {returncode})",
             exit_code=returncode or -1,

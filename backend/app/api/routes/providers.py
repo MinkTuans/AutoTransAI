@@ -75,6 +75,7 @@ from app.schemas.provider import ProviderConfigureRequest
 settings = get_settings()
 
 PROVIDER_ENV_MAP = {
+    "openai": "OPENAI_API_KEY",
     "gemini": "GEMINI_API_KEY",
     "google_cloud_tts": "GOOGLE_CLOUD_TTS_API_KEY",
     "elevenlabs": "ELEVENLABS_API_KEY",

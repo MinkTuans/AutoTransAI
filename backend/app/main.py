@@ -70,8 +70,10 @@ async def lifespan(app: FastAPI):
     registry.register_video(FalVideoProvider())
 
     # Register LLM Providers
+    from app.providers.llm.openai_provider import OpenAILLMProvider
     from app.providers.llm.gemini_provider import GeminiLLMProvider
 
+    registry.register_llm(OpenAILLMProvider())
     registry.register_llm(GeminiLLMProvider())
 
     logger.info(
@@ -97,6 +99,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+from fastapi.responses import JSONResponse
+from fastapi.requests import Request
+from fastapi import HTTPException
+
 # CORS for frontend dev server
 app.add_middleware(
     CORSMiddleware,
@@ -105,6 +111,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger = get_logger("app.main")
+    logger.exception("Unhandled server error", path=request.url.path, error=str(exc))
+    err_type = type(exc).__name__
+    err_msg = str(exc) or "Internal server error"
+    return JSONResponse(
+        status_code=500,
+        content={
+            "success": False,
+            "detail": f"❌ Server Error ({err_type}): {err_msg}",
+            "error_type": err_type,
+            "path": request.url.path,
+        },
+    )
 
 from app.api.routes import projects, providers, system, video_translator, storage
 

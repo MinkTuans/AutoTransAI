@@ -14,6 +14,7 @@ export default function VideoTranslator({ initialJobId }) {
   // Config options
   const [targetLanguage, setTargetLanguage] = useState('vi');
   const [audioProviderId, setAudioProviderId] = useState('edge_tts');
+  const [llmProviderId, setLlmProviderId] = useState('openai');
   const [voices, setVoices] = useState([]);
   const [voiceId, setVoiceId] = useState('vi-VN-HoaiMyNeural');
   const [originalAudioMode, setOriginalAudioMode] = useState('mute');
@@ -136,9 +137,34 @@ export default function VideoTranslator({ initialJobId }) {
     };
   }, [activeJobId, job?.status]);
 
+  const formatApiError = (err, defaultMsg) => {
+    const status = err.response?.status ? `[HTTP ${err.response.status}] ` : '';
+    const method = err.config?.method ? err.config.method.toUpperCase() + ' ' : '';
+    const url = err.config?.url ? err.config.url + '\n' : '';
+    const serverDetail = err.response?.data?.detail;
+    const errorMsg = err.response?.data?.error || err.message;
+
+    let detailStr = '';
+    if (serverDetail) {
+      detailStr = typeof serverDetail === 'object' ? JSON.stringify(serverDetail, null, 2) : serverDetail;
+    } else if (errorMsg) {
+      detailStr = errorMsg;
+    } else {
+      detailStr = defaultMsg;
+    }
+    return `${status}${method}${url}Lỗi: ${detailStr}`;
+  };
+
   const fetchLogs = async (jobId) => {
     const targetId = jobId || activeJobId;
-    if (!targetId) return;
+    if (!targetId) {
+      setLogsContent(
+        pipelineError
+          ? `⚠️ Chưa có Job ID được gán (Khởi tạo Job thất bại).\n\n[Chi Tiết Lỗi Request/Pipeline]:\n${pipelineError}`
+          : 'Chưa có thông tin Job ID hoặc log execution.'
+      );
+      return;
+    }
     setIsFetchingLogs(true);
     try {
       const res = await videoTranslatorApi.getLogs(targetId);
@@ -146,17 +172,18 @@ export default function VideoTranslator({ initialJobId }) {
         setLogsContent(res.data.logs || 'Chưa có dữ liệu log.');
       }
     } catch (err) {
-      setLogsContent('Không thể tải log: ' + (err.message || 'Lỗi server'));
+      const errFormatted = formatApiError(err, 'Lỗi không thể lấy log từ server');
+      setLogsContent(
+        `Không thể tải log từ server cho Job ID (${targetId}):\n${errFormatted}\n\n[Chi Tiết Lỗi Pipeline Hiển Thị]:\n${pipelineError || job?.error_message || 'N/A'}`
+      );
     } finally {
       setIsFetchingLogs(false);
     }
   };
 
   const handleOpenLogs = () => {
-    if (activeJobId) {
-      fetchLogs(activeJobId);
-      setShowLogModal(true);
-    }
+    setShowLogModal(true);
+    fetchLogs(activeJobId);
   };
 
   const handleCheckUrl = async () => {
@@ -170,8 +197,7 @@ export default function VideoTranslator({ initialJobId }) {
         setUrlMetadata(res.data);
       }
     } catch (err) {
-      const detail = err.response?.data?.detail || err.message || 'Lỗi kiểm tra URL';
-      setCheckError(detail);
+      setCheckError(formatApiError(err, 'Lỗi kiểm tra URL'));
     } finally {
       setIsCheckingUrl(false);
     }
@@ -201,11 +227,24 @@ export default function VideoTranslator({ initialJobId }) {
         source_language: 'auto',
         target_language: targetLanguage,
         audio_provider_id: audioProviderId,
+        llm_provider_id: llmProviderId,
         voice_id: voiceId,
         original_audio_mode: originalAudioMode,
       });
 
       const newJobId = jobRes.data.job_id || jobRes.data.id;
+      // Immediately set job state so activeJobId is populated before startJob completes
+      const initialPendingJob = {
+        id: newJobId,
+        job_id: newJobId,
+        status: 'created',
+        stage: 'QUEUED',
+        overall_progress_pct: 0,
+        stage_progress_pct: 0,
+        current_step: 'Đang bắt đầu pipeline...',
+      };
+      setJob(initialPendingJob);
+
       await videoTranslatorApi.startJob(newJobId);
       const initialJob = await videoTranslatorApi.getJob(newJobId);
       const normalizedInitial = {
@@ -217,7 +256,7 @@ export default function VideoTranslator({ initialJobId }) {
         setSegments(normalizedInitial.segments);
       }
     } catch (err) {
-      const detail = err.response?.data?.detail || err.message || 'Không thể bắt đầu dịch video';
+      const detail = formatApiError(err, 'Không thể bắt đầu dịch video');
       setPipelineError(detail);
       setIsProcessing(false);
     }
@@ -243,7 +282,7 @@ export default function VideoTranslator({ initialJobId }) {
       };
       setJob(normalizedUpdated);
     } catch (err) {
-      const detail = err.response?.data?.detail || err.message || 'Lỗi render video';
+      const detail = formatApiError(err, 'Lỗi render video');
       setPipelineError(detail);
       setIsProcessing(false);
     }
@@ -262,7 +301,7 @@ export default function VideoTranslator({ initialJobId }) {
         setJob(normalized);
       }
     } catch (err) {
-      alert('Không thể hủy job: ' + (err.message || 'Lỗi hệ thống'));
+      alert('Không thể hủy job: ' + formatApiError(err, 'Lỗi hệ thống'));
     }
   };
 
@@ -281,7 +320,7 @@ export default function VideoTranslator({ initialJobId }) {
         setJob(normalized);
       }
     } catch (err) {
-      setPipelineError('Không thể thử lại job: ' + (err.message || 'Lỗi hệ thống'));
+      setPipelineError('Không thể thử lại job: ' + formatApiError(err, 'Lỗi hệ thống'));
       setIsProcessing(false);
     }
   };
@@ -475,6 +514,18 @@ export default function VideoTranslator({ initialJobId }) {
       <div className="card" style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '12px', padding: '24px', color: '#fff', marginBottom: '24px' }}>
         <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '16px' }}>⚙️ Cấu hình Dịch & Lồng tiếng</h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', marginBottom: '6px', color: '#94a3b8' }}>LLM / Script Provider:</label>
+            <select
+              value={llmProviderId}
+              onChange={(e) => setLlmProviderId(e.target.value)}
+              style={{ width: '100%', padding: '10px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569' }}
+            >
+              <option value="openai">🤖 OpenAI ChatGPT (Khuyên dùng)</option>
+              <option value="gemini">✨ Google Gemini AI Studio</option>
+            </select>
+          </div>
+
           <div>
             <label style={{ display: 'block', fontSize: '13px', marginBottom: '6px', color: '#94a3b8' }}>Ngôn ngữ đích (Target):</label>
             <select
@@ -814,18 +865,18 @@ export default function VideoTranslator({ initialJobId }) {
       )}
 
       {/* Final Dubbed Video Player */}
-      {job && job.status === 'completed' && job.output_video_path && (
+      {job && job.status === 'completed' && (job.output_url || job.output_video_path) && (
         <div className="card" style={{ background: '#064e3b', border: '1px solid #10b981', borderRadius: '12px', padding: '24px', color: '#fff' }}>
           <h3 style={{ fontSize: '20px', fontWeight: 'bold', color: '#6ee7b7', marginBottom: '16px' }}>🎉 Video Lồng Tiếng Đã Hoàn Thành!</h3>
           <div style={{ width: '100%', borderRadius: '8px', overflow: 'hidden', marginBottom: '16px', background: '#000' }}>
             <video
               controls
               style={{ width: '100%', maxHeight: '500px' }}
-              src={`/media/${job.output_video_path.replace(/^.*[\\\/]data[\\\/]/, '')}`}
+              src={job.output_url || `/media/${job.output_video_path.replace(/^.*[\\\/]data[\\\/]/, '')}`}
             />
           </div>
           <a
-            href={`/media/${job.output_video_path.replace(/^.*[\\\/]data[\\\/]/, '')}`}
+            href={job.output_url || `/media/${job.output_video_path.replace(/^.*[\\\/]data[\\\/]/, '')}`}
             download="final_translated_video.mp4"
             style={{
               display: 'inline-block',

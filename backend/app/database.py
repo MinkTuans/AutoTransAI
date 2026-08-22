@@ -56,52 +56,59 @@ async_session_factory = async_sessionmaker(
 
 
 
+def _sync_schema_sync(sync_conn):
+    """
+    Synchronously inspect tables and columns across any DB dialect (SQLite, MySQL, MariaDB, Postgres)
+    and issue ALTER TABLE ADD COLUMN for any ORM columns missing in the active database.
+    """
+    from sqlalchemy import inspect
+    import logging
+    logger = logging.getLogger("app.database")
+
+    inspector = inspect(sync_conn)
+    existing_tables = set(inspector.get_table_names())
+
+    for table_name, table_obj in Base.metadata.tables.items():
+        if table_name not in existing_tables:
+            continue
+
+        existing_cols = {col["name"].lower(): col for col in inspector.get_columns(table_name)}
+
+        for col_name, column_obj in table_obj.columns.items():
+            if col_name.lower() in existing_cols:
+                continue
+
+            col_type_sql = column_obj.type.compile(sync_conn.dialect)
+            default_clause = ""
+            if column_obj.default is not None and hasattr(column_obj.default, "arg"):
+                arg = column_obj.default.arg
+                if isinstance(arg, (str, int, float, bool)):
+                    default_clause = f" DEFAULT '{arg}'" if isinstance(arg, str) else f" DEFAULT {arg}"
+
+            null_clause = " NULL" if column_obj.nullable else " NOT NULL"
+            alter_sql = f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type_sql}{null_clause}{default_clause}"
+
+            try:
+                sync_conn.exec_driver_sql(alter_sql)
+                logger.info(f"Added column '{col_name}' to table '{table_name}' via DDL")
+            except Exception as ex1:
+                try:
+                    fallback_sql = f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type_sql}"
+                    sync_conn.exec_driver_sql(fallback_sql)
+                    logger.info(f"Added column '{col_name}' to table '{table_name}' via fallback DDL")
+                except Exception as ex2:
+                    logger.error(f"Failed adding column '{col_name}' to table '{table_name}': {str(ex2)}")
+
+
 async def init_db() -> None:
-    """Create all tables and run schema migrations."""
+    """Create all tables and run dialect-agnostic schema migrations."""
     async with engine.begin() as conn:
         if is_sqlite:
             await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
             await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
-        
+
         await conn.run_sync(Base.metadata.create_all)
-
-        # Migration for segments table
-        try:
-            res = await conn.exec_driver_sql("PRAGMA table_info(segments)")
-            columns = [row[1] for row in res.fetchall()]
-            for col, col_type in [
-                ("audio_error_message", "TEXT"),
-                ("video_error_message", "TEXT"),
-                ("video_error_details", "TEXT"),
-            ]:
-                if col not in columns:
-                    await conn.exec_driver_sql(f"ALTER TABLE segments ADD COLUMN {col} {col_type}")
-        except Exception:
-            pass
-
-        # Migration for video_translation_jobs table
-        try:
-            res_v = await conn.exec_driver_sql("PRAGMA table_info(video_translation_jobs)")
-            job_cols = [row[1] for row in res_v.fetchall()]
-            if job_cols:
-                cols_to_add = [
-                    ("stage", "VARCHAR(50) DEFAULT 'QUEUED'"),
-                    ("stage_progress_pct", "FLOAT DEFAULT 0.0"),
-                    ("overall_progress_pct", "FLOAT DEFAULT 0.0"),
-                    ("pid", "INTEGER NULL"),
-                    ("last_heartbeat", "DATETIME NULL"),
-                    ("ffmpeg_stats_json", "TEXT NULL"),
-                    ("completed_segments_count", "INTEGER DEFAULT 0"),
-                    ("total_segments_count", "INTEGER DEFAULT 0"),
-                ]
-                for col_name, col_def in cols_to_add:
-                    if col_name not in job_cols:
-                        try:
-                            await conn.exec_driver_sql(f"ALTER TABLE video_translation_jobs ADD COLUMN {col_name} {col_def}")
-                        except Exception:
-                            pass
-        except Exception:
-            pass
+        await conn.run_sync(_sync_schema_sync)
 
 
 

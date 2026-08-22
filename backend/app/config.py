@@ -28,7 +28,7 @@ class Settings(BaseSettings):
 
     # ── Database & Paths ───────────────────────────────────────────────
     DATABASE_URL: Optional[str] = None
-    DATA_DIR: Path = Path("data")
+    DATA_DIR: Path = ROOT_DIR / "data"
     DB_FILENAME: str = "workflow.db"
 
     @property
@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     SYNC_TOLERANCE_SECONDS: float = 0.5
 
     # ── Provider API Keys ──────────────────────────────────────────────
+    OPENAI_API_KEY: str = ""
     GEMINI_API_KEY: str = ""
     GOOGLE_CLOUD_TTS_API_KEY: str = ""
     ELEVENLABS_API_KEY: str = ""

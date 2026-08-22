@@ -108,10 +108,12 @@ def _register_defaults(reg: ProviderRegistry) -> None:
         pass
 
     try:
+        from app.providers.llm.openai_provider import OpenAILLMProvider
         from app.providers.llm.gemini_provider import GeminiLLMProvider
+        reg.register_llm(OpenAILLMProvider())
         reg.register_llm(GeminiLLMProvider())
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Failed to register LLM providers", error=str(e))
 
 
 def get_registry() -> ProviderRegistry:
