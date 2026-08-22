@@ -90,7 +90,7 @@ class VideoTranslationJob(Base):
     detected_language: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     target_language: Mapped[str] = mapped_column(String(20), default="vi")
     audio_provider_id: Mapped[Optional[str]] = mapped_column(String(50), default="edge_tts")
-    llm_provider_id: Mapped[Optional[str]] = mapped_column(String(50), default="openai")
+    llm_provider_id: Mapped[Optional[str]] = mapped_column(String(50), default="gemini")
     voice_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     voice_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     original_audio_mode: Mapped[str] = mapped_column(String(20), default=AudioMixMode.MUTE.value)

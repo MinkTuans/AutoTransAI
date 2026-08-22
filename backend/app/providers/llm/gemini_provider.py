@@ -74,7 +74,12 @@ class GeminiLLMProvider(LLMProvider):
                 {
                     "parts": [{"text": full_text}]
                 }
-            ]
+            ],
+            "generationConfig": {
+                "temperature": 0.2,
+                "maxOutputTokens": 8192,
+                "responseMimeType": "application/json",
+            }
         }
 
         last_error = None
@@ -87,15 +92,40 @@ class GeminiLLMProvider(LLMProvider):
                         data = res.json()
                         candidates = data.get("candidates", [])
                         if candidates:
-                            parts = candidates[0].get("content", {}).get("parts", [])
+                            cand = candidates[0]
+                            finish_reason = cand.get("finishReason") or cand.get("finish_reason")
+                            parts = cand.get("content", {}).get("parts", [])
                             if parts:
-                                return parts[0].get("text", "").strip()
-                    elif res.status_code in (404, 503, 429):
+                                text_content = parts[0].get("text", "").strip()
+                                if finish_reason == "MAX_TOKENS":
+                                    logger.warning(f"Gemini model '{model}' output truncated (finishReason=MAX_TOKENS).")
+                                    # If JSON response is obviously truncated, raise error to trigger sub-batching/retry
+                                    if not (text_content.endswith("]") or text_content.endswith("}")):
+                                        raise RuntimeError(f"Gemini API output truncated due to MAX_TOKENS limit on model '{model}'.")
+                                return text_content
+                    elif res.status_code in (400, 404, 503, 429):
+                        # Retry without responseMimeType if 400 bad request occurs (for legacy compatibility)
+                        if res.status_code == 400 and "responseMimeType" in payload.get("generationConfig", {}):
+                            payload_fallback = dict(payload)
+                            payload_fallback["generationConfig"] = {
+                                "temperature": 0.2,
+                                "maxOutputTokens": 8192,
+                            }
+                            fb_res = await client.post(url, json=payload_fallback)
+                            if fb_res.status_code == 200:
+                                fb_data = fb_res.json()
+                                candidates = fb_data.get("candidates", [])
+                                if candidates:
+                                    parts = candidates[0].get("content", {}).get("parts", [])
+                                    if parts:
+                                        return parts[0].get("text", "").strip()
                         logger.warning(f"Gemini model '{model}' returned HTTP {res.status_code}. Trying next fallback model...")
                         last_error = f"HTTP {res.status_code}: {res.text[:150]}"
                         continue
                     else:
                         raise RuntimeError(f"Gemini API error HTTP {res.status_code}: {res.text[:200]}")
+                except RuntimeError:
+                    raise
                 except (httpx.TimeoutException, httpx.RequestError) as req_err:
                     logger.warning(f"Gemini request error on '{model}': {str(req_err)}")
                     last_error = str(req_err)

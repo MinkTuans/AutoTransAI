@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     ] = "trim_video"
     SYNC_TOLERANCE_SECONDS: float = 0.5
 
+    # ── Provider Defaults & Fallbacks ──────────────────────────────────
+    DEFAULT_LLM_PROVIDER: str = "gemini"
+    ENABLE_OPENAI_FALLBACK: bool = False
+
     # ── Provider API Keys ──────────────────────────────────────────────
     OPENAI_API_KEY: str = ""
     GEMINI_API_KEY: str = ""

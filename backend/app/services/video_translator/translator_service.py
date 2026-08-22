@@ -326,7 +326,10 @@ async def transcribe_audio_with_whisper(
                     res = await client.post(url, headers=headers, files=files, data=data)
 
                 if res.status_code != 200:
-                    raise RuntimeError(f"OpenAI Whisper API HTTP {res.status_code}: {res.text[:200]}")
+                    res_text = res.text[:200]
+                    if res.status_code == 429 or "insufficient_quota" in res_text:
+                        raise RuntimeError(f"OpenAI Whisper API HTTP 429 Quota Exceeded: Tài khoản OpenAI hết credit. Vui lòng nạp thêm credit hoặc sử dụng Gemini.")
+                    raise RuntimeError(f"OpenAI Whisper API HTTP {res.status_code}: {res_text}")
 
                 res_json = res.json()
                 detected_lang = res_json.get("language", detected_lang)
@@ -429,7 +432,17 @@ async def transcribe_audio_with_gemini(
                 if not chunk_path.exists() or chunk_path.stat().st_size == 0:
                     raise RuntimeError(f"Gemini STT: Audio chunk file lost or failed to generate: {chunk_path.name}")
 
-                actual_dur = await probe_duration_async(chunk_path)
+                actual_dur = 0.0
+                for attempt in range(3):
+                    try:
+                        actual_dur = await probe_duration_async(chunk_path)
+                        if actual_dur > 0:
+                            break
+                    except Exception as probe_err:
+                        if attempt == 2:
+                            raise RuntimeError(f"Gemini STT: Failed to probe duration for chunk {chunk_path.name}: {str(probe_err)}")
+                        await asyncio.sleep(0.5)
+
                 chunks.append((chunk_path, curr_start, actual_dur))
 
                 if curr_start + chunk_len >= total_duration:
@@ -567,12 +580,13 @@ async def speech_to_text_and_detect_language(
     job_id: str = "VT-JOB",
     target_language: str = "vi",
     source_language: str = "auto",
-    llm_provider_id: str = "openai",
+    llm_provider_id: str = "gemini",
     on_status_update: Optional[Callable[[str], None]] = None,
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
     Perform Speech-to-Text and Language Detection on extracted audio track.
-    Strictly uses real STT (OpenAI Whisper or Gemini AI Studio).
+    Strictly uses primary STT provider (Gemini AI Studio by default).
+    OpenAI Whisper fallback occurs ONLY if ENABLE_OPENAI_FALLBACK is True.
     Raises RuntimeError on failure — NO placeholder fallbacks permitted.
     """
     total_duration = await probe_duration_async(audio_path)
@@ -583,70 +597,216 @@ async def speech_to_text_and_detect_language(
     if on_status_update:
         on_status_update(f"Đang phân tích audio ({audio_path.stat().st_size / (1024*1024):.1f}MB) với STT...")
 
+    settings = get_settings()
     stt_errors = []
+    effective_provider = llm_provider_id or settings.DEFAULT_LLM_PROVIDER
 
-    # Priority 1: OpenAI Whisper if OPENAI_API_KEY set and preferred or default
-    if settings.OPENAI_API_KEY and (llm_provider_id == "openai" or not settings.GEMINI_API_KEY):
-        try:
-            return await transcribe_audio_with_whisper(audio_path, job_id=job_id)
-        except Exception as e:
-            err_msg = f"Whisper STT failed: {str(e)}"
-            logger.warning(err_msg)
-            stt_errors.append(err_msg)
+    # Primary Attempt: Gemini STT if configured as primary or if GEMINI_API_KEY set
+    if effective_provider == "gemini" or (not settings.OPENAI_API_KEY and settings.GEMINI_API_KEY):
+        if settings.GEMINI_API_KEY:
+            try:
+                return await transcribe_audio_with_gemini(audio_path, job_id=job_id)
+            except Exception as e:
+                err_msg = f"Gemini STT failed: {str(e)}"
+                logger.warning(err_msg)
+                stt_errors.append(err_msg)
 
-    # Priority 2: Gemini STT if GEMINI_API_KEY set
-    if settings.GEMINI_API_KEY:
-        try:
-            return await transcribe_audio_with_gemini(audio_path, job_id=job_id)
-        except Exception as e:
-            err_msg = f"Gemini STT failed: {str(e)}"
-            logger.warning(err_msg)
-            stt_errors.append(err_msg)
+        # Secondary Attempt: OpenAI Whisper ONLY IF explicitly enabled via configuration
+        if settings.ENABLE_OPENAI_FALLBACK and settings.OPENAI_API_KEY:
+            try:
+                log_job_event(job_id, "STT", "[Fallback] Attempting OpenAI Whisper STT fallback (ENABLE_OPENAI_FALLBACK=True)...")
+                return await transcribe_audio_with_whisper(audio_path, job_id=job_id)
+            except Exception as e:
+                err_msg = f"Whisper STT fallback failed: {str(e)}"
+                logger.warning(err_msg)
+                stt_errors.append(err_msg)
+        elif not settings.ENABLE_OPENAI_FALLBACK:
+            log_job_event(job_id, "STT", "[STT] OpenAI Fallback is DISABLED (ENABLE_OPENAI_FALLBACK=False). Not calling OpenAI.")
+    else:
+        # User explicitly requested OpenAI STT
+        if settings.OPENAI_API_KEY:
+            try:
+                return await transcribe_audio_with_whisper(audio_path, job_id=job_id)
+            except Exception as e:
+                err_msg = f"Whisper STT failed: {str(e)}"
+                logger.warning(err_msg)
+                stt_errors.append(err_msg)
 
-    # Secondary try OpenAI Whisper if not tried yet
-    if settings.OPENAI_API_KEY and llm_provider_id != "openai":
-        try:
-            return await transcribe_audio_with_whisper(audio_path, job_id=job_id)
-        except Exception as e:
-            err_msg = f"Whisper STT fallback failed: {str(e)}"
-            logger.warning(err_msg)
-            stt_errors.append(err_msg)
+        if settings.GEMINI_API_KEY:
+            try:
+                log_job_event(job_id, "STT", "[Fallback] Attempting Gemini STT fallback...")
+                return await transcribe_audio_with_gemini(audio_path, job_id=job_id)
+            except Exception as e:
+                err_msg = f"Gemini STT fallback failed: {str(e)}"
+                logger.warning(err_msg)
+                stt_errors.append(err_msg)
 
-    # If all STT attempts fail
-    error_summary = " | ".join(stt_errors) if stt_errors else "Chưa cấu hình OPENAI_API_KEY hoặc GEMINI_API_KEY trong .env."
+    # If all attempted STT providers fail
+    error_summary = " | ".join(stt_errors) if stt_errors else "Chưa cấu hình API Key hợp lệ trong .env."
     raise RuntimeError(f"STT FAILED: {error_summary}")
 
 
-def _safe_parse_json_list(text: str) -> list:
-    """Parse JSON array robustly, handling markdown blocks, control characters, strict=False, and regex string extraction fallback."""
+def _safe_parse_json_translation(text: str) -> dict:
+    """
+    Parse JSON translation response robustly.
+    Supports:
+    1. Structured JSON list of dicts: [{"id": 0, "translation": "..."}, ...] -> returns {0: "...", ...}
+    2. Structured JSON dict: {"translations": [{"id": 0, "translation": "..."}]} -> returns {0: "...", ...}
+    3. Plain string array: ["trans 1", "trans 2"] -> returns {0: "trans 1", 1: "trans 2"}
+    4. Fallback string regex extraction if JSON syntax is slightly damaged.
+    """
     json_str = re.sub(r"^```json\s*", "", text, flags=re.MULTILINE)
+    json_str = re.sub(r"^```\s*", "", json_str, flags=re.MULTILINE)
     json_str = re.sub(r"```$", "", json_str, flags=re.MULTILINE).strip()
-    match = re.search(r"\[.*\]", json_str, re.DOTALL)
-    if match:
-        json_str = match.group(0)
+    
+    match_arr = re.search(r"\[.*\]", json_str, re.DOTALL)
+    match_obj = re.search(r"\{.*\}", json_str, re.DOTALL)
+    
+    raw_parsed = None
+    if match_arr:
+        try:
+            raw_parsed = json.loads(match_arr.group(0), strict=False)
+        except Exception:
+            pass
+    if raw_parsed is None and match_obj:
+        try:
+            raw_parsed = json.loads(match_obj.group(0), strict=False)
+        except Exception:
+            pass
+    if raw_parsed is None:
+        try:
+            cleaned = re.sub(r'[\r\n\t]+', ' ', json_str)
+            raw_parsed = json.loads(cleaned, strict=False)
+        except Exception:
+            pass
 
-    try:
-        res = json.loads(json_str, strict=False)
-        if isinstance(res, list):
-            return res
-    except Exception:
-        pass
+    res_dict: dict = {}
 
-    try:
-        # Sanitize control characters / unescaped newlines inside strings
-        cleaned_str = re.sub(r'[\r\n\t]+', ' ', json_str)
-        res = json.loads(cleaned_str, strict=False)
-        if isinstance(res, list):
-            return res
-    except Exception:
-        pass
+    if isinstance(raw_parsed, dict) and "translations" in raw_parsed and isinstance(raw_parsed["translations"], list):
+        raw_parsed = raw_parsed["translations"]
 
-    # Regex fallback: Extract individual JSON string values if structural parsing fails
+    if isinstance(raw_parsed, list):
+        for idx, item in enumerate(raw_parsed):
+            if isinstance(item, dict):
+                item_id = item.get("id")
+                trans = item.get("translation")
+                if trans is None:
+                    trans = item.get("text", "")
+                try:
+                    seg_id = int(item_id) if item_id is not None else idx
+                except (ValueError, TypeError):
+                    seg_id = idx
+                res_dict[seg_id] = str(trans).strip()
+            elif isinstance(item, str):
+                res_dict[idx] = item.strip()
+        if res_dict:
+            return res_dict
+
+    if isinstance(raw_parsed, dict):
+        for k, v in raw_parsed.items():
+            try:
+                seg_id = int(k)
+            except ValueError:
+                continue
+            if isinstance(v, str):
+                res_dict[seg_id] = v.strip()
+            elif isinstance(v, dict):
+                res_dict[seg_id] = str(v.get("translation", "")).strip()
+        if res_dict:
+            return res_dict
+
+    # Regex extraction fallback for plain string array or json objects
+    dict_matches = re.findall(r'\{\s*"id"\s*:\s*(\d+)\s*,\s*"translation"\s*:\s*"((?:[^"\\]|\\.)*)"\s*\}', json_str)
+    if dict_matches:
+        for seg_id_str, trans_str in dict_matches:
+            res_dict[int(seg_id_str)] = trans_str.replace('\\"', '"').replace('\\n', '\n').strip()
+        return res_dict
+
     items = re.findall(r'"((?:[^"\\]|\\.)*)"', json_str)
     if items:
-        return [item.replace('\\"', '"').replace('\\n', '\n').strip() for item in items]
+        filtered_items = [it for it in items if it not in ("id", "translation", "translations", "text")]
+        for idx, item in enumerate(filtered_items):
+            res_dict[idx] = item.replace('\\"', '"').replace('\\n', '\n').strip()
+        return res_dict
 
+    raise ValueError(f"Could not parse valid JSON translation response: {text[:200]}")
+
+
+def _safe_parse_json_list(text: str) -> list:
+    """Parse JSON array robustly, maintaining backward compatibility."""
+    parsed_map = _safe_parse_json_translation(text)
+    if parsed_map:
+        max_idx = max(parsed_map.keys())
+        return [parsed_map.get(i, "") for i in range(max_idx + 1)]
     raise ValueError(f"Could not parse valid JSON list from response: {text[:200]}")
+
+
+async def _translate_sub_batch(
+    llm: Any,
+    sub_segments: List[Dict[str, Any]],
+    source_lang_name: str,
+    target_lang_name: str,
+    job_id: str,
+    batch_label: str,
+) -> List[str]:
+    """Helper to translate a sub-batch of segments with structured IDs and targeted retries."""
+    if not sub_segments:
+        return []
+
+    input_items = [{"id": i, "text": s.get("text", "")} for i, s in enumerate(sub_segments)]
+    prompt = (
+        "Bạn là một dịch giả phim chuyên nghiệp.\n"
+        f"Nhiệm vụ: Dịch chính xác danh sách câu thoại bên dưới từ {source_lang_name} sang {target_lang_name}.\n"
+        "Yêu cầu bắt buộc:\n"
+        f"1. Phải dịch TOÀN BỘ nội dung câu thoại sang {target_lang_name} tự nhiên, hợp ngữ cảnh lồng tiếng phim.\n"
+        "2. Trả về mảng JSON chứa các object. Mỗi object PHẢI giữ nguyên 'id' và chứa field 'translation' là bản dịch tương ứng.\n"
+        "3. Tuyệt đối KHÔNG ĐƯỢC tự ý gộp, bỏ qua hoặc đổi 'id'. Đảm bảo đủ số lượng items trong output.\n\n"
+        f"Danh sách câu thoại gốc ({source_lang_name}):\n"
+        f"{json.dumps(input_items, ensure_ascii=False)}"
+    )
+
+    parsed_map: Dict[int, str] = {}
+    last_err = None
+    for attempt in range(2):
+        try:
+            resp = await llm.generate_text(
+                prompt if attempt == 0 else prompt + "\nLƯU Ý: Trả về mảng JSON hợp lệ [{\"id\": 0, \"translation\": \"...\"}]"
+            )
+            parsed_map = _safe_parse_json_translation(resp)
+
+            missing_ids = [i for i in range(len(sub_segments)) if i not in parsed_map]
+            if missing_ids and len(missing_ids) < max(1, len(sub_segments) // 2):
+                missing_items = [{"id": mid, "text": sub_segments[mid].get("text", "")} for mid in missing_ids]
+                rec_prompt = (
+                    f"CẢNH BÁO: Bị thiếu câu thoại có ID {missing_ids}. Dịch bắt buộc sang {target_lang_name}:\n"
+                    f"{json.dumps(missing_items, ensure_ascii=False)}\n\n"
+                    "Trả về mảng JSON [{\"id\": X, \"translation\": \"...\"}]"
+                )
+                try:
+                    rec_resp = await llm.generate_text(rec_prompt)
+                    rec_map = _safe_parse_json_translation(rec_resp)
+                    for r_id, r_trans in rec_map.items():
+                        if r_id in missing_ids:
+                            parsed_map[r_id] = r_trans
+                except Exception as ex:
+                    logger.warning(f"Sub-batch {batch_label} recovery failed: {ex}")
+
+            if all(i in parsed_map for i in range(len(sub_segments))):
+                return [parsed_map.get(i, "") for i in range(len(sub_segments))]
+            else:
+                still_missing = [i for i in range(len(sub_segments)) if i not in parsed_map]
+                last_err = f"Sub-batch length mismatch: expected {len(sub_segments)}, still missing IDs {still_missing}"
+        except Exception as ex:
+            last_err = str(ex)
+
+    if len(sub_segments) > 5:
+        logger.warning(f"Sub-batch {batch_label} failed ({last_err}). Splitting sub-batch of size {len(sub_segments)} into smaller halves...")
+        half = len(sub_segments) // 2
+        part1 = await _translate_sub_batch(llm, sub_segments[:half], source_lang_name, target_lang_name, job_id, f"{batch_label}a")
+        part2 = await _translate_sub_batch(llm, sub_segments[half:], source_lang_name, target_lang_name, job_id, f"{batch_label}b")
+        return part1 + part2
+
+    raise ValueError(f"Sub-batch translation failed: {last_err}")
 
 
 async def translate_transcript_segments(
@@ -654,27 +814,35 @@ async def translate_transcript_segments(
     source_language: str,
     target_language: str,
     job_id: str = "VT-JOB",
-    llm_provider_id: str = "openai",
+    llm_provider_id: str = "gemini",
     batch_size: int = 30,
 ) -> List[Dict[str, Any]]:
     """
-    Translate transcript text segments to target language using LLM Provider (OpenAI / Gemini).
-    Implements per-batch retries, multi-provider failover chain, anti-verbatim validation safeguards,
-    and structured [TRANSLATION_PROVIDER] audit logging.
+    Translate transcript text segments to target language using LLM Provider (Gemini / OpenAI).
+    Implements per-batch retries, structured segment ID mapping, targeted missing segment recovery,
+    dynamic sub-batch splitting, anti-verbatim validation safeguards, and structured audit logging.
     Raises RuntimeError on failure — NO dummy/placeholder fallbacks permitted.
     """
     if not segments:
         return segments
 
     registry = get_registry()
+    settings = get_settings()
+    effective_provider = llm_provider_id or settings.DEFAULT_LLM_PROVIDER
     
-    # Build LLM provider candidates chain (Configured Primary -> Fallbacks)
-    primary_llm = registry.get_llm(llm_provider_id)
-    fallback_ids = ["gemini", "openai"] if llm_provider_id == "openai" else ["openai", "gemini"]
+    primary_llm = registry.get_llm(effective_provider) or registry.get_llm("gemini")
     
     candidate_llms = []
     if primary_llm:
         candidate_llms.append(primary_llm)
+
+    fallback_ids = []
+    if effective_provider == "gemini":
+        if settings.ENABLE_OPENAI_FALLBACK:
+            fallback_ids.append("openai")
+    elif effective_provider == "openai":
+        fallback_ids.append("gemini")
+
     for fid in fallback_ids:
         fb_llm = registry.get_llm(fid)
         if fb_llm and fb_llm not in candidate_llms:
@@ -726,58 +894,120 @@ async def translate_transcript_segments(
                 start_i = batch_idx * batch_size
                 end_i = min(len(segments), start_i + batch_size)
                 batch_segments = segments[start_i:end_i]
-                texts_to_translate = [s["text"] for s in batch_segments]
+
+                input_items = [{"id": i, "text": s.get("text", "")} for i, s in enumerate(batch_segments)]
 
                 prompt = (
                     "Bạn là một dịch giả phim chuyên nghiệp.\n"
                     f"Nhiệm vụ: Dịch chính xác danh sách câu thoại bên dưới từ {source_lang_name} sang {target_lang_name}.\n"
                     "Yêu cầu bắt buộc:\n"
-                    f"1. Phải dịch TOÀN BỘ nội dung sang {target_lang_name} tự nhiên, hợp ngữ cảnh lồng tiếng video.\n"
-                    f"2. Tuyệt đối KHÔNG ĐƯỢC trả lại nguyên văn {source_lang_name} hay giữ lại văn bản chưa dịch (trừ tên riêng nếu có).\n"
-                    "3. Trả về duy nhất một mảng JSON thuần túy (không markdown, không giải thích) chứa các chuỗi dịch tương ứng theo đúng thứ tự.\n\n"
+                    f"1. Phải dịch TOÀN BỘ nội dung câu thoại sang {target_lang_name} tự nhiên, hợp ngữ cảnh lồng tiếng phim.\n"
+                    "2. Trả về mảng JSON chứa các object. Mỗi object PHẢI giữ nguyên 'id' và chứa field 'translation' là bản dịch tương ứng.\n"
+                    "3. Tuyệt đối KHÔNG ĐƯỢC tự ý gộp, bỏ qua hoặc đổi 'id'. Đảm bảo đủ số lượng items trong output.\n\n"
                     f"Danh sách câu thoại gốc ({source_lang_name}):\n"
-                    f"{json.dumps(texts_to_translate, ensure_ascii=False)}"
+                    f"{json.dumps(input_items, ensure_ascii=False)}"
                 )
 
-                # Retry up to 2 attempts per batch on the SAME LLM provider before failing the provider
                 translated_list = None
                 batch_error = None
+                parsed_map: Dict[int, str] = {}
+
                 for attempt in range(2):
                     try:
-                        response_text = await llm.generate_text(prompt if attempt == 0 else prompt + "\nLƯU Ý: Đảm bảo định dạng JSON mảng hợp lệ [\"...\"]")
-                        translated_list = _safe_parse_json_list(response_text)
-                        if isinstance(translated_list, list) and len(translated_list) == len(batch_segments):
+                        curr_prompt = prompt if attempt == 0 else prompt + "\nLƯU Ý BẮT BUỘC: Đảm bảo mảng JSON hợp lệ [{\"id\": 0, \"translation\": \"...\"}]"
+                        response_text = await llm.generate_text(curr_prompt)
+                        parsed_map = _safe_parse_json_translation(response_text)
+                        
+                        expected_ids = set(range(len(batch_segments)))
+                        found_ids = set(parsed_map.keys())
+                        missing_ids = sorted(list(expected_ids - found_ids))
+
+                        log_job_event(
+                            job_id,
+                            "TRANSLATING",
+                            f"[Gemini Translation Audit] batch={batch_idx+1}/{total_batches} attempt={attempt+1} | "
+                            f"input_count={len(batch_segments)} | output_count={len(found_ids)} | "
+                            f"missing_count={len(missing_ids)} | missing_ids={missing_ids}"
+                        )
+
+                        # Targeted recovery retry if some IDs were omitted
+                        if missing_ids and len(missing_ids) < len(batch_segments):
+                            log_job_event(
+                                job_id,
+                                "TRANSLATING",
+                                f"[Gemini Recovery] Attempting targeted recovery for batch {batch_idx+1}/{total_batches} missing {len(missing_ids)} segments: {missing_ids}"
+                            )
+                            missing_items = [{"id": mid, "text": batch_segments[mid].get("text", "")} for mid in missing_ids]
+                            rec_prompt = (
+                                f"CẢNH BÁO: Các câu thoại sau đây có ID {missing_ids} BỊ THIẾU TRONG BẢN DỊCH TRƯỚC.\n"
+                                f"Bắt buộc dịch toàn bộ các câu thoại này sang {target_lang_name} và giữ nguyên 'id':\n"
+                                f"{json.dumps(missing_items, ensure_ascii=False)}\n\n"
+                                "Trả về mảng JSON [{\"id\": X, \"translation\": \"...\"}]"
+                            )
+                            try:
+                                rec_resp = await llm.generate_text(rec_prompt)
+                                rec_map = _safe_parse_json_translation(rec_resp)
+                                for r_id, r_trans in rec_map.items():
+                                    if r_id in missing_ids:
+                                        parsed_map[r_id] = r_trans
+                                log_job_event(
+                                    job_id,
+                                    "TRANSLATING",
+                                    f"[Gemini Recovery] Recovered missing segments. Total items now: {len(parsed_map)}/{len(batch_segments)}"
+                                )
+                            except Exception as rec_err:
+                                logger.warning(f"Targeted recovery retry failed: {rec_err}")
+
+                        # If all required segment IDs 0..N-1 are present, translation is complete
+                        if all(i in parsed_map for i in range(len(batch_segments))):
+                            translated_list = [parsed_map.get(i, "") for i in range(len(batch_segments))]
                             break
                         else:
-                            batch_error = f"Output length mismatch: expected {len(batch_segments)}, got {len(translated_list) if isinstance(translated_list, list) else type(translated_list)}"
+                            still_missing = [i for i in range(len(batch_segments)) if i not in parsed_map]
+                            batch_error = f"Output length mismatch: expected {len(batch_segments)}, still missing IDs {still_missing}"
                     except Exception as ex:
                         batch_error = str(ex)
                         logger.warning(f"Batch {batch_idx+1}/{total_batches} attempt {attempt+1} failed on {llm.provider_id}: {batch_error}")
 
+                # If full batch attempt failed, fallback to sub-batch splitting
+                if translated_list is None or len(translated_list) != len(batch_segments):
+                    logger.warning(f"Batch {batch_idx+1}/{total_batches} full batch translation failed ({batch_error}). Triggering dynamic sub-batch splitting fallback...")
+                    try:
+                        if len(batch_segments) > 1:
+                            half = len(batch_segments) // 2
+                            part1 = await _translate_sub_batch(llm, batch_segments[:half], source_lang_name, target_lang_name, job_id, f"B{batch_idx+1}a")
+                            part2 = await _translate_sub_batch(llm, batch_segments[half:], source_lang_name, target_lang_name, job_id, f"B{batch_idx+1}b")
+                            translated_list = part1 + part2
+                        else:
+                            translated_list = await _translate_sub_batch(llm, batch_segments, source_lang_name, target_lang_name, job_id, f"B{batch_idx+1}")
+                        log_job_event(job_id, "TRANSLATING", f"[Gemini Sub-batch Fallback] Successfully translated batch {batch_idx+1}/{total_batches} via sub-batch splitting.")
+                    except Exception as sub_ex:
+                        batch_error = f"Sub-batch splitting failed: {sub_ex}"
+
                 if not isinstance(translated_list, list) or len(translated_list) != len(batch_segments):
                     raise ValueError(f"LLM translation failed for batch {batch_idx+1}/{total_batches} on {llm.provider_name}: {batch_error}")
 
-                # Check for verbatim echo (where translation is identical to original for non-same languages)
+                # Check for verbatim echo
+                texts_to_translate = [s.get("text", "") for s in batch_segments]
                 verbatim_echo_count = 0
                 for orig, trans in zip(texts_to_translate, translated_list):
                     trans_str = str(trans).strip()
                     if orig.strip() and trans_str == orig.strip() and source_language.lower() != target_language.lower():
                         verbatim_echo_count += 1
 
-                # If more than 30% of batch was echoed unchanged, retry batch with stronger prompt
                 if verbatim_echo_count > max(1, int(len(batch_segments) * 0.3)):
                     logger.warning(f"Batch {batch_idx+1}/{total_batches} on {llm.provider_id} had {verbatim_echo_count} verbatim echoes. Retrying batch with strict prompt...")
                     strict_prompt = (
                         f"CẢNH BÁO: Bạn đã trả về nguyên văn {source_lang_name}. HÃY DỊCH BẮT BUỘC SANG {target_lang_name}.\n"
                         f"Bắt buộc dịch toàn bộ các câu thoại này sang {target_lang_name} cho lồng tiếng phim:\n"
-                        f"{json.dumps(texts_to_translate, ensure_ascii=False)}\n\n"
-                        "Chỉ trả về mảng JSON chứa các câu đã dịch sang tiếng Việt."
+                        f"{json.dumps(input_items, ensure_ascii=False)}\n\n"
+                        "Chỉ trả về mảng JSON [{\"id\": 0, \"translation\": \"...\"}] chứa các câu đã dịch sang tiếng Việt."
                     )
                     try:
                         retry_resp = await llm.generate_text(strict_prompt)
-                        retry_list = _safe_parse_json_list(retry_resp)
-                        if isinstance(retry_list, list) and len(retry_list) == len(batch_segments):
-                            translated_list = retry_list
+                        retry_map = _safe_parse_json_translation(retry_resp)
+                        if len(retry_map) == len(batch_segments):
+                            translated_list = [retry_map.get(i, "") for i in range(len(batch_segments))]
                     except Exception as retry_ex:
                         logger.warning(f"Batch {batch_idx+1} anti-echo retry failed: {retry_ex}")
 
@@ -785,7 +1015,6 @@ async def translate_transcript_segments(
                 log_job_event(job_id, "TRANSLATING", f"Translated batch {batch_idx+1}/{total_batches} via {llm.provider_name} ({len(translated_list)} items)")
 
             if len(translated_results) == len(segments):
-                # Translation Safeguard Validation: Ensure output is non-empty and not dummy text
                 untranslated_count = 0
                 for orig_s, trans_t in zip(segments, translated_results):
                     orig_txt = orig_s.get("text", "").strip()

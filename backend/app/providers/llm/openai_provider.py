@@ -94,12 +94,21 @@ class OpenAILLMProvider(LLMProvider):
                             content = msg.get("content", "")
                             if content:
                                 return content.strip()
-                    elif res.status_code in (404, 429, 500, 502, 503, 504):
+                    elif res.status_code == 429:
+                        res_text = res.text
+                        if "insufficient_quota" in res_text or "no credits remaining" in res_text or "quota" in res_text.lower():
+                            raise RuntimeError(f"OpenAI API Quota Exceeded (HTTP 429): Tài khoản OpenAI hết credit/quota. Vui lòng nạp thêm credit hoặc sử dụng Google Gemini.")
+                        logger.warning(f"OpenAI rate limit reached on '{model}'. Trying next model candidate...")
+                        last_error = f"HTTP 429 Rate Limit: {res_text[:150]}"
+                        continue
+                    elif res.status_code in (404, 500, 502, 503, 504):
                         logger.warning(f"OpenAI model '{model}' returned HTTP {res.status_code}. Trying next model candidate...")
                         last_error = f"HTTP {res.status_code}: {res.text[:150]}"
                         continue
                     else:
                         raise RuntimeError(f"OpenAI API error HTTP {res.status_code}: {res.text[:200]}")
+                except RuntimeError:
+                    raise
                 except (httpx.TimeoutException, httpx.RequestError) as req_err:
                     logger.warning(f"OpenAI request error on '{model}': {str(req_err)}")
                     last_error = str(req_err)

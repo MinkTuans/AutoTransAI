@@ -103,7 +103,7 @@ class CreateJobRequest(BaseModel):
     source_language: str = "auto"
     target_language: str = "vi"
     audio_provider_id: str = "edge_tts"
-    llm_provider_id: str = "openai"
+    llm_provider_id: str = "gemini"
     voice_id: Optional[str] = None
     original_audio_mode: str = "mute"
 
@@ -372,7 +372,7 @@ async def start_translation_pipeline(
                     job_id=job_id,
                     target_language=b_job.target_language,
                     source_language=b_job.source_language,
-                    llm_provider_id=b_job.llm_provider_id or "openai",
+                    llm_provider_id=b_job.llm_provider_id or "gemini",
                 )
 
                 current_stage = "TRANSLATING"
@@ -390,7 +390,7 @@ async def start_translation_pipeline(
                     source_language=detected_lang,
                     target_language=b_job.target_language,
                     job_id=job_id,
-                    llm_provider_id=b_job.llm_provider_id or "openai",
+                    llm_provider_id=b_job.llm_provider_id or "gemini",
                 )
 
                 # Clear previous segments if any
@@ -621,7 +621,7 @@ async def get_translation_job(
             "detected_language": job.detected_language,
             "target_language": job.target_language,
             "audio_provider_id": job.audio_provider_id,
-            "llm_provider_id": job.llm_provider_id or "openai",
+            "llm_provider_id": job.llm_provider_id or "gemini",
             "voice_id": job.voice_id,
             "original_audio_mode": job.original_audio_mode,
             "status": job.status,

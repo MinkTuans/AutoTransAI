@@ -14,7 +14,7 @@ export default function VideoTranslator({ initialJobId }) {
   // Config options
   const [targetLanguage, setTargetLanguage] = useState('vi');
   const [audioProviderId, setAudioProviderId] = useState('edge_tts');
-  const [llmProviderId, setLlmProviderId] = useState('openai');
+  const [llmProviderId, setLlmProviderId] = useState('gemini');
   const [voices, setVoices] = useState([]);
   const [voiceId, setVoiceId] = useState('vi-VN-HoaiMyNeural');
   const [originalAudioMode, setOriginalAudioMode] = useState('mute');
@@ -521,8 +521,8 @@ export default function VideoTranslator({ initialJobId }) {
               onChange={(e) => setLlmProviderId(e.target.value)}
               style={{ width: '100%', padding: '10px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569' }}
             >
-              <option value="openai">🤖 OpenAI ChatGPT (Khuyên dùng)</option>
-              <option value="gemini">✨ Google Gemini AI Studio</option>
+              <option value="gemini">✨ Google Gemini AI Studio (Mặc định)</option>
+              <option value="openai">🤖 OpenAI ChatGPT</option>
             </select>
           </div>
 
