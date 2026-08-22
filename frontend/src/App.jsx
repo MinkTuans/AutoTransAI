@@ -5,12 +5,31 @@ import CreateProject from './pages/CreateProject';
 import ProjectDetail from './pages/ProjectDetail';
 import Settings from './pages/Settings';
 import VideoTranslator from './pages/VideoTranslator';
+import AppSelector from './pages/AppSelector';
+import ExternalAppViewer from './components/ExternalAppViewer';
 import './App.css';
 
 export default function App() {
-  const [activePage, setActivePage] = useState('dashboard');
+  const [activePage, setActivePage] = useState('app_selector');
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   const [selectedJobId, setSelectedJobId] = useState(null);
+  const [activeExternalApp, setActiveExternalApp] = useState(null);
+
+  const APP_CONFIGS = {
+    krillin_ai: { title: 'KrillinAI', url: 'http://localhost:8888' },
+    py_video_trans: { title: 'pyVideoTrans', url: 'http://localhost:9999' },
+    soni_translate: { title: 'SoniTranslate', url: 'http://localhost:7860' },
+  };
+
+  const handleSelectApp = (appKey) => {
+    if (appKey === 'workflow_vd_ai') {
+      setActiveExternalApp(null);
+      setActivePage('dashboard');
+    } else {
+      setActiveExternalApp(appKey);
+      setActivePage('external_app');
+    }
+  };
 
   const handleSelectProject = (item) => {
     if (typeof item === 'object' && item !== null) {
@@ -38,8 +57,34 @@ export default function App() {
 
   return (
     <div className="app-container">
-      <Navbar activePage={activePage} setActivePage={(page) => { setSelectedJobId(null); setActivePage(page); }} />
+      <Navbar
+        activePage={activePage}
+        setActivePage={(page) => {
+          setSelectedJobId(null);
+          if (page !== 'external_app') {
+            setActiveExternalApp(null);
+          }
+          setActivePage(page);
+        }}
+      />
+
       <main className="main-content">
+        {activePage === 'app_selector' && (
+          <AppSelector
+            onSelectApp={handleSelectApp}
+            currentApp={activeExternalApp || 'workflow_vd_ai'}
+          />
+        )}
+
+        {activePage === 'external_app' && activeExternalApp && (
+          <ExternalAppViewer
+            appKey={activeExternalApp}
+            appUrl={APP_CONFIGS[activeExternalApp].url}
+            appTitle={APP_CONFIGS[activeExternalApp].title}
+            onBack={() => setActivePage('app_selector')}
+          />
+        )}
+
         {activePage === 'dashboard' && (
           <Dashboard
             onSelectProject={handleSelectProject}
@@ -65,4 +110,3 @@ export default function App() {
     </div>
   );
 }
-

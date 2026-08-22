@@ -6,7 +6,7 @@ export default function Navbar({ activePage, setActivePage }) {
     <nav className="navbar">
       <a
         href="#"
-        onClick={(e) => { e.preventDefault(); setActivePage('dashboard'); }}
+        onClick={(e) => { e.preventDefault(); setActivePage('app_selector'); }}
         className="navbar-brand"
       >
         <img
@@ -14,38 +14,44 @@ export default function Navbar({ activePage, setActivePage }) {
           alt="WorkflowVdAi Logo"
           className="navbar-logo-img"
         />
-        <span>WorkflowVdAi</span>
+        <span>WorkflowVdAi Hub</span>
       </a>
       <div className="navbar-links">
+        <button
+          className={`nav-link ${activePage === 'app_selector' ? 'active' : ''}`}
+          onClick={() => setActivePage('app_selector')}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold', color: '#60a5fa' }}
+        >
+          🎛️ Chọn ứng dụng
+        </button>
         <button
           className={`nav-link ${activePage === 'dashboard' ? 'active' : ''}`}
           onClick={() => setActivePage('dashboard')}
           style={{ background: 'none', border: 'none', cursor: 'pointer' }}
         >
-          Projects
+          Dự án
         </button>
         <button
           className={`nav-link ${activePage === 'create' ? 'active' : ''}`}
           onClick={() => setActivePage('create')}
           style={{ background: 'none', border: 'none', cursor: 'pointer' }}
         >
-          + New Project
+          + Tạo dự án mới
         </button>
         <button
           className={`nav-link ${activePage === 'translator' ? 'active' : ''}`}
           onClick={() => setActivePage('translator')}
           style={{ background: 'none', border: 'none', cursor: 'pointer' }}
         >
-          🌐 Video Translator
+          🌐 Dịch Video
         </button>
         <button
           className={`nav-link ${activePage === 'settings' ? 'active' : ''}`}
           onClick={() => setActivePage('settings')}
           style={{ background: 'none', border: 'none', cursor: 'pointer' }}
         >
-          Settings
+          Cài đặt
         </button>
-
       </div>
     </nav>
   );
