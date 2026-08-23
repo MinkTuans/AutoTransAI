@@ -14,11 +14,23 @@ export default function App() {
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   const [selectedJobId, setSelectedJobId] = useState(null);
   const [activeExternalApp, setActiveExternalApp] = useState(null);
+  const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(() => {
+    const saved = localStorage.getItem('external_app_header_collapsed');
+    return saved !== null ? JSON.parse(saved) : false;
+  });
+
+  const toggleHeaderCollapse = () => {
+    setIsHeaderCollapsed((prev) => {
+      const nextState = !prev;
+      localStorage.setItem('external_app_header_collapsed', JSON.stringify(nextState));
+      return nextState;
+    });
+  };
 
   const APP_CONFIGS = {
-    krillin_ai: { title: 'KrillinAI', url: 'http://localhost:8888' },
-    py_video_trans: { title: 'pyVideoTrans', url: 'http://localhost:9999' },
-    soni_translate: { title: 'SoniTranslate', url: 'http://localhost:7860' },
+    krillin_ai: { title: 'KrillinAI', url: '/apps/krillin_ai/' },
+    py_video_trans: { title: 'pyVideoTrans', url: '/apps/py_video_trans/' },
+    soni_translate: { title: 'SoniTranslate', url: '/apps/soni_translate/' },
   };
 
   const handleSelectApp = (appKey) => {
@@ -55,18 +67,22 @@ export default function App() {
     setActivePage('detail');
   };
 
+  const showNavbar = activePage !== 'external_app' || !isHeaderCollapsed;
+
   return (
     <div className="app-container">
-      <Navbar
-        activePage={activePage}
-        setActivePage={(page) => {
-          setSelectedJobId(null);
-          if (page !== 'external_app') {
-            setActiveExternalApp(null);
-          }
-          setActivePage(page);
-        }}
-      />
+      {showNavbar && (
+        <Navbar
+          activePage={activePage}
+          setActivePage={(page) => {
+            setSelectedJobId(null);
+            if (page !== 'external_app') {
+              setActiveExternalApp(null);
+            }
+            setActivePage(page);
+          }}
+        />
+      )}
 
       <main className="main-content">
         {activePage === 'app_selector' && (
@@ -82,6 +98,8 @@ export default function App() {
             appUrl={APP_CONFIGS[activeExternalApp].url}
             appTitle={APP_CONFIGS[activeExternalApp].title}
             onBack={() => setActivePage('app_selector')}
+            isHeaderCollapsed={isHeaderCollapsed}
+            onToggleHeaderCollapse={toggleHeaderCollapse}
           />
         )}
 

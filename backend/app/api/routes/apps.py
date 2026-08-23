@@ -22,7 +22,6 @@ APP_PORTS = {
     "workflow_vd_ai": 8000,
     "krillin_ai": 8888,
     "py_video_trans": 9999,
-    "soni_translate": 7860,
 }
 
 RUNNING_PROCESSES = {}
@@ -42,7 +41,7 @@ async def get_apps_status():
         status[app_key] = {
             "running": running,
             "port": port,
-            "url": f"http://localhost:{port}" if app_key != "workflow_vd_ai" else "http://localhost:5173",
+            "url": f"/apps/{app_key}/" if app_key != "workflow_vd_ai" else "/",
         }
     return status
 
@@ -53,11 +52,12 @@ async def launch_app(app_key: str):
         raise HTTPException(status_code=400, detail="Unknown app key")
 
     port = APP_PORTS[app_key]
+    app_url = f"/apps/{app_key}/" if app_key != "workflow_vd_ai" else "/"
     if is_port_open(port):
         return {
             "success": True,
             "message": f"App {app_key} is already running",
-            "url": f"http://localhost:{port}",
+            "url": app_url,
         }
 
     CREATE_NO_WINDOW = 0x08000000
@@ -74,17 +74,6 @@ async def launch_app(app_key: str):
         )
         RUNNING_PROCESSES[app_key] = proc
 
-    elif app_key == "soni_translate":
-        soni_dir = EXTERNAL_DIR / "SoniTranslate"
-        if not soni_dir.exists():
-            raise HTTPException(status_code=404, detail="SoniTranslate folder not found")
-        
-        proc = subprocess.Popen(
-            [sys.executable, "app_rvc.py"],
-            cwd=str(soni_dir),
-            creationflags=CREATE_NO_WINDOW if sys.platform == "win32" else 0,
-        )
-        RUNNING_PROCESSES[app_key] = proc
 
     elif app_key == "krillin_ai":
         krillin_dir = EXTERNAL_DIR / "KrillinAI"
@@ -107,5 +96,5 @@ async def launch_app(app_key: str):
     return {
         "success": True,
         "message": f"Launched {app_key}",
-        "url": f"http://localhost:{port}",
+        "url": app_url,
     }

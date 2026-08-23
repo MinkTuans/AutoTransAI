@@ -3,10 +3,9 @@ import './AppSelector.css';
 
 export default function AppSelector({ onSelectApp, currentApp }) {
   const [appsStatus, setAppsStatus] = useState({
-    workflow_vd_ai: { running: true, port: 8000, name: 'WorkflowVdAi (Original)' },
-    krillin_ai: { running: false, port: 8888, name: 'KrillinAI' },
-    py_video_trans: { running: false, port: 9999, name: 'pyVideoTrans' },
-    soni_translate: { running: false, port: 7860, name: 'SoniTranslate' },
+    workflow_vd_ai: { running: true, name: 'WorkflowVdAi (Original)' },
+    krillin_ai: { running: false, name: 'KrillinAI' },
+    py_video_trans: { running: false, name: 'pyVideoTrans' },
   });
   const [loadingApp, setLoadingApp] = useState(null);
 
@@ -107,23 +106,6 @@ export default function AppSelector({ onSelectApp, currentApp }) {
             onClick={() => handleLaunchOrOpen('py_video_trans')}
           >
             {loadingApp === 'py_video_trans' ? 'Đang khởi chạy...' : 'Mở ứng dụng'}
-          </button>
-        </div>
-
-        {/* SoniTranslate */}
-        <div className={`app-card ${currentApp === 'soni_translate' ? 'active-app' : ''}`}>
-          <div className={`app-card-badge ${appsStatus.soni_translate?.running ? 'status-online' : 'status-offline'}`}>
-            {appsStatus.soni_translate?.running ? 'Đang chạy' : 'Chưa chạy'}
-          </div>
-          <div className="app-icon">🌐</div>
-          <h2 className="app-name">SoniTranslate</h2>
-          <p className="app-desc">Ứng dụng web dịch video và phân tách người nói.</p>
-          <button
-            className="app-launch-btn"
-            disabled={loadingApp === 'soni_translate'}
-            onClick={() => handleLaunchOrOpen('soni_translate')}
-          >
-            {loadingApp === 'soni_translate' ? 'Đang khởi chạy...' : 'Mở ứng dụng'}
           </button>
         </div>
       </div>
