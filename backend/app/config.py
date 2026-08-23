@@ -7,14 +7,24 @@ environment variables. No magic numbers should exist outside this module.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Literal, Optional
 
+# Ensure project root is in sys.path for `shared` import
+_project_root = Path(__file__).resolve().parent.parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from shared.config import PROJECT_ROOT as ROOT_DIR, ROOT_ENV_PATH, load_root_env
 
-ROOT_DIR = Path(__file__).parent.parent.parent
-ENV_FILE_PATH = ROOT_DIR / ".env" if (ROOT_DIR / ".env").exists() else ".env"
+# Ensure root .env is loaded into environment
+load_root_env(override=True)
+
+ENV_FILE_PATH = ROOT_ENV_PATH if ROOT_ENV_PATH.exists() else ROOT_DIR / ".env"
+
 
 
 class Settings(BaseSettings):

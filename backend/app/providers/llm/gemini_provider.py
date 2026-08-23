@@ -1,8 +1,5 @@
 """
-Google Gemini LLM Provider implementation.
-
-Calls official Google Gemini AI Studio API with automatic multi-model fallback
-(gemini-flash-latest -> gemini-1.5-flash-latest -> gemini-2.0-flash -> gemini-pro-latest).
+Google Gemini LLM Provider implementation
 """
 
 from __future__ import annotations
@@ -21,13 +18,8 @@ logger = get_logger(__name__)
 settings = get_settings()
 
 GEMINI_MODEL_CANDIDATES = [
-    "gemini-3.5-flash-lite",
-    "gemini-3.5-flash",
-    "gemini-3.6-flash",
-    "gemini-flash-latest",
-    "gemini-flash-lite-latest",
+    "gemini-2.5-pro",
     "gemini-2.5-flash",
-    "gemini-pro-latest",
 ]
 
 

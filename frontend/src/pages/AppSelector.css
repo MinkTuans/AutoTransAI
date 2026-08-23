@@ -3,15 +3,18 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 40px 20px;
-  min-height: calc(100vh - 120px);
+  padding: 20px;
+  height: 100%;
+  width: 100%;
+  box-sizing: border-box;
   background: radial-gradient(circle at center, rgba(18, 24, 38, 0.9) 0%, rgba(10, 14, 23, 1) 100%);
   color: #fff;
+  overflow: hidden;
 }
 
 .app-selector-header {
   text-align: center;
-  margin-bottom: 40px;
+  margin-bottom: 28px;
 }
 
 .selector-title {

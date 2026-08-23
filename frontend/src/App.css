@@ -110,7 +110,9 @@ body {
 }
 
 .app-container:has(.external-app-container) .main-content,
-.main-content:has(.external-app-container) {
+.main-content:has(.external-app-container),
+.app-container:has(.app-selector-container) .main-content,
+.main-content:has(.app-selector-container) {
   padding: 0;
   max-width: 100%;
   margin: 0;

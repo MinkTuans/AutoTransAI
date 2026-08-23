@@ -29,7 +29,7 @@ export default function App() {
 
   const APP_CONFIGS = {
     krillin_ai: { title: 'KrillinAI', url: '/apps/krillin_ai/' },
-    py_video_trans: { title: 'pyVideoTrans', url: '/apps/py_video_trans/' },
+    py_video_trans: { title: 'pyVideoTrans', url: '/apps/py_video_trans/?__theme=light' },
     soni_translate: { title: 'SoniTranslate', url: '/apps/soni_translate/' },
   };
 
