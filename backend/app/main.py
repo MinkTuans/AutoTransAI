@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
     # Setup logging
     setup_logging(log_level="DEBUG" if settings.DEBUG else "INFO")
     logger = get_logger("app.main")
-    logger.info("Starting WorkflowVdAi backend")
+    logger.info("Starting AutoTransAi backend")
 
     # Ensure data directories exist
     settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -84,17 +84,23 @@ async def lifespan(app: FastAPI):
     )
 
     # Detect interrupted projects on startup
-    logger.info("WorkflowVdAi backend ready", port=settings.PORT)
+    logger.info("AutoTransAi backend ready", port=settings.PORT)
 
     yield
 
     # Shutdown
-    logger.info("Shutting down WorkflowVdAi backend")
+    logger.info("Shutting down AutoTransAi backend")
+    try:
+        from app.api.routes.video_translator import _job_cancellation_events, signal_job_cancellation
+        for job_id in list(_job_cancellation_events.keys()):
+            signal_job_cancellation(job_id)
+    except Exception as ex:
+        logger.warning("Error signalling job cancellation during shutdown", error=str(ex))
 
 
 app = FastAPI(
-    title="WorkflowVdAi",
-    description="Local-first Script-to-Video Production Pipeline",
+    title="AutoTransAi",
+    description="Local-first Script-to-Video & AI Translation Pipeline",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -128,7 +134,7 @@ async def global_exception_handler(request: Request, exc: Exception):
         },
     )
 
-from app.api.routes import projects, providers, system, video_translator, storage, apps
+from app.api.routes import projects, providers, system, video_translator, storage, apps, video_editor
 
 # Mount API routes
 app.include_router(projects.router)
@@ -137,6 +143,7 @@ app.include_router(system.router)
 app.include_router(video_translator.router)
 app.include_router(storage.router)
 app.include_router(apps.router)
+app.include_router(video_editor.router)
 
 # Mount Static Files for local media serving
 settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -147,7 +154,8 @@ app.mount("/media", StaticFiles(directory=settings.DATA_DIR), name="media")
 @app.get("/")
 async def root():
     return {
-        "name": "WorkflowVdAi",
+        "name": "AutoTransAi",
         "version": "0.1.0",
         "status": "running",
     }
+

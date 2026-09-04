@@ -34,11 +34,13 @@ def test_ssrf_validation_blocked_ips():
             validate_url_security(url)
 
 
-def test_ssrf_validation_valid_url():
+def test_ssrf_validation_valid_url(monkeypatch):
     """Test 2: Direct valid external public URL passes validation."""
+    monkeypatch.setattr("socket.getaddrinfo", lambda host, port: [(2, 1, 6, "", ("93.184.215.14", 0))])
     valid_url = "https://example.com/sample_video.mp4"
     result = validate_url_security(valid_url)
     assert result == valid_url
+
 
 
 def test_adapter_can_handle_direct_url():

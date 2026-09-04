@@ -77,6 +77,8 @@ async def test_failed_job_state_synchronization():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         # Create asset and job
         real_video = Path(__file__).parent.parent.parent / "test_with_audio.mp4"
+        if not real_video.exists():
+            pytest.skip("test_with_audio.mp4 missing")
         with open(real_video, "rb") as f:
             res = await client.post(
                 "/api/video-translator/import",

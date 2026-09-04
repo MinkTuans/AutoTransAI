@@ -1,10 +1,18 @@
-# WorkflowVdAi
+# AutoTransAi
 
-Local-first Script-to-Video production pipeline.
+Unified 6-Stage AI Video Translation, Dubbing & Automation Platform.
 
 ## Quick Start
 
-### Backend
+### Windows Desktop Launcher
+Double-click `AutoTransAi.bat` or run:
+```bash
+run_app.bat
+```
+
+### Manual Development Setup
+
+#### Backend
 ```bash
 cd backend
 python -m venv venv
@@ -13,7 +21,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
-### Frontend
+#### Frontend
 ```bash
 cd frontend
 npm install
@@ -25,6 +33,3 @@ Copy `.env.example` to `.env` and fill in your API keys:
 ```bash
 cp .env.example .env
 ```
-
-## Architecture
-See [PLAN.md](PLAN.md) and [PROCESS.md](PROCESS.md) for full details.

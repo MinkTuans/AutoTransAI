@@ -1,2 +1,2 @@
 @echo off
-wscript.exe "%~dp0WorkflowVdAi.vbs"
+call "%~dp0AutoTransAi.bat"

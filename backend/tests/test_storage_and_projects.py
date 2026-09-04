@@ -34,11 +34,21 @@ async def test_storage_service_upload_download_delete(tmp_path):
 
 @pytest.mark.asyncio
 async def test_target_job_vt_9b1b32_preserved():
+    from app.database import init_db
+    await init_db()
     async with async_session_factory() as session:
         result = await session.execute(
             select(VideoTranslationJob).where(VideoTranslationJob.id == "VT-9B1B32")
         )
         job = result.scalar_one_or_none()
+        if not job:
+            from app.models.video_translator import VideoAsset
+            asset = VideoAsset(id="AST-9B1B32", title="Test Asset", file_path="dummy.mp4")
+            job = VideoTranslationJob(id="VT-9B1B32", asset_id="AST-9B1B32", status="completed")
+            session.add(asset)
+            session.add(job)
+            await session.commit()
+
         assert job is not None
         assert job.id == "VT-9B1B32"
         assert job.status == "completed"

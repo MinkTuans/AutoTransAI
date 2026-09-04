@@ -1,9 +1,9 @@
 """
-WorkflowVdAi Native Desktop Window & Process Orchestrator.
+AutoTransAi Native Desktop Window & Process Orchestrator.
 
 1. Sets explicit Windows AppUserModelID for custom Taskbar icon.
 2. Starts FastAPI backend and Vite frontend hidden in background.
-3. Opens native pywebview Desktop Window with custom cyber-wolf app-logo.ico.
+3. Opens native pywebview Desktop Window with custom app icon.
 4. Cleans up process tree on window close.
 """
 
@@ -19,7 +19,7 @@ import webview
 
 # Set AppUserModelID so Windows Taskbar displays the custom app icon
 try:
-    myappid = "WorkflowVdAi.ScriptToVideoPipeline.1.0"
+    myappid = "AutoTransAi.VideoTranslationPipeline.1.0"
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 except Exception:
     pass
@@ -110,7 +110,7 @@ def main():
 
         # Create Native GUI Window
         window = webview.create_window(
-            title="WorkflowVdAi — Script to Video Production",
+            title="AutoTransAi — AI Video Translation & Dubbing Production",
             url="http://localhost:5173",
             width=1300,
             height=850,

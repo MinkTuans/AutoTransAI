@@ -13,6 +13,23 @@ from app.models.video_translator import (
     VideoTranslationSegment,
 )
 
+from app.models.video_editor import (
+    VideoEditConfig,
+    QCReport,
+    YouTubeChannel,
+    YouTubePublication,
+)
+from app.models.workflow_engine import (
+    ProjectGlossary,
+    SpeakerVoiceMapping,
+    WorkflowExecution,
+    WorkflowStageExecution,
+    WorkflowStepExecution,
+    WorkflowEngineStatus,
+    WorkflowStageStatus,
+    WorkflowStepStatus,
+)
+
 __all__ = [
     "Project",
     "Segment",
@@ -24,5 +41,18 @@ __all__ = [
     "VideoAsset",
     "VideoTranslationJob",
     "VideoTranslationSegment",
+    "VideoEditConfig",
+    "QCReport",
+    "YouTubeChannel",
+    "YouTubePublication",
+    "ProjectGlossary",
+    "SpeakerVoiceMapping",
+    "WorkflowExecution",
+    "WorkflowStageExecution",
+    "WorkflowStepExecution",
+    "WorkflowEngineStatus",
+    "WorkflowStageStatus",
+    "WorkflowStepStatus",
 ]
+
 

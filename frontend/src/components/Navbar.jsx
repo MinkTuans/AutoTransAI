@@ -6,30 +6,30 @@ export default function Navbar({ activePage, setActivePage }) {
     <nav className="navbar">
       <a
         href="#"
-        onClick={(e) => { e.preventDefault(); setActivePage('app_selector'); }}
+        onClick={(e) => { e.preventDefault(); setActivePage('translator'); }}
         className="navbar-brand"
       >
         <img
           src={appLogo}
-          alt="WorkflowVdAi Logo"
+          alt="AutoTransAi Logo"
           className="navbar-logo-img"
         />
-        <span>WorkflowVdAi Hub</span>
+        <span>AutoTransAi</span>
       </a>
       <div className="navbar-links">
         <button
-          className={`nav-link ${activePage === 'app_selector' ? 'active' : ''}`}
-          onClick={() => setActivePage('app_selector')}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold', color: '#60a5fa' }}
+          className={`nav-link ${activePage === 'translator' ? 'active' : ''}`}
+          onClick={() => setActivePage('translator')}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold', color: activePage === 'translator' ? '#60a5fa' : '#94a3b8' }}
         >
-          🎛️ Chọn ứng dụng
+          🌐 Dịch Video (Unified Workflow)
         </button>
         <button
           className={`nav-link ${activePage === 'dashboard' ? 'active' : ''}`}
           onClick={() => setActivePage('dashboard')}
           style={{ background: 'none', border: 'none', cursor: 'pointer' }}
         >
-          Dự án
+          📁 Quản lý Dự án
         </button>
         <button
           className={`nav-link ${activePage === 'create' ? 'active' : ''}`}
@@ -39,18 +39,11 @@ export default function Navbar({ activePage, setActivePage }) {
           + Tạo dự án mới
         </button>
         <button
-          className={`nav-link ${activePage === 'translator' ? 'active' : ''}`}
-          onClick={() => setActivePage('translator')}
-          style={{ background: 'none', border: 'none', cursor: 'pointer' }}
-        >
-          🌐 Dịch Video
-        </button>
-        <button
           className={`nav-link ${activePage === 'settings' ? 'active' : ''}`}
           onClick={() => setActivePage('settings')}
           style={{ background: 'none', border: 'none', cursor: 'pointer' }}
         >
-          Cài đặt
+          ⚙️ Cài đặt
         </button>
       </div>
     </nav>

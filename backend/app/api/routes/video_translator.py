@@ -1127,3 +1127,213 @@ async def smart_retry_job_api(
 
     # Trigger restart
     return await start_translation_pipeline(job_id, background_tasks, session)
+
+
+# ── Unified 6-Stage Workflow & Glossary Routes ──────────────────────
+
+from app.workflow.workflow_engine import WorkflowEngine
+from app.models.workflow_engine import (
+    ProjectGlossary,
+    SpeakerVoiceMapping,
+    WorkflowExecution,
+    WorkflowStageExecution,
+)
+
+_global_workflow_engine = WorkflowEngine()
+
+
+@router.get("/projects/{project_id}/workflow-status", response_model=dict)
+async def get_workflow_status_api(project_id: str, session: AsyncSession = Depends(get_session)):
+    """Get complete 6-stage workflow execution status, current stage, steps, and QC reports."""
+    stmt = select(WorkflowExecution).where(WorkflowExecution.project_id == project_id)
+    res = await session.execute(stmt)
+    wf_exec = res.scalars().first()
+
+    if not wf_exec:
+        return {
+            "success": True,
+            "data": {
+                "status": "not_started",
+                "current_stage": "INGEST",
+                "current_step": "import_video",
+                "stages": [
+                    {"name": s, "status": "pending", "steps": []}
+                    for s in ["INGEST", "ANALYZE", "TRANSLATE", "DUB", "PRODUCE", "PUBLISH"]
+                ],
+            },
+        }
+
+    stmt_stages = select(WorkflowStageExecution).where(WorkflowStageExecution.workflow_execution_id == wf_exec.id)
+    stages_res = await session.execute(stmt_stages)
+    stages_list = stages_res.scalars().all()
+
+    stages_data = []
+    for s_name in ["INGEST", "ANALYZE", "TRANSLATE", "DUB", "PRODUCE", "PUBLISH"]:
+        match = next((st for st in stages_list if st.stage_name == s_name), None)
+        if match:
+            stages_data.append({
+                "name": s_name,
+                "status": match.status,
+                "error": match.error,
+                "qc_report": match.qc_report,
+                "retry_count": match.retry_count,
+            })
+        else:
+            stages_data.append({"name": s_name, "status": "pending", "steps": []})
+
+    return {
+        "success": True,
+        "data": {
+            "execution_id": wf_exec.id,
+            "status": wf_exec.status,
+            "current_stage": wf_exec.current_stage,
+            "current_step": wf_exec.current_step,
+            "error_message": wf_exec.error_message,
+            "stages": stages_data,
+            "context": wf_exec.context_data,
+        },
+    }
+
+
+@router.post("/projects/{project_id}/workflow/start", response_model=dict)
+async def start_workflow_api(project_id: str, session: AsyncSession = Depends(get_session)):
+    """Start unified 6-stage workflow engine for a project."""
+    wf_exec = await _global_workflow_engine.start_workflow(project_id, session)
+    return {"success": True, "data": {"workflow_id": wf_exec.id, "status": wf_exec.status}}
+
+
+@router.post("/projects/{project_id}/workflow/pause", response_model=dict)
+async def pause_workflow_api(project_id: str, session: AsyncSession = Depends(get_session)):
+    """Pause unified 6-stage workflow engine for a project."""
+    ok = await _global_workflow_engine.pause_workflow(project_id, session)
+    return {"success": True, "data": {"paused": ok}}
+
+
+@router.post("/projects/{project_id}/workflow/resume", response_model=dict)
+async def resume_workflow_api(project_id: str, session: AsyncSession = Depends(get_session)):
+    """Resume unified 6-stage workflow engine from failed/paused stage."""
+    wf_exec = await _global_workflow_engine.resume_workflow(project_id, session)
+    return {"success": True, "data": {"workflow_id": wf_exec.id, "status": wf_exec.status}}
+
+
+# ── Project Glossary Endpoints ─────────────────────────────────────
+
+class GlossaryTermCreate(BaseModel):
+    source_term: str = Field(..., description="Source text/name term")
+    translated_term: str = Field(..., description="Translated text/name term")
+    term_type: str = Field("other", description="character, location, organization, skill, title, other")
+
+
+@router.get("/projects/{project_id}/glossary", response_model=dict)
+async def get_project_glossary_api(project_id: str, session: AsyncSession = Depends(get_session)):
+    """List all project glossary terms."""
+    stmt = select(ProjectGlossary).where(ProjectGlossary.project_id == project_id)
+    res = await session.execute(stmt)
+    terms = res.scalars().all()
+    return {
+        "success": True,
+        "data": [
+            {
+                "id": t.id,
+                "source_term": t.source_term,
+                "translated_term": t.translated_term,
+                "term_type": t.term_type,
+                "approved": t.approved,
+            }
+            for t in terms
+        ],
+    }
+
+
+@router.post("/projects/{project_id}/glossary", response_model=dict)
+async def add_project_glossary_api(
+    project_id: str, payload: GlossaryTermCreate, session: AsyncSession = Depends(get_session)
+):
+    """Add a new term to the project glossary."""
+    term = ProjectGlossary(
+        id=str(uuid.uuid4()),
+        project_id=project_id,
+        source_term=payload.source_term,
+        translated_term=payload.translated_term,
+        term_type=payload.term_type,
+        approved=True,
+    )
+    session.add(term)
+    await session.commit()
+    return {"success": True, "data": {"id": term.id, "source_term": term.source_term}}
+
+
+@router.delete("/projects/{project_id}/glossary/{term_id}", response_model=dict)
+async def delete_project_glossary_api(
+    project_id: str, term_id: str, session: AsyncSession = Depends(get_session)
+):
+    """Delete a glossary term."""
+    await session.execute(
+        delete(ProjectGlossary).where(
+            ProjectGlossary.id == term_id, ProjectGlossary.project_id == project_id
+        )
+    )
+    await session.commit()
+    return {"success": True, "data": {"deleted": True}}
+
+
+# ── Speaker Voice Mapping Endpoints ─────────────────────────────────
+
+class VoiceMapPayload(BaseModel):
+    speaker_id: str = Field(..., description="Speaker ID e.g. SPEAKER_00")
+    speaker_name: Optional[str] = Field(None, description="Display name for speaker")
+    voice_provider: str = Field("edge", description="edge, google, elevenlabs")
+    voice_id: str = Field(..., description="Voice identifier e.g. vi-VN-HoaiMyNeural")
+
+
+@router.get("/projects/{project_id}/voice-map", response_model=dict)
+async def get_speaker_voice_map_api(project_id: str, session: AsyncSession = Depends(get_session)):
+    """List speaker voice mappings for a project."""
+    stmt = select(SpeakerVoiceMapping).where(SpeakerVoiceMapping.project_id == project_id)
+    res = await session.execute(stmt)
+    mappings = res.scalars().all()
+    return {
+        "success": True,
+        "data": [
+            {
+                "id": m.id,
+                "speaker_id": m.speaker_id,
+                "speaker_name": m.speaker_name,
+                "voice_provider": m.voice_provider,
+                "voice_id": m.voice_id,
+            }
+            for m in mappings
+        ],
+    }
+
+
+@router.post("/projects/{project_id}/voice-map", response_model=dict)
+async def save_speaker_voice_map_api(
+    project_id: str, payload: VoiceMapPayload, session: AsyncSession = Depends(get_session)
+):
+    """Create or update speaker voice mapping."""
+    stmt = select(SpeakerVoiceMapping).where(
+        SpeakerVoiceMapping.project_id == project_id,
+        SpeakerVoiceMapping.speaker_id == payload.speaker_id,
+    )
+    res = await session.execute(stmt)
+    mapping = res.scalars().first()
+
+    if not mapping:
+        mapping = SpeakerVoiceMapping(
+            id=str(uuid.uuid4()),
+            project_id=project_id,
+            speaker_id=payload.speaker_id,
+            speaker_name=payload.speaker_name or payload.speaker_id,
+            voice_provider=payload.voice_provider,
+            voice_id=payload.voice_id,
+        )
+        session.add(mapping)
+    else:
+        mapping.speaker_name = payload.speaker_name or payload.speaker_id
+        mapping.voice_provider = payload.voice_provider
+        mapping.voice_id = payload.voice_id
+
+    await session.commit()
+    return {"success": True, "data": {"id": mapping.id, "speaker_id": mapping.speaker_id}}
+

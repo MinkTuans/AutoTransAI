@@ -1,7 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { videoTranslatorApi, providersApi } from '../api';
+import VideoEditorStudio from '../components/VideoEditorStudio';
+import AIQCScorecard from '../components/AIQCScorecard';
+import YouTubePublisherModal from '../components/YouTubePublisherModal';
+import WorkflowTimeline from '../components/WorkflowTimeline';
+import ProjectGlossaryManager from '../components/ProjectGlossaryManager';
+
 
 export default function VideoTranslator({ initialJobId }) {
+  const [showYouTubeModal, setShowYouTubeModal] = useState(false);
   const [inputMode, setInputMode] = useState('url');
   const [videoUrl, setVideoUrl] = useState('');
   const [uploadFile, setUploadFile] = useState(null);
@@ -26,6 +33,50 @@ export default function VideoTranslator({ initialJobId }) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [pipelineError, setPipelineError] = useState(null);
 
+  // Workflow engine state
+  const [workflowStatusData, setWorkflowStatusData] = useState(null);
+
+  const activeProjectId = job?.project_id || asset?.project_id || 'default_project';
+
+  const fetchWorkflowStatus = async (projectId) => {
+    try {
+      const res = await fetch(`/api/video-translator/projects/${projectId || activeProjectId}/workflow-status`);
+      const data = await res.json();
+      if (data.success) {
+        setWorkflowStatusData(data.data);
+      }
+    } catch (err) {
+      console.error('Failed fetching workflow status', err);
+    }
+  };
+
+  const handleStartWorkflow = async () => {
+    try {
+      await fetch(`/api/video-translator/projects/${activeProjectId}/workflow/start`, { method: 'POST' });
+      fetchWorkflowStatus(activeProjectId);
+    } catch (err) {
+      console.error('Failed starting workflow', err);
+    }
+  };
+
+  const handlePauseWorkflow = async () => {
+    try {
+      await fetch(`/api/video-translator/projects/${activeProjectId}/workflow/pause`, { method: 'POST' });
+      fetchWorkflowStatus(activeProjectId);
+    } catch (err) {
+      console.error('Failed pausing workflow', err);
+    }
+  };
+
+  const handleResumeWorkflow = async () => {
+    try {
+      await fetch(`/api/video-translator/projects/${activeProjectId}/workflow/resume`, { method: 'POST' });
+      fetchWorkflowStatus(activeProjectId);
+    } catch (err) {
+      console.error('Failed resuming workflow', err);
+    }
+  };
+
   // Initial Job ID effect
   useEffect(() => {
     if (initialJobId) {
@@ -33,10 +84,12 @@ export default function VideoTranslator({ initialJobId }) {
         if (res.success && res.data) {
           setJob(res.data);
           if (res.data.segments) setSegments(res.data.segments);
+          fetchWorkflowStatus(res.data.project_id || res.data.id);
         }
       }).catch(err => console.error('Failed to load initial job:', err));
     }
   }, [initialJobId]);
+
 
   // Log Modal state
   const [showLogModal, setShowLogModal] = useState(false);
@@ -404,8 +457,29 @@ export default function VideoTranslator({ initialJobId }) {
         Tự động dịch giọng nói trong video từ URL Internet hoặc file Upload với cơ chế real-time tracking, heartbeat và FFmpeg process log.
       </p>
 
+      {/* Visual 6-Stage Workflow Timeline */}
+      <WorkflowTimeline
+        projectId={activeProjectId}
+        statusData={workflowStatusData || {
+          current_stage: job?.stage || 'INGEST',
+          current_step: job?.current_step || 'Ready',
+          stages: [
+            { name: 'INGEST', status: job ? 'passed' : 'pending' },
+            { name: 'ANALYZE', status: job?.stage === 'TRANSLATING' || job?.status === 'completed' ? 'passed' : job?.stage === 'TRANSCRIBING' ? 'running' : 'pending' },
+            { name: 'TRANSLATE', status: job?.stage === 'SYNTHESIZING' || job?.status === 'completed' ? 'passed' : job?.stage === 'TRANSLATING' ? 'running' : 'pending' },
+            { name: 'DUB', status: job?.stage === 'RENDERING' || job?.status === 'completed' ? 'passed' : job?.stage === 'SYNTHESIZING' ? 'running' : 'pending' },
+            { name: 'PRODUCE', status: job?.status === 'completed' ? 'passed' : job?.stage === 'RENDERING' ? 'running' : 'pending' },
+            { name: 'PUBLISH', status: 'pending' },
+          ]
+        }}
+        onStart={handleStartWorkflow}
+        onPause={handlePauseWorkflow}
+        onResume={handleResumeWorkflow}
+      />
+
       {/* Input Selection Card */}
       <div className="card" style={{ background: '#1e1b4b', border: '1px solid #3730a3', borderRadius: '12px', padding: '24px', color: '#fff', marginBottom: '24px' }}>
+
         <div style={{ display: 'flex', gap: '12px', marginBottom: '20px' }}>
           <button
             onClick={() => setInputMode('url')}
@@ -602,8 +676,12 @@ export default function VideoTranslator({ initialJobId }) {
         </button>
       </div>
 
+      {/* Project Glossary Manager */}
+      <ProjectGlossaryManager projectId={activeProjectId} />
+
       {/* Error Message Card */}
       {(pipelineError || (job && job.status === 'failed')) && (
+
         <div style={{ marginBottom: '24px', padding: '20px', background: '#7f1d1d', border: '1px solid #ef4444', borderRadius: '12px', color: '#fee2e2' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
             <h4 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold', color: '#fca5a5' }}>
@@ -875,22 +953,52 @@ export default function VideoTranslator({ initialJobId }) {
               src={job.output_url || `/media/${job.output_video_path.replace(/^.*[\\\/]data[\\\/]/, '')}`}
             />
           </div>
-          <a
-            href={job.output_url || `/media/${job.output_video_path.replace(/^.*[\\\/]data[\\\/]/, '')}`}
-            download="final_translated_video.mp4"
-            style={{
-              display: 'inline-block',
-              padding: '12px 24px',
-              borderRadius: '8px',
-              background: '#10b981',
-              color: '#fff',
-              fontWeight: 'bold',
-              textDecoration: 'none',
-            }}
-          >
-            📥 Tải Xung Video Lồng Tiếng (MP4)
-          </a>
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+            <a
+              href={job.output_url || `/media/${job.output_video_path.replace(/^.*[\\\/]data[\\\/]/, '')}`}
+              download="final_translated_video.mp4"
+              style={{
+                display: 'inline-block',
+                padding: '12px 24px',
+                borderRadius: '8px',
+                background: '#10b981',
+                color: '#fff',
+                fontWeight: 'bold',
+                textDecoration: 'none',
+              }}
+            >
+              📥 Tải Video Lồng Tiếng (MP4)
+            </a>
+            <button
+              onClick={() => setShowYouTubeModal(true)}
+              style={{
+                padding: '12px 24px',
+                borderRadius: '8px',
+                background: '#f43f5e',
+                color: '#fff',
+                fontWeight: 'bold',
+                border: 'none',
+                cursor: 'pointer',
+              }}
+            >
+              🔴 Tự Động SEO & Đăng Bài YouTube
+            </button>
+          </div>
+
+          {/* AI QC Scorecard */}
+          <AIQCScorecard jobId={job.id} />
+
+          {/* Video Editing & Branding Automation Studio */}
+          <VideoEditorStudio jobId={job.id} />
         </div>
+      )}
+
+      {/* YouTube Publisher Modal */}
+      {showYouTubeModal && job && (
+        <YouTubePublisherModal
+          jobId={job.id}
+          onClose={() => setShowYouTubeModal(false)}
+        />
       )}
 
       {/* Log Terminal Modal */}

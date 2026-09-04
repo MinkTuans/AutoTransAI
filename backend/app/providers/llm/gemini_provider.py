@@ -18,8 +18,9 @@ logger = get_logger(__name__)
 settings = get_settings()
 
 GEMINI_MODEL_CANDIDATES = [
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+    "gemini-2.0-flash",
 ]
 
 

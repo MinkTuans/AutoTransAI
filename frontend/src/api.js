@@ -79,4 +79,19 @@ export const videoTranslatorApi = {
   retryJob: (jobId) => api.post(`/video-translator/jobs/${jobId}/retry`).then(res => res.data),
 };
 
+export const videoEditorApi = {
+  saveConfig: (data) => api.post('/video-editor/config', data).then(res => res.data),
+  uploadLogo: (jobId, file) => {
+    const formData = new FormData();
+    formData.append('job_id', jobId);
+    formData.append('file', file);
+    return api.post('/video-editor/upload-logo', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }).then(res => res.data);
+  },
+  runQC: (jobId) => api.post(`/video-editor/jobs/${jobId}/run-qc`).then(res => res.data),
+  generateSEO: (jobId) => api.post(`/video-editor/jobs/${jobId}/generate-seo`).then(res => res.data),
+  publishYouTube: (data) => api.post('/video-editor/jobs/' + data.job_id + '/publish-youtube', data).then(res => res.data),
+};
+
 
