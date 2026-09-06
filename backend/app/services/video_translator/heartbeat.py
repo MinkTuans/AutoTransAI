@@ -36,8 +36,8 @@ async def _heartbeat_loop(job_id: str):
                     update(VideoTranslationJob)
                     .where(VideoTranslationJob.id == job_id)
                     .values(
-                        last_heartbeat=datetime.now(timezone.utc),
-                        updated_at=datetime.now(timezone.utc),
+                        last_heartbeat=datetime.now(timezone.utc).replace(tzinfo=None),
+                        updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
                     )
                 )
                 await session.commit()
@@ -70,7 +70,7 @@ async def check_and_mark_stalled_jobs(stalled_threshold_seconds: int = 60) -> li
     If process PID is dead or non-responsive, transition job to STALLED.
     """
     stalled_job_ids = []
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     async with async_session_factory() as session:
         res = await session.execute(
@@ -91,7 +91,7 @@ async def check_and_mark_stalled_jobs(stalled_threshold_seconds: int = 60) -> li
             if not job.last_heartbeat:
                 continue
 
-            elapsed = (now - job.last_heartbeat.replace(tzinfo=timezone.utc)).total_seconds()
+            elapsed = (now - job.last_heartbeat).total_seconds()
             if elapsed > stalled_threshold_seconds:
                 # Check if process is running
                 process_alive = False

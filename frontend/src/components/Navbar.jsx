@@ -18,30 +18,30 @@ export default function Navbar({ activePage, setActivePage }) {
       </a>
       <div className="navbar-links">
         <button
+          type="button"
           className={`nav-link ${activePage === 'translator' ? 'active' : ''}`}
           onClick={() => setActivePage('translator')}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold', color: activePage === 'translator' ? '#60a5fa' : '#94a3b8' }}
         >
           🌐 Dịch Video (Unified Workflow)
         </button>
         <button
+          type="button"
           className={`nav-link ${activePage === 'dashboard' ? 'active' : ''}`}
           onClick={() => setActivePage('dashboard')}
-          style={{ background: 'none', border: 'none', cursor: 'pointer' }}
         >
           📁 Quản lý Dự án
         </button>
         <button
+          type="button"
           className={`nav-link ${activePage === 'create' ? 'active' : ''}`}
           onClick={() => setActivePage('create')}
-          style={{ background: 'none', border: 'none', cursor: 'pointer' }}
         >
           + Tạo dự án mới
         </button>
         <button
+          type="button"
           className={`nav-link ${activePage === 'settings' ? 'active' : ''}`}
           onClick={() => setActivePage('settings')}
-          style={{ background: 'none', border: 'none', cursor: 'pointer' }}
         >
           ⚙️ Cài đặt
         </button>

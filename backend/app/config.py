@@ -38,15 +38,19 @@ class Settings(BaseSettings):
 
     # ── Database & Paths ───────────────────────────────────────────────
     DATABASE_URL: Optional[str] = None
+    SUPABASE_DATABASE_URL: Optional[str] = None
     DATA_DIR: Path = ROOT_DIR / "data"
     DB_FILENAME: str = "workflow.db"
 
     @property
     def DB_URL(self) -> str:
-        if self.DATABASE_URL:
-            return self.DATABASE_URL
-        db_path = self.DATA_DIR / self.DB_FILENAME
-        return f"sqlite+aiosqlite:///{db_path}"
+        url = self.SUPABASE_DATABASE_URL or self.DATABASE_URL
+        if not url:
+            raise ValueError(
+                "DATABASE_URL or SUPABASE_DATABASE_URL is missing in .env! "
+                "Supabase PostgreSQL connection URL is required (e.g. postgresql+asyncpg://...)."
+            )
+        return url
 
     @property
     def PROJECTS_DIR(self) -> Path:
@@ -91,13 +95,12 @@ class Settings(BaseSettings):
     KLING_API_SECRET: str = ""
     FAL_API_KEY: str = ""
 
-    # ── Cloudflare R2 Storage ──────────────────────────────────────────
-    R2_ACCOUNT_ID: str = ""
-    R2_ACCESS_KEY_ID: str = ""
-    R2_SECRET_ACCESS_KEY: str = ""
-    R2_BUCKET_NAME: str = "workflowvdai"
-    R2_ENDPOINT_URL: str = ""
-    R2_PUBLIC_DOMAIN: str = ""
+    # ── Supabase Storage ───────────────────────────────────────────────
+    SUPABASE_URL: str = ""
+    SUPABASE_ANON_KEY: str = ""
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
+    SUPABASE_STORAGE_BUCKET_PRIVATE: str = "autotransai-private"
+    SUPABASE_STORAGE_BUCKET_PUBLIC: str = "autotransai-public"
 
     # ── Server ─────────────────────────────────────────────────────────
     HOST: str = "127.0.0.1"

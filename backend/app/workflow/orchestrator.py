@@ -105,7 +105,7 @@ class WorkflowOrchestrator:
             .where(Project.id == self.project_id)
             .values(
                 workflow_status=new_status,
-                updated_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
             )
         )
         await self.session.commit()
@@ -198,7 +198,7 @@ class WorkflowOrchestrator:
                 .values(
                     workflow_status=WorkflowStatus.FAILED.value,
                     error_message=e.message,
-                    updated_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
                 )
             )
             # Create Error record in DB
@@ -231,7 +231,7 @@ class WorkflowOrchestrator:
                 .values(
                     workflow_status=WorkflowStatus.FAILED.value,
                     error_message=str(e),
-                    updated_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
                 )
             )
             try:

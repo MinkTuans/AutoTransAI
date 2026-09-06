@@ -62,29 +62,34 @@ export default function ProjectGlossaryManager({ projectId }) {
   };
 
   return (
-    <div style={{ background: '#1F2937', padding: '20px', borderRadius: '12px', color: '#F3F4F6', marginTop: '20px' }}>
-      <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', fontWeight: 'bold' }}>📖 Project Glossary & Terminology Memory</h3>
+    <div className="card" style={{ marginTop: '1.5rem' }}>
+      <h3 className="card-title" style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        📖 Project Glossary & Terminology Memory
+      </h3>
       
       {/* Form */}
-      <form onSubmit={handleAddTerm} style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+      <form onSubmit={handleAddTerm} style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem', alignItems: 'center', width: '100%' }}>
         <input
           type="text"
+          className="form-control"
           placeholder="Source Term (e.g. 张三)"
           value={sourceTerm}
           onChange={(e) => setSourceTerm(e.target.value)}
-          style={{ flex: 1, padding: '8px 12px', borderRadius: '6px', border: '1px solid #374151', background: '#111827', color: '#FFF' }}
+          style={{ flex: 1, minWidth: 0 }}
         />
         <input
           type="text"
-          placeholder="Translated Term (e.g. Trương Tam)"
+          className="form-control"
+          placeholder="Vietnamese Translation (e.g. Trương Tam)"
           value={translatedTerm}
           onChange={(e) => setTranslatedTerm(e.target.value)}
-          style={{ flex: 1, padding: '8px 12px', borderRadius: '6px', border: '1px solid #374151', background: '#111827', color: '#FFF' }}
+          style={{ flex: 1, minWidth: 0 }}
         />
         <select
+          className="form-select"
           value={termType}
           onChange={(e) => setTermType(e.target.value)}
-          style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid #374151', background: '#111827', color: '#FFF' }}
+          style={{ width: '150px', flexShrink: 0 }}
         >
           <option value="character">Character</option>
           <option value="location">Location</option>
@@ -93,40 +98,42 @@ export default function ProjectGlossaryManager({ projectId }) {
           <option value="title">Title</option>
           <option value="other">Other</option>
         </select>
-        <button type="submit" style={{ padding: '8px 16px', background: '#10B981', color: '#FFF', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
+        <button type="submit" className="btn btn-primary" style={{ backgroundColor: '#10b981', flexShrink: 0, whiteSpace: 'nowrap' }}>
           + Add Term
         </button>
       </form>
 
       {/* Table */}
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+      <table className="table" style={{ fontSize: '0.85rem' }}>
         <thead>
-          <tr style={{ background: '#111827', textAlign: 'left' }}>
-            <th style={{ padding: '8px' }}>Source Term</th>
-            <th style={{ padding: '8px' }}>Vietnamese Translation</th>
-            <th style={{ padding: '8px' }}>Type</th>
-            <th style={{ padding: '8px', textAlign: 'right' }}>Actions</th>
+          <tr>
+            <th>Source Term</th>
+            <th>Vietnamese Translation</th>
+            <th>Type</th>
+            <th style={{ textAlign: 'right' }}>Actions</th>
           </tr>
         </thead>
         <tbody>
           {terms.length === 0 ? (
             <tr>
-              <td colSpan={4} style={{ padding: '12px', textAlign: 'center', color: '#9CA3AF' }}>
+              <td colSpan={4} style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
                 No glossary terms added yet.
               </td>
             </tr>
           ) : (
             terms.map((t) => (
-              <tr key={t.id} style={{ borderBottom: '1px solid #374151' }}>
-                <td style={{ padding: '8px', fontWeight: 'bold' }}>{t.source_term}</td>
-                <td style={{ padding: '8px', color: '#60A5FA' }}>{t.translated_term}</td>
-                <td style={{ padding: '8px', textTransform: 'capitalize', color: '#9CA3AF' }}>{t.term_type}</td>
-                <td style={{ padding: '8px', textAlign: 'right' }}>
+              <tr key={t.id}>
+                <td style={{ fontWeight: 'bold' }}>{t.source_term}</td>
+                <td style={{ color: '#60a5fa' }}>{t.translated_term}</td>
+                <td style={{ textTransform: 'capitalize', color: 'var(--text-secondary)' }}>{t.term_type}</td>
+                <td style={{ textAlign: 'right' }}>
                   <button
+                    type="button"
+                    className="btn btn-danger"
                     onClick={() => handleDeleteTerm(t.id)}
-                    style={{ padding: '4px 8px', background: '#EF4444', color: '#FFF', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                    style={{ padding: '0.25rem 0.625rem', fontSize: '0.8rem' }}
                   >
-                    🗑️
+                    🗑️ Delete
                   </button>
                 </td>
               </tr>

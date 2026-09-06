@@ -262,7 +262,7 @@ async def estimate(
 
     # Update project status
     project.workflow_status = WorkflowStatus.ESTIMATED.value
-    project.updated_at = datetime.now(timezone.utc)
+    project.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await session.commit()
 
     return {
@@ -303,7 +303,7 @@ async def configure_project(
     if "sync_strategy" in body:
         project.sync_strategy = body["sync_strategy"]
 
-    project.updated_at = datetime.now(timezone.utc)
+    project.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await session.commit()
 
     return {"success": True, "data": {"configured": True}}
@@ -338,7 +338,7 @@ async def precheck(
 
     if preflight_result.passed:
         project.workflow_status = WorkflowStatus.PRECHECKED.value
-        project.updated_at = datetime.now(timezone.utc)
+        project.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await session.commit()
 
     return {
@@ -404,7 +404,7 @@ async def resume_workflow(
     # Transition back to PRECHECKED for re-validation
     project.workflow_status = WorkflowStatus.PRECHECKED.value
     project.error_message = None
-    project.updated_at = datetime.now(timezone.utc)
+    project.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await session.commit()
 
     async def run_and_cleanup():

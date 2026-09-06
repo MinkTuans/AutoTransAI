@@ -601,7 +601,7 @@ async def speech_to_text_and_detect_language(
     stt_errors = []
     effective_provider = llm_provider_id or settings.DEFAULT_LLM_PROVIDER
 
-    # Primary Attempt: Gemini STT if configured as primary or if GEMINI_API_KEY set
+    # Primary Attempt: Gemini STT (Default primary STT engine)
     if effective_provider == "gemini" or (not settings.OPENAI_API_KEY and settings.GEMINI_API_KEY):
         if settings.GEMINI_API_KEY:
             try:
@@ -620,8 +620,10 @@ async def speech_to_text_and_detect_language(
                 err_msg = f"Whisper STT fallback failed: {str(e)}"
                 logger.warning(err_msg)
                 stt_errors.append(err_msg)
-        elif not settings.ENABLE_OPENAI_FALLBACK:
-            log_job_event(job_id, "STT", "[STT] OpenAI Fallback is DISABLED (ENABLE_OPENAI_FALLBACK=False). Not calling OpenAI.")
+        else:
+            log_job_event(job_id, "STT", "[STT] Gemini STT error occurred and Fallback is DISABLED. Stopping without calling OpenAI/Whisper.")
+            error_summary = " | ".join(stt_errors) if stt_errors else "Gemini STT Error: Chưa cấu hình GEMINI_API_KEY hợp lệ."
+            raise RuntimeError(f"STT FAILED: {error_summary}")
     else:
         # User explicitly requested OpenAI STT
         if settings.OPENAI_API_KEY:
@@ -632,7 +634,7 @@ async def speech_to_text_and_detect_language(
                 logger.warning(err_msg)
                 stt_errors.append(err_msg)
 
-        if settings.GEMINI_API_KEY:
+        if settings.ENABLE_OPENAI_FALLBACK and settings.GEMINI_API_KEY:
             try:
                 log_job_event(job_id, "STT", "[Fallback] Attempting Gemini STT fallback...")
                 return await transcribe_audio_with_gemini(audio_path, job_id=job_id)
@@ -644,6 +646,7 @@ async def speech_to_text_and_detect_language(
     # If all attempted STT providers fail
     error_summary = " | ".join(stt_errors) if stt_errors else "Chưa cấu hình API Key hợp lệ trong .env."
     raise RuntimeError(f"STT FAILED: {error_summary}")
+
 
 
 def _safe_parse_json_translation(text: str) -> dict:

@@ -142,59 +142,51 @@ class KeyManager:
         self._save_keys()
 
     def _bootstrap_from_env(self) -> None:
-        """Populate initial key pool from .env variables."""
-        self.keys = {"kling": [], "fal": []}
+        """Populate initial key pool from .env variables for all providers."""
+        self.keys = {
+            "gemini": [],
+            "openai": [],
+            "google_cloud_tts": [],
+            "elevenlabs": [],
+            "kling": [],
+            "fal": [],
+        }
 
-        # Kling keys from .env
-        kling_env = getattr(settings, "KLING_API_KEY", "") or os.getenv("KLING_API_KEY", "")
-        kling_keys = []
-        if kling_env and isinstance(kling_env, str):
-            # Split lines if multiple keys were pasted
-            for line in kling_env.splitlines():
-                clean = line.strip()
-                if clean and clean.startswith("api-key-") and clean not in kling_keys:
-                    kling_keys.append(clean)
-        
-        # Check additional env vars VIDEO_API_KEY_1..4 or KLING_API_KEY_1..4
-        for idx in range(1, 10):
-            k = os.getenv(f"KLING_API_KEY_{idx}") or os.getenv(f"VIDEO_API_KEY_{idx}")
-            if k and k.strip() and k.strip() not in kling_keys:
-                kling_keys.append(k.strip())
+        # Helper to populate pool from primary env var + indexed env vars
+        provider_env_map = {
+            "gemini": ("GEMINI_API_KEY", "GEMINI_API_KEY_"),
+            "openai": ("OPENAI_API_KEY", "OPENAI_API_KEY_"),
+            "google_cloud_tts": ("GOOGLE_CLOUD_TTS_API_KEY", "GOOGLE_CLOUD_TTS_API_KEY_"),
+            "elevenlabs": ("ELEVENLABS_API_KEY", "ELEVENLABS_API_KEY_"),
+            "kling": ("KLING_API_KEY", "KLING_API_KEY_"),
+            "fal": ("FAL_API_KEY", "FAL_API_KEY_"),
+        }
 
-        for idx, k in enumerate(kling_keys, start=1):
-            self.keys["kling"].append(
-                KeyEntry(
-                    key_id=f"kling_key_{idx}",
-                    provider_id="kling",
-                    api_key=k,
-                    priority=idx,
-                    status=KeyStatus.READY.value,
+        for p_id, (main_env, prefix) in provider_env_map.items():
+            keys_found = []
+            val = getattr(settings, main_env, "") or os.getenv(main_env, "")
+            if val and isinstance(val, str):
+                for line in val.splitlines():
+                    clean = line.strip()
+                    if clean and clean not in keys_found:
+                        keys_found.append(clean)
+
+            for idx in range(1, 10):
+                k = os.getenv(f"{prefix}{idx}")
+                if k and k.strip() and k.strip() not in keys_found:
+                    keys_found.append(k.strip())
+
+            for idx, k in enumerate(keys_found, start=1):
+                self.keys[p_id].append(
+                    KeyEntry(
+                        key_id=f"{p_id}_key_{idx}",
+                        provider_id=p_id,
+                        api_key=k,
+                        priority=idx,
+                        status=KeyStatus.READY.value,
+                    )
                 )
-            )
 
-        # Fal keys from .env
-        fal_env = getattr(settings, "FAL_API_KEY", "") or os.getenv("FAL_API_KEY", "")
-        fal_keys = []
-        if fal_env and isinstance(fal_env, str):
-            clean = fal_env.strip()
-            if clean and clean not in fal_keys:
-                fal_keys.append(clean)
-
-        for idx in range(1, 10):
-            k = os.getenv(f"FAL_API_KEY_{idx}")
-            if k and k.strip() and k.strip() not in fal_keys:
-                fal_keys.append(k.strip())
-
-        for idx, k in enumerate(fal_keys, start=1):
-            self.keys["fal"].append(
-                KeyEntry(
-                    key_id=f"fal_key_{idx}",
-                    provider_id="fal",
-                    api_key=k,
-                    priority=idx,
-                    status=KeyStatus.READY.value,
-                )
-            )
 
     def _save_keys(self) -> None:
         """Persist current key configuration to storage file and sync to .env."""
@@ -208,7 +200,7 @@ class KeyManager:
             logger.error("Failed to save api_keys.json / .env", error=str(e))
 
     def _sync_env_file(self) -> None:
-        """Synchronize current video key pools to .env file."""
+        """Synchronize primary and multi-keys for all AI providers to .env file."""
         try:
             from app.config import ENV_FILE_PATH
             env_path = Path(ENV_FILE_PATH)
@@ -218,27 +210,40 @@ class KeyManager:
             lines = env_path.read_text(encoding="utf-8").splitlines()
             new_lines = []
 
-            # Keep non-video key lines
+            provider_env_map = {
+                "gemini": "GEMINI_API_KEY",
+                "openai": "OPENAI_API_KEY",
+                "google_cloud_tts": "GOOGLE_CLOUD_TTS_API_KEY",
+                "elevenlabs": "ELEVENLABS_API_KEY",
+                "kling": "KLING_API_KEY",
+                "fal": "FAL_API_KEY",
+            }
+
+            managed_prefixes = [f"{var}" for var in provider_env_map.values()]
+
+            # Keep non-managed key lines
             for line in lines:
                 stripped = line.strip()
-                if (
-                    stripped.startswith("KLING_API_KEY")
-                    or stripped.startswith("FAL_API_KEY")
-                    or stripped.startswith("# --- Auto-Synchronized Video API Keys ---")
-                ):
+                if stripped.startswith("# --- Auto-Synchronized"):
                     continue
-                new_lines.append(line)
+                skip = False
+                for prefix in managed_prefixes:
+                    if stripped.startswith(f"{prefix}=") or stripped.startswith(f"{prefix}_"):
+                        skip = True
+                        break
+                if not skip:
+                    new_lines.append(line)
 
-            # Append video key section
-            new_lines.append("# --- Auto-Synchronized Video API Keys ---")
-            for p_id in ("kling", "fal"):
+            # Append auto-synchronized provider key section
+            new_lines.append("# --- Auto-Synchronized AI Provider API Keys ---")
+            for p_id, main_env in provider_env_map.items():
                 p_keys = sorted(self.keys.get(p_id, []), key=lambda x: x.priority)
                 for idx, k in enumerate(p_keys, start=1):
-                    var_name = f"{p_id.upper()}_API_KEY" if idx == 1 else f"{p_id.upper()}_API_KEY_{idx}"
+                    var_name = main_env if idx == 1 else f"{main_env}_{idx}"
                     new_lines.append(f"{var_name}={k.api_key}")
-                    if idx == 1:
-                        os.environ[f"{p_id.upper()}_API_KEY"] = k.api_key
-                        setattr(settings, f"{p_id.upper()}_API_KEY", k.api_key)
+                    if idx == 1 and k.api_key:
+                        os.environ[main_env] = k.api_key
+                        setattr(settings, main_env, k.api_key)
 
             env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
         except Exception as e:

@@ -25,3 +25,10 @@ class Provider(Base):
     last_verified: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     capabilities: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # JSON string of capabilities
+    supported: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_custom: Mapped[bool] = mapped_column(Boolean, default=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    website_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    doc_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    base_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+

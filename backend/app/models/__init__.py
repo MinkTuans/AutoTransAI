@@ -30,6 +30,13 @@ from app.models.workflow_engine import (
     WorkflowStepStatus,
 )
 
+from app.models.settings import (
+    SystemSetting,
+    AIFunctionConfig,
+    AIModel,
+    SocialAccount,
+)
+
 __all__ = [
     "Project",
     "Segment",
@@ -53,6 +60,11 @@ __all__ = [
     "WorkflowEngineStatus",
     "WorkflowStageStatus",
     "WorkflowStepStatus",
+    "SystemSetting",
+    "AIFunctionConfig",
+    "AIModel",
+    "SocialAccount",
 ]
+
 
 

@@ -21,5 +21,5 @@ class UsageSnapshot(Base):
     limit_val: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     remaining: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     snapshot_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )

@@ -161,7 +161,13 @@ async def add_provider_key(provider_id: str, body: dict):
     api_key = body.get("api_key", "").strip()
     if not api_key:
         raise HTTPException(status_code=400, detail="API key is required")
-    priority = body.get("priority")
+    raw_priority = body.get("priority")
+    priority = 1
+    if raw_priority is not None:
+        try:
+            priority = int(raw_priority)
+        except (ValueError, TypeError):
+            priority = 1
     key_mgr = get_key_manager()
     entry = await key_mgr.add_key(provider_id, api_key, priority=priority)
 
@@ -236,4 +242,33 @@ async def list_voices(provider_id: str, language: str | None = None):
             for v in voices
         ],
     }
+
+
+from app.schemas.settings_schema import AddCustomProviderRequest
+
+@router.post("", response_model=dict)
+async def add_custom_provider(body: AddCustomProviderRequest):
+    """Add a custom provider definition."""
+    p_id = body.id.strip().lower().replace(" ", "_")
+    key_mgr = get_key_manager()
+    if body.api_key:
+        await key_mgr.add_key(p_id, body.api_key.strip(), priority=1)
+
+    return {
+        "success": True,
+        "data": {
+            "id": p_id,
+            "name": body.name,
+            "provider_type": body.provider_type,
+            "configured": bool(body.api_key),
+            "supported": False,  # Custom provider without built-in adapter
+            "is_custom": True,
+            "website_url": body.website_url,
+            "doc_url": body.doc_url,
+            "base_url": body.base_url,
+            "capabilities": body.capabilities,
+        },
+        "message": f"Custom provider '{body.name}' added. Note: Custom providers require compatible adapter for execution.",
+    }
+
 

@@ -41,9 +41,25 @@ export const providersApi = {
     api.post(`/providers/${providerId}/keys/${keyId}/test`).then(res => res.data),
   checkQuota: (providerId, keyId) =>
     api.post(`/providers/${providerId}/keys/${keyId}/quota`).then(res => res.data),
+  addCustomProvider: (data) =>
+    api.post('/providers', data).then(res => res.data),
+};
+
+export const settingsApi = {
+  getSettings: () => api.get('/settings').then(res => res.data),
+  updateSettings: (settings) => api.put('/settings', { settings }).then(res => res.data),
+  getFunctions: () => api.get('/settings/functions').then(res => res.data),
+  updateFunction: (functionId, data) => api.put(`/settings/functions/${functionId}`, data).then(res => res.data),
+  getModels: (providerId) => api.get('/settings/models', { params: { provider_id: providerId } }).then(res => res.data),
+  addModel: (data) => api.post('/settings/models', data).then(res => res.data),
+  getSocialAccounts: () => api.get('/settings/social-accounts').then(res => res.data),
+  addSocialAccount: (data) => api.post('/settings/social-accounts', data).then(res => res.data),
+  deleteSocialAccount: (id) => api.delete(`/settings/social-accounts/${id}`).then(res => res.data),
+  testStorage: (data) => api.post('/settings/storage/test', data).then(res => res.data),
 };
 
 export const systemApi = {
+
   health: () => api.get('/system/health').then(res => res.data),
   interrupted: () => api.get('/system/interrupted').then(res => res.data),
 };

@@ -1,158 +1,345 @@
 import React, { useState, useEffect } from 'react';
-import { providersApi } from '../api';
+import { providersApi, settingsApi, systemApi } from '../api';
 
 export default function Settings() {
-  const [providers, setProviders] = useState({ audio: [], video: [], llm: [] });
+  const [activeTab, setActiveTab] = useState('providers');
   const [loading, setLoading] = useState(true);
-  const [editingProvider, setEditingProvider] = useState(null);
-  const [apiKeyInput, setApiKeyInput] = useState('');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
 
-  // Multi-key state
-  const [selectedVideoProvider, setSelectedVideoProvider] = useState('kling');
+  // 1. Providers State
+  const [providers, setProviders] = useState({ audio: [], video: [], llm: [] });
+  const [selectedProviderForKeys, setSelectedProviderForKeys] = useState('gemini');
   const [keysList, setKeysList] = useState([]);
   const [keysLoading, setKeysLoading] = useState(false);
   const [showAddKeyModal, setShowAddKeyModal] = useState(false);
   const [newKeyInput, setNewKeyInput] = useState('');
   const [newKeyPriority, setNewKeyPriority] = useState(1);
-  const [keyActionMsg, setKeyActionMsg] = useState(null);
+  const [modalError, setModalError] = useState(null);
 
+  // Custom Provider Modal State
+  const [showAddProviderModal, setShowAddProviderModal] = useState(false);
+  const [customProviderData, setCustomProviderData] = useState({
+    id: '',
+    name: '',
+    provider_type: 'llm',
+    website_url: '',
+    doc_url: '',
+    base_url: '',
+    capabilities: ['LLM'],
+    api_key: '',
+  });
+
+  // 2. AI Functions State
+  const [functionsList, setFunctionsList] = useState([]);
+
+  // 3. AI Models State
+  const [modelsList, setModelsList] = useState([]);
+  const [showAddModelModal, setShowAddModelModal] = useState(false);
+  const [newModelData, setNewModelData] = useState({
+    id: '',
+    provider_id: 'gemini',
+    model_name: '',
+    capabilities: ['LLM'],
+    is_default: false,
+    description: '',
+  });
+
+  // 4. Social Accounts State
+  const [socialAccounts, setSocialAccounts] = useState([]);
+  const [showAddSocialModal, setShowAddSocialModal] = useState(false);
+  const [newSocialData, setNewSocialData] = useState({
+    platform: 'youtube',
+    account_name: '',
+    channel_id: '',
+    channel_name: '',
+    priority: 1,
+  });
+
+  // 5. System Settings State (Storage, Processing, Workflow Defaults)
+  const [systemSettings, setSystemSettings] = useState({
+    storage_provider: 'local',
+    r2_account_id: '',
+    r2_access_key_id: '',
+    r2_secret_access_key: '',
+    r2_bucket_name: 'workflowvdai',
+    r2_endpoint_url: '',
+    r2_public_domain: '',
+    max_concurrency: '2',
+    max_retries: '3',
+    retry_backoff: '2.0',
+    video_target_duration: '8',
+    video_output_resolution: '1080p',
+    audio_format: 'wav',
+    audio_sample_rate: '24000',
+    sync_strategy: 'trim_video',
+    sync_tolerance_seconds: '0.5',
+    default_source_language: 'auto',
+    default_target_language: 'vi',
+    default_tts_voice: 'vi-VN-HoaiMyNeural',
+    default_video_provider: 'kling',
+    social_account_strategy: 'priority',
+  });
+
+  // Storage Test State
+  const [storageTestStatus, setStorageTestStatus] = useState(null);
+  const [storageTesting, setStorageTesting] = useState(false);
+
+  // Data Loading Handlers
   const fetchProviders = () => {
     providersApi.list()
       .then(res => {
         if (res.success) setProviders(res.data);
       })
-      .catch(err => console.error(err))
-      .finally(() => setLoading(false));
+      .catch(err => console.error('Failed fetching providers:', err));
   };
 
   const fetchKeys = (providerId) => {
     setKeysLoading(true);
     providersApi.listKeys(providerId)
       .then(res => {
-        if (res.success) {
-          setKeysList(res.data);
-        }
+        if (res.success) setKeysList(res.data);
       })
-      .catch(err => console.error('Failed to fetch keys:', err))
+      .catch(err => console.error('Failed fetching keys:', err))
       .finally(() => setKeysLoading(false));
   };
 
+  const fetchFunctions = () => {
+    settingsApi.getFunctions()
+      .then(res => {
+        if (res.success) setFunctionsList(res.data);
+      })
+      .catch(err => console.error('Failed fetching AI functions:', err));
+  };
+
+  const fetchModels = () => {
+    settingsApi.getModels()
+      .then(res => {
+        if (res.success) setModelsList(res.data);
+      })
+      .catch(err => console.error('Failed fetching AI models:', err));
+  };
+
+  const fetchSocialAccounts = () => {
+    settingsApi.getSocialAccounts()
+      .then(res => {
+        if (res.success) setSocialAccounts(res.data);
+      })
+      .catch(err => console.error('Failed fetching social accounts:', err));
+  };
+
+  const fetchSystemSettings = () => {
+    settingsApi.getSettings()
+      .then(res => {
+        if (res.success) {
+          setSystemSettings(prev => ({ ...prev, ...res.data }));
+        }
+      })
+      .catch(err => console.error('Failed fetching system settings:', err));
+  };
+
   useEffect(() => {
-    fetchProviders();
-    fetchKeys(selectedVideoProvider);
-  }, [selectedVideoProvider]);
+    setLoading(true);
+    Promise.all([
+      fetchProviders(),
+      fetchFunctions(),
+      fetchModels(),
+      fetchSocialAccounts(),
+      fetchSystemSettings(),
+    ]).finally(() => setLoading(false));
+  }, []);
 
-  const handleOpenConfig = (provider) => {
-    setEditingProvider(provider);
-    setApiKeyInput('');
-    setMessage(null);
-  };
+  useEffect(() => {
+    fetchKeys(selectedProviderForKeys);
+  }, [selectedProviderForKeys]);
 
-  const handleSaveKey = async (e) => {
-    e.preventDefault();
-    if (!apiKeyInput.trim()) return;
-
-    setSaving(true);
-    setMessage(null);
-    try {
-      const res = await providersApi.configureKey(editingProvider.id, apiKeyInput.trim());
-      if (res.success) {
-        setMessage({ type: 'success', text: `API key for ${editingProvider.name} updated successfully!` });
-        setEditingProvider(null);
-        setApiKeyInput('');
-        fetchProviders();
-        fetchKeys(selectedVideoProvider);
-      } else {
-        setMessage({ type: 'danger', text: res.error?.message || 'Failed to configure API key' });
-      }
-    } catch (err) {
-      setMessage({ type: 'danger', text: err.response?.data?.detail || 'Failed to save API key' });
-    } finally {
-      setSaving(false);
+  // Handler: Add Multi-Key
+  const handleAddKey = async (e) => {
+    if (e) e.preventDefault();
+    const cleanKey = newKeyInput.trim();
+    if (!cleanKey) {
+      setModalError('Vui lòng nhập API Key trước khi lưu!');
+      return;
     }
-  };
-
-  // Multi-key Handlers
-  const handleAddMultiKey = async (e) => {
-    e.preventDefault();
-    if (!newKeyInput.trim()) return;
 
     setSaving(true);
-    setKeyActionMsg(null);
+    setMessage(null);
+    setModalError(null);
     try {
-      const res = await providersApi.addKey(selectedVideoProvider, newKeyInput.trim(), parseInt(newKeyPriority, 10));
+      const prio = parseInt(newKeyPriority, 10) || 1;
+      const res = await providersApi.addKey(selectedProviderForKeys, cleanKey, prio);
       if (res.success) {
-        setKeyActionMsg({ type: 'success', text: 'New API Key added successfully!' });
+        setMessage({ type: 'success', text: `Đã thêm API Key cho ${selectedProviderForKeys.toUpperCase()} thành công!` });
         setNewKeyInput('');
+        setModalError(null);
         setShowAddKeyModal(false);
-        fetchKeys(selectedVideoProvider);
+        fetchKeys(selectedProviderForKeys);
+        fetchProviders();
       } else {
-        setKeyActionMsg({ type: 'danger', text: res.error?.message || 'Failed to add key' });
+        setModalError(res.error?.message || res.detail || 'Không thể thêm API Key');
       }
     } catch (err) {
-      setKeyActionMsg({ type: 'danger', text: err.response?.data?.detail || 'Failed to add key' });
+      console.error('Error adding API Key:', err);
+      const detailMsg = err.response?.data?.detail || err.response?.data?.message || err.message || 'Lỗi kết nối khi thêm API Key';
+      setModalError(detailMsg);
     } finally {
       setSaving(false);
     }
   };
 
   const handleDeleteKey = async (keyId) => {
-    if (!window.confirm('Are you sure you want to remove this API key?')) return;
+    if (!window.confirm('Are you sure you want to delete this API key?')) return;
     try {
-      await providersApi.deleteKey(selectedVideoProvider, keyId);
-      setKeyActionMsg({ type: 'success', text: 'API Key removed' });
-      fetchKeys(selectedVideoProvider);
+      await providersApi.deleteKey(selectedProviderForKeys, keyId);
+      setMessage({ type: 'success', text: 'API key deleted' });
+      fetchKeys(selectedProviderForKeys);
+      fetchProviders();
     } catch (err) {
-      setKeyActionMsg({ type: 'danger', text: 'Failed to delete key' });
+      setMessage({ type: 'danger', text: 'Failed to delete API key' });
     }
   };
 
   const handleToggleKeyStatus = async (keyEntry) => {
     const newStatus = keyEntry.status === 'disabled' ? 'ready' : 'disabled';
     try {
-      await providersApi.updateKey(selectedVideoProvider, keyEntry.key_id, { status: newStatus });
-      fetchKeys(selectedVideoProvider);
+      await providersApi.updateKey(selectedProviderForKeys, keyEntry.key_id, { status: newStatus });
+      fetchKeys(selectedProviderForKeys);
     } catch (err) {
-      setKeyActionMsg({ type: 'danger', text: 'Failed to update key status' });
-    }
-  };
-
-  const handlePriorityChange = async (keyId, newPriority) => {
-    try {
-      await providersApi.updateKey(selectedVideoProvider, keyId, { priority: parseInt(newPriority, 10) });
-      fetchKeys(selectedVideoProvider);
-    } catch (err) {
-      setKeyActionMsg({ type: 'danger', text: 'Failed to update priority' });
+      setMessage({ type: 'danger', text: 'Failed to update key status' });
     }
   };
 
   const handleTestKey = async (keyId) => {
-    setKeyActionMsg({ type: 'info', text: 'Testing key connection...' });
+    setMessage({ type: 'info', text: 'Testing API key connection...' });
     try {
-      const res = await providersApi.testKey(selectedVideoProvider, keyId);
+      const res = await providersApi.testKey(selectedProviderForKeys, keyId);
       if (res.success && res.data.valid) {
-        setKeyActionMsg({ type: 'success', text: `Key test passed: ${res.data.message}` });
+        setMessage({ type: 'success', text: `Key test passed: ${res.data.message}` });
       } else {
-        setKeyActionMsg({ type: 'danger', text: `Key test failed: ${res.data?.message || 'Invalid'}` });
+        setMessage({ type: 'danger', text: `Key test failed: ${res.data?.message || 'Invalid API Key'}` });
       }
-      fetchKeys(selectedVideoProvider);
+      fetchKeys(selectedProviderForKeys);
     } catch (err) {
-      setKeyActionMsg({ type: 'danger', text: 'Key test call failed' });
+      setMessage({ type: 'danger', text: 'Key test call failed' });
     }
   };
 
-  const handleCheckQuota = async (keyId) => {
-    setKeyActionMsg({ type: 'info', text: 'Fetching quota details...' });
+  // Handler: Add Custom Provider
+  const handleAddCustomProvider = async (e) => {
+    e.preventDefault();
+    if (!customProviderData.id || !customProviderData.name) return;
+
+    setSaving(true);
     try {
-      const res = await providersApi.checkQuota(selectedVideoProvider, keyId);
+      const res = await providersApi.addCustomProvider(customProviderData);
       if (res.success) {
-        setKeyActionMsg({ type: 'info', text: `Quota info: ${res.data.status || 'Updated'}` });
-        fetchKeys(selectedVideoProvider);
+        setMessage({ type: 'success', text: res.message || 'Custom provider added successfully!' });
+        setShowAddProviderModal(false);
+        setCustomProviderData({
+          id: '',
+          name: '',
+          provider_type: 'llm',
+          website_url: '',
+          doc_url: '',
+          base_url: '',
+          capabilities: ['LLM'],
+          api_key: '',
+        });
+        fetchProviders();
       }
     } catch (err) {
-      setKeyActionMsg({ type: 'danger', text: 'Failed to fetch quota' });
+      setMessage({ type: 'danger', text: err.response?.data?.detail || 'Failed to add custom provider' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Handler: Update Function Config
+  const handleUpdateFunctionConfig = async (fnId, key, value) => {
+    try {
+      const res = await settingsApi.updateFunction(fnId, { [key]: value });
+      if (res.success) {
+        setMessage({ type: 'success', text: `Function configuration updated successfully` });
+        fetchFunctions();
+      }
+    } catch (err) {
+      setMessage({ type: 'danger', text: 'Failed updating function config' });
+    }
+  };
+
+  // Handler: Save System Settings
+  const handleSaveSystemSettings = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const res = await settingsApi.updateSettings(systemSettings);
+      if (res.success) {
+        setMessage({ type: 'success', text: 'System settings saved successfully!' });
+      }
+    } catch (err) {
+      setMessage({ type: 'danger', text: 'Failed saving system settings' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Handler: Test Storage Connection
+  const handleTestStorageConnection = async () => {
+    setStorageTesting(true);
+    setStorageTestStatus(null);
+    try {
+      const res = await settingsApi.testStorage(systemSettings);
+      setStorageTestStatus(res);
+    } catch (err) {
+      setStorageTestStatus({ success: false, message: 'Storage connection request failed.' });
+    } finally {
+      setStorageTesting(false);
+    }
+  };
+
+  // Handler: Add Custom Model
+  const handleAddCustomModel = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const res = await settingsApi.addModel(newModelData);
+      if (res.success) {
+        setMessage({ type: 'success', text: 'Custom model added to catalog' });
+        setShowAddModelModal(false);
+        fetchModels();
+      }
+    } catch (err) {
+      setMessage({ type: 'danger', text: err.response?.data?.detail || 'Failed adding model' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Handler: Add Social Account
+  const handleAddSocialAccount = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const res = await settingsApi.addSocialAccount(newSocialData);
+      if (res.success) {
+        setMessage({ type: 'success', text: 'Social account connected successfully' });
+        setShowAddSocialModal(false);
+        fetchSocialAccounts();
+      }
+    } catch (err) {
+      setMessage({ type: 'danger', text: 'Failed connecting social account' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteSocialAccount = async (id) => {
+    if (!window.confirm('Are you sure you want to remove this account?')) return;
+    try {
+      await settingsApi.deleteSocialAccount(id);
+      fetchSocialAccounts();
+    } catch (err) {
+      setMessage({ type: 'danger', text: 'Failed removing social account' });
     }
   };
 
@@ -163,13 +350,9 @@ export default function Settings() {
       case 'ready':
         return <span className="badge badge-info">● Ready</span>;
       case 'rate_limited':
-        return (
-          <span className="badge badge-warning">
-            ● Rate Limited ({k.retry_after_seconds ? `Retry after ${k.retry_after_seconds}s` : 'Cooldown'})
-          </span>
-        );
+        return <span className="badge badge-warning">● Rate Limited (Cooldown 60s)</span>;
       case 'exhausted':
-        return <span className="badge badge-danger">● Exhausted / No Credit</span>;
+        return <span className="badge badge-danger">● Exhausted / Out of balance</span>;
       case 'invalid':
         return <span className="badge badge-danger">● Invalid API Key</span>;
       case 'disabled':
@@ -179,330 +362,809 @@ export default function Settings() {
     }
   };
 
-  const renderProviderRow = (p) => (
-    <tr key={p.id}>
-      <td style={{ fontWeight: '600' }}>{p.name}</td>
-      <td>{p.free_tier ? 'Free Tier / Open' : 'Pay-as-you-go'}</td>
-      <td>{p.api_key_set || !p.free_tier ? 'Requires Key' : 'No Key Needed'}</td>
-      <td>
-        {p.configured ? (
-          <span className="badge badge-success">CONFIGURED ✅</span>
-        ) : (
-          <span className="badge badge-warning">API Key Missing</span>
-        )}
-      </td>
-      <td style={{ textAlign: 'right' }}>
-        {p.id !== 'edge_tts' && (
-          <button
-            className="btn btn-secondary"
-            style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem' }}
-            onClick={() => handleOpenConfig(p)}
-          >
-            ⚙️ Configure Key
-          </button>
-        )}
-      </td>
-    </tr>
-  );
+  if (loading) {
+    return <div className="card"><div className="card-body">Loading Settings Studio...</div></div>;
+  }
 
   return (
-    <div>
-      <div className="page-header">
+    <div style={{ paddingBottom: '3rem' }}>
+      {/* Header */}
+      <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <h1 className="page-title">Provider & API Key Management</h1>
-          <p className="page-subtitle">Configure multi-key failover rotation and provider settings</p>
+          <h1 style={{ fontSize: '1.8rem', fontWeight: '700', margin: 0, color: '#f8fafc' }}>
+            ⚙️ Settings Studio & AI Management
+          </h1>
+          <p style={{ color: '#94a3b8', fontSize: '0.9rem', marginTop: '0.25rem' }}>
+            Configure AI Providers, API Keys, Function Routing, Model Catalog, Social Channels & Infrastructure
+          </p>
         </div>
-        <button className="btn btn-secondary" onClick={() => { fetchProviders(); fetchKeys(selectedVideoProvider); }}>
-          🔄 Refresh Status
-        </button>
       </div>
 
-      <div className="banner banner-warning">
-        <span>🔒 <strong>API Key Security & Failover:</strong> API keys are stored strictly locally on your machine in <code>data/api_keys.json</code> and <code>.env</code>. Multiple keys per provider are automatically rotated upon rate limits or credit exhaustion.</span>
-      </div>
-
+      {/* Global Alert Notification */}
       {message && (
-        <div className={`banner banner-${message.type}`}>
-          <span>{message.type === 'success' ? '✅' : '❌'} {message.text}</span>
+        <div className={`alert alert-${message.type}`} style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between' }}>
+          <span>{message.text}</span>
+          <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit' }} onClick={() => setMessage(null)}>✕</button>
         </div>
       )}
 
-      {/* MULTI-KEY MANAGEMENT DASHBOARD FOR VIDEO GENERATION */}
-      <div className="card" style={{ border: '1px solid var(--accent-primary)', backgroundColor: 'rgba(99, 102, 241, 0.03)' }}>
-        <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <span style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>🔑 Video Generation API Keys Dashboard</span>
-            <span className="badge badge-info" style={{ marginLeft: '0.75rem' }}>Auto-Failover Enabled</span>
-          </div>
+      {/* Navigation Tabs */}
+      <div className="tabs-container" style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '0.5rem', marginBottom: '1.5rem', overflowX: 'auto' }}>
+        {[
+          { id: 'providers', label: '🤖 AI & API Providers' },
+          { id: 'functions', label: '⚡ AI Function Config' },
+          { id: 'models', label: '🧠 AI Models' },
+          { id: 'social', label: '📱 Social Accounts' },
+          { id: 'storage', label: '☁️ Storage' },
+          { id: 'processing', label: '⚙️ Processing' },
+          { id: 'workflow_defaults', label: '🎯 Workflow Defaults' },
+          { id: 'advanced', label: '🛠️ Advanced' },
+        ].map(tab => (
           <button
-            className="btn btn-primary"
-            style={{ fontSize: '0.85rem', padding: '0.4rem 0.8rem' }}
-            onClick={() => setShowAddKeyModal(true)}
+            key={tab.id}
+            className={`btn ${activeTab === tab.id ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ padding: '0.5rem 1rem', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
+            onClick={() => { setActiveTab(tab.id); setMessage(null); }}
           >
-            ➕ Add API Key
+            {tab.label}
           </button>
-        </div>
+        ))}
+      </div>
 
-        {/* Provider Selector Tabs */}
-        <div style={{ display: 'flex', gap: '0.5rem', margin: '1rem 0', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
-          <button
-            className={`btn ${selectedVideoProvider === 'kling' ? 'btn-primary' : 'btn-secondary'}`}
-            onClick={() => setSelectedVideoProvider('kling')}
-            style={{ fontSize: '0.9rem' }}
-          >
-            🎬 Kling AI
-          </button>
-          <button
-            className={`btn ${selectedVideoProvider === 'fal' ? 'btn-primary' : 'btn-secondary'}`}
-            onClick={() => setSelectedVideoProvider('fal')}
-            style={{ fontSize: '0.9rem' }}
-          >
-            ⚡ fal.ai (Hunyuan / LTX-2)
-          </button>
-        </div>
-
-        {keyActionMsg && (
-          <div className={`banner banner-${keyActionMsg.type}`} style={{ margin: '0.5rem 0' }}>
-            <span>{keyActionMsg.text}</span>
-          </div>
-        )}
-
-        {/* Add Key Inline Form */}
-        {showAddKeyModal && (
-          <div className="card" style={{ backgroundColor: 'var(--bg-secondary)', marginBottom: '1rem', border: '1px dashed var(--accent-primary)' }}>
-            <div className="card-title">
-              <span>➕ Add New API Key for {selectedVideoProvider === 'kling' ? 'Kling AI' : 'fal.ai'}</span>
+      {/* TAB 1: AI & API PROVIDERS */}
+      {activeTab === 'providers' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem' }}>
+          {/* Provider Overview Card */}
+          <div className="card">
+            <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem' }}>AI Provider Catalog & Status</h3>
+              <button className="btn btn-secondary" style={{ fontSize: '0.8rem' }} onClick={() => setShowAddProviderModal(true)}>
+                + Add Custom Provider
+              </button>
             </div>
-            <form onSubmit={handleAddMultiKey}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px', gap: '0.75rem' }}>
+            <div className="card-body">
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
+                {[
+                  { id: 'gemini', name: 'Google Gemini', type: 'LLM & STT', supported: true, caps: ['STT', 'LLM', 'TRANSLATION'] },
+                  { id: 'openai', name: 'OpenAI', type: 'LLM & STT', supported: true, caps: ['STT', 'LLM', 'TRANSLATION'] },
+                  { id: 'edge_tts', name: 'Edge TTS', type: 'Audio TTS', supported: true, caps: ['TTS'], free: true },
+                  { id: 'google_cloud_tts', name: 'Google Cloud TTS', type: 'Audio TTS', supported: true, caps: ['TTS'] },
+                  { id: 'elevenlabs', name: 'ElevenLabs', type: 'Audio TTS', supported: true, caps: ['TTS'] },
+                  { id: 'kling', name: 'Kling AI', type: 'Video Generation', supported: true, caps: ['VIDEO_GENERATION'] },
+                  { id: 'fal', name: 'fal.ai', type: 'Video & Image', supported: true, caps: ['VIDEO_GENERATION', 'IMAGE_GENERATION'] },
+                ].map(p => (
+                  <div
+                    key={p.id}
+                    style={{
+                      border: selectedProviderForKeys === p.id ? '2px solid #3b82f6' : '1px solid rgba(255,255,255,0.1)',
+                      borderRadius: '8px',
+                      padding: '1rem',
+                      background: 'rgba(30, 41, 59, 0.5)',
+                      cursor: 'pointer',
+                    }}
+                    onClick={() => setSelectedProviderForKeys(p.id)}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                      <strong style={{ fontSize: '1rem', color: '#f8fafc' }}>{p.name}</strong>
+                      <span className="badge badge-info" style={{ fontSize: '0.7rem' }}>{p.type}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+                      {p.caps.map(c => <span key={c} className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>{c}</span>)}
+                      {p.free && <span className="badge badge-success" style={{ fontSize: '0.65rem' }}> miễn phí</span>}
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem', color: '#94a3b8', gap: '0.5rem' }}>
+                      <span>Status: {p.free ? 'Ready' : 'Multi-Key Pool'}</span>
+                      <div style={{ display: 'flex', gap: '0.3rem' }}>
+                        {!p.free && (
+                          <button
+                            className="btn btn-primary"
+                            style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedProviderForKeys(p.id);
+                              setShowAddKeyModal(true);
+                            }}
+                          >
+                            + Thêm Key
+                          </button>
+                        )}
+                        <button
+                          className="btn btn-secondary"
+                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedProviderForKeys(p.id);
+                            const elem = document.getElementById('key-pool-manager');
+                            if (elem) elem.scrollIntoView({ behavior: 'smooth' });
+                          }}
+                        >
+                          Quản lý →
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Multi-Key Pool Manager Card */}
+          <div className="card" id="key-pool-manager">
+            <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.1rem' }}>
+                  🔑 Key Pool & Rotation Manager — <span style={{ color: '#3b82f6' }}>{selectedProviderForKeys.toUpperCase()}</span>
+                </h3>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: '#94a3b8' }}>
+                  Automatic failover & cooldown on 429/Rate Limit. Masked keys enforced (`AIza****XXXX`).
+                </p>
+              </div>
+              {selectedProviderForKeys !== 'edge_tts' ? (
+                <button className="btn btn-primary" style={{ fontSize: '0.8rem' }} onClick={() => setShowAddKeyModal(true)}>
+                  + Add API Key to Pool
+                </button>
+              ) : (
+                <span className="badge badge-success" style={{ fontSize: '0.75rem' }}>Miễn phí (Không dùng API Key)</span>
+              )}
+            </div>
+            <div className="card-body">
+              {selectedProviderForKeys === 'edge_tts' ? (
+                <div style={{ color: '#94a3b8', fontStyle: 'italic', padding: '1rem 0' }}>
+                  ℹ️ Edge TTS là dịch vụ TTS miễn phí tích hợp sẵn. Không cần cấu hình API key.
+                </div>
+              ) : keysLoading ? (
+                <div>Loading key pool for {selectedProviderForKeys}...</div>
+              ) : keysList.length === 0 ? (
+                <div style={{ color: '#94a3b8', fontStyle: 'italic', padding: '1rem 0' }}>
+                  Chưa có API key nào cho {selectedProviderForKeys.toUpperCase()}. Bấm nút "+ Add API Key to Pool" hoặc "+ Thêm Key" trên thẻ phía trên để nhập API key mới.
+                </div>
+              ) : (
+                <table className="table" style={{ width: '100%', fontSize: '0.85rem' }}>
+                  <thead>
+                    <tr>
+                      <th>Priority</th>
+                      <th>Masked API Key</th>
+                      <th>Status</th>
+                      <th>Requests (Success/Fail)</th>
+                      <th>Quota Info</th>
+                      <th style={{ textAlign: 'right' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {keysList.map(k => (
+                      <tr key={k.key_id}>
+                        <td><span className="badge badge-info">P{k.priority}</span></td>
+                        <td style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{k.masked_key}</td>
+                        <td>{renderStatusBadge(k)}</td>
+                        <td>{k.successful_requests} / {k.failed_requests} ({k.total_requests} total)</td>
+                        <td>{k.quota_info?.status || 'Active'}</td>
+                        <td style={{ textAlign: 'right', verticalAlign: 'middle' }}>
+                          <div style={{ display: 'inline-flex', gap: '0.3rem', justifyContent: 'flex-end', alignItems: 'center' }}>
+                            <button className="btn btn-secondary" style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }} onClick={() => handleTestKey(k.key_id)}>
+                              🧪 Test
+                            </button>
+                            <button className="btn btn-secondary" style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }} onClick={() => handleToggleKeyStatus(k)}>
+                              {k.status === 'disabled' ? 'Enable' : 'Disable'}
+                            </button>
+                            <button className="btn btn-danger" style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }} onClick={() => handleDeleteKey(k.key_id)}>
+                              🗑️
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 2: AI FUNCTION CONFIGURATION */}
+      {activeTab === 'functions' && (
+        <div className="card">
+          <div className="card-header">
+            <h3 style={{ margin: 0, fontSize: '1.1rem' }}>⚡ AI Function Configuration & Routing</h3>
+            <p style={{ margin: 0, fontSize: '0.85rem', color: '#94a3b8' }}>
+              Map system functions to compatible providers. STT is currently set to <strong>Gemini AI Studio</strong>.
+            </p>
+          </div>
+          <div className="card-body">
+            {/* Banner Notice for STT Gemini Requirement */}
+            <div className="alert alert-info" style={{ marginBottom: '1.5rem', fontSize: '0.85rem' }}>
+              📌 <strong>Speech-to-Text Policy:</strong> High-precision audio transcription uses <strong>Google Gemini</strong>. When Gemini STT fallback is disabled, any Gemini API error stops pipeline immediately with a clear error without calling OpenAI/Whisper.
+            </div>
+
+            <table className="table" style={{ width: '100%', fontSize: '0.9rem' }}>
+              <thead>
+                <tr>
+                  <th>AI Function</th>
+                  <th>Capability</th>
+                  <th>Primary Provider</th>
+                  <th>Model</th>
+                  <th>Fallback Enabled</th>
+                  <th>Fallback Provider</th>
+                </tr>
+              </thead>
+              <tbody>
+                {functionsList.map(fn => (
+                  <tr key={fn.function_id}>
+                    <td style={{ fontWeight: '600' }}>{fn.function_name}</td>
+                    <td><span className="badge badge-neutral">{fn.capability}</span></td>
+                    <td>
+                      <select
+                        className="form-control"
+                        style={{ padding: '0.3rem', fontSize: '0.85rem' }}
+                        value={fn.primary_provider_id}
+                        onChange={(e) => handleUpdateFunctionConfig(fn.function_id, 'primary_provider_id', e.target.value)}
+                      >
+                        {(fn.eligible_providers || []).map(p => (
+                          <option key={p.id} value={p.id}>
+                            {p.name} {p.configured ? '✅' : '⚠️ (Key missing)'}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <input
+                        type="text"
+                        className="form-control"
+                        style={{ padding: '0.3rem', fontSize: '0.85rem' }}
+                        value={fn.model_id}
+                        onChange={(e) => handleUpdateFunctionConfig(fn.function_id, 'model_id', e.target.value)}
+                      />
+                    </td>
+                    <td>
+                      <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={fn.fallback_enabled}
+                          onChange={(e) => handleUpdateFunctionConfig(fn.function_id, 'fallback_enabled', e.target.checked)}
+                        />
+                        {fn.fallback_enabled ? 'Enabled' : 'Disabled'}
+                      </label>
+                    </td>
+                    <td>
+                      <select
+                        className="form-control"
+                        style={{ padding: '0.3rem', fontSize: '0.85rem' }}
+                        value={fn.fallback_provider_id || ''}
+                        disabled={!fn.fallback_enabled}
+                        onChange={(e) => handleUpdateFunctionConfig(fn.function_id, 'fallback_provider_id', e.target.value)}
+                      >
+                        <option value="">-- None --</option>
+                        {(fn.eligible_providers || []).map(p => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 3: AI MODELS CATALOG */}
+      {activeTab === 'models' && (
+        <div className="card">
+          <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '1.1rem' }}>🧠 AI Models Catalog</h3>
+              <p style={{ margin: 0, fontSize: '0.85rem', color: '#94a3b8' }}>
+                System supported & user defined custom AI models for LLM, STT, TTS and Video.
+              </p>
+            </div>
+            <button className="btn btn-primary" style={{ fontSize: '0.8rem' }} onClick={() => setShowAddModelModal(true)}>
+              + Add Custom Model
+            </button>
+          </div>
+          <div className="card-body">
+            <table className="table" style={{ width: '100%', fontSize: '0.85rem' }}>
+              <thead>
+                <tr>
+                  <th>Model ID</th>
+                  <th>Provider</th>
+                  <th>Model Name</th>
+                  <th>Capabilities</th>
+                  <th>Default</th>
+                  <th>Custom Model</th>
+                </tr>
+              </thead>
+              <tbody>
+                {modelsList.map(m => (
+                  <tr key={m.id}>
+                    <td style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{m.id}</td>
+                    <td><span className="badge badge-info">{m.provider_id}</span></td>
+                    <td>{m.model_name}</td>
+                    <td>
+                      {(m.capabilities || []).map(c => (
+                        <span key={c} className="badge badge-neutral" style={{ marginRight: '0.2rem', fontSize: '0.65rem' }}>{c}</span>
+                      ))}
+                    </td>
+                    <td>{m.is_default ? <span className="badge badge-success">Default</span> : '-'}</td>
+                    <td>{m.is_custom ? <span className="badge badge-warning">Custom</span> : <span className="badge badge-neutral">System</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 4: SOCIAL ACCOUNTS */}
+      {activeTab === 'social' && (
+        <div className="card">
+          <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '1.1rem' }}>📱 Social Accounts Manager</h3>
+              <p style={{ margin: 0, fontSize: '0.85rem', color: '#94a3b8' }}>
+                Manage connected YouTube, TikTok, Facebook & Instagram publishing channels.
+              </p>
+            </div>
+            <button className="btn btn-primary" style={{ fontSize: '0.8rem' }} onClick={() => setShowAddSocialModal(true)}>
+              + Connect Social Account
+            </button>
+          </div>
+          <div className="card-body">
+            {socialAccounts.length === 0 ? (
+              <div style={{ color: '#94a3b8', fontStyle: 'italic' }}>
+                No social account connected yet. Click "+ Connect Social Account" above.
+              </div>
+            ) : (
+              <table className="table" style={{ width: '100%', fontSize: '0.85rem' }}>
+                <thead>
+                  <tr>
+                    <th>Platform</th>
+                    <th>Account / Channel Name</th>
+                    <th>Channel ID</th>
+                    <th>Status</th>
+                    <th>Priority</th>
+                    <th style={{ textAlign: 'right' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {socialAccounts.map(acc => (
+                    <tr key={acc.id}>
+                      <td style={{ textTransform: 'capitalize', fontWeight: 'bold' }}>{acc.platform}</td>
+                      <td>{acc.channel_name || acc.account_name}</td>
+                      <td style={{ fontFamily: 'monospace' }}>{acc.channel_id || 'N/A'}</td>
+                      <td><span className="badge badge-success">● {acc.status}</span></td>
+                      <td><span className="badge badge-info">P{acc.priority}</span></td>
+                      <td style={{ textAlign: 'right' }}>
+                        <button className="btn btn-danger" style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }} onClick={() => handleDeleteSocialAccount(acc.id)}>
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 5: STORAGE SETTINGS */}
+      {activeTab === 'storage' && (
+        <div className="card">
+          <div className="card-header">
+            <h3 style={{ margin: 0, fontSize: '1.1rem' }}>☁️ Storage Settings (Supabase Storage & Local Fallback)</h3>
+            <p style={{ margin: 0, fontSize: '0.85rem', color: '#94a3b8' }}>
+              Configure media object storage and verify Supabase Storage bucket connectivity.
+            </p>
+          </div>
+          <div className="card-body">
+            <form onSubmit={handleSaveSystemSettings}>
+              <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+                <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '0.5rem' }}>Storage Mode</label>
+                <select
+                  className="form-control"
+                  value={systemSettings.storage_provider}
+                  onChange={(e) => setSystemSettings({ ...systemSettings, storage_provider: e.target.value })}
+                >
+                  <option value="supabase">Supabase Cloud Storage (`autotransai-private` / `autotransai-public`)</option>
+                  <option value="local">Local Storage Fallback (`data/supabase_storage`)</option>
+                </select>
+              </div>
+
+              {systemSettings.storage_provider === 'supabase' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', background: 'rgba(15, 23, 42, 0.4)', padding: '1rem', borderRadius: '8px', marginBottom: '1.25rem' }}>
+                  <div className="form-group">
+                    <label>Private Bucket Name</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={systemSettings.supabase_bucket_private || 'autotransai-private'}
+                      onChange={(e) => setSystemSettings({ ...systemSettings, supabase_bucket_private: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Public Bucket Name</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={systemSettings.supabase_bucket_public || 'autotransai-public'}
+                      onChange={(e) => setSystemSettings({ ...systemSettings, supabase_bucket_public: e.target.value })}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {storageTestStatus && (
+                <div className={`alert alert-${storageTestStatus.success ? 'success' : 'danger'}`} style={{ marginBottom: '1rem' }}>
+                  {storageTestStatus.message}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <button type="submit" className="btn btn-primary" disabled={saving}>
+                  {saving ? 'Saving...' : 'Save Storage Settings'}
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={handleTestStorageConnection} disabled={storageTesting}>
+                  {storageTesting ? 'Testing...' : '🧪 Test Connection'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 6: PROCESSING SETTINGS */}
+      {activeTab === 'processing' && (
+        <div className="card">
+          <div className="card-header">
+            <h3 style={{ margin: 0, fontSize: '1.1rem' }}>⚙️ Processing & Media Engine Settings</h3>
+          </div>
+          <div className="card-body">
+            <form onSubmit={handleSaveSystemSettings}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
+                <div className="form-group">
+                  <label>Max Concurrent Jobs</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    value={systemSettings.max_concurrency}
+                    onChange={(e) => setSystemSettings({ ...systemSettings, max_concurrency: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Max Retry Count</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    value={systemSettings.max_retries}
+                    onChange={(e) => setSystemSettings({ ...systemSettings, max_retries: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Video Target Clip Duration (s)</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    value={systemSettings.video_target_duration}
+                    onChange={(e) => setSystemSettings({ ...systemSettings, video_target_duration: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Sync Strategy</label>
+                  <select
+                    className="form-control"
+                    value={systemSettings.sync_strategy}
+                    onChange={(e) => setSystemSettings({ ...systemSettings, sync_strategy: e.target.value })}
+                  >
+                    <option value="trim_video">Trim Video</option>
+                    <option value="loop_video">Loop Video</option>
+                    <option value="pad_video">Pad Video</option>
+                    <option value="speed_video">Speed Video (atempo)</option>
+                  </select>
+                </div>
+              </div>
+              <button type="submit" className="btn btn-primary" disabled={saving}>
+                {saving ? 'Saving...' : 'Save Processing Settings'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 7: WORKFLOW DEFAULTS */}
+      {activeTab === 'workflow_defaults' && (
+        <div className="card">
+          <div className="card-header">
+            <h3 style={{ margin: 0, fontSize: '1.1rem' }}>🎯 Workflow Default Values</h3>
+          </div>
+          <div className="card-body">
+            <form onSubmit={handleSaveSystemSettings}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
+                <div className="form-group">
+                  <label>Default Source Language</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={systemSettings.default_source_language}
+                    onChange={(e) => setSystemSettings({ ...systemSettings, default_source_language: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Default Target Language</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={systemSettings.default_target_language}
+                    onChange={(e) => setSystemSettings({ ...systemSettings, default_target_language: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Default TTS Voice</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={systemSettings.default_tts_voice}
+                    onChange={(e) => setSystemSettings({ ...systemSettings, default_tts_voice: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Default Video Provider</label>
+                  <select
+                    className="form-control"
+                    value={systemSettings.default_video_provider}
+                    onChange={(e) => setSystemSettings({ ...systemSettings, default_video_provider: e.target.value })}
+                  >
+                    <option value="kling">Kling AI</option>
+                    <option value="fal">fal.ai</option>
+                  </select>
+                </div>
+              </div>
+              <button type="submit" className="btn btn-primary" disabled={saving}>
+                {saving ? 'Saving...' : 'Save Workflow Defaults'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 8: ADVANCED */}
+      {activeTab === 'advanced' && (
+        <div className="card">
+          <div className="card-header">
+            <h3 style={{ margin: 0, fontSize: '1.1rem' }}>🛠️ Advanced System Diagnostics</h3>
+          </div>
+          <div className="card-body">
+            <p style={{ color: '#94a3b8', fontSize: '0.9rem' }}>
+              Database Mode: <strong>SQLite (WAL Mode)</strong> with automatic DDL Schema Inspector listener (`_sync_schema_sync`).
+            </p>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button className="btn btn-secondary" onClick={() => systemApi.health().then(res => alert(JSON.stringify(res, null, 2)))}>
+                Check Backend System Health
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: ADD API KEY */}
+      {showAddKeyModal && (
+        <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) { setShowAddKeyModal(false); setModalError(null); } }}>
+          <div className="modal-dialog">
+            <div className="modal-header">
+              <h3>Add API Key to Pool — {selectedProviderForKeys.toUpperCase()}</h3>
+              <button type="button" className="modal-close-btn" onClick={() => { setShowAddKeyModal(false); setModalError(null); }}>&times;</button>
+            </div>
+            <div className="modal-body">
+              {modalError && (
+                <div className="alert alert-danger" style={{ marginBottom: '1rem', padding: '0.6rem 1rem', fontSize: '0.85rem' }}>
+                  ⚠️ {modalError}
+                </div>
+              )}
+              <form onSubmit={handleAddKey}>
                 <div className="form-group">
                   <label className="form-label">API Key</label>
                   <input
                     type="password"
                     className="form-control"
-                    placeholder="Paste API key string..."
+                    placeholder="Paste raw secret API Key..."
                     value={newKeyInput}
-                    onChange={(e) => setNewKeyInput(e.target.value)}
+                    onChange={(e) => { setNewKeyInput(e.target.value); if (modalError) setModalError(null); }}
                     required
+                    autoFocus
                   />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Priority</label>
+                  <label className="form-label">Priority (1 = Highest)</label>
                   <input
                     type="number"
                     className="form-control"
                     value={newKeyPriority}
-                    onChange={(e) => setNewKeyPriority(e.target.value)}
                     min="1"
-                    max="10"
-                    required
+                    onChange={(e) => setNewKeyPriority(e.target.value)}
                   />
                 </div>
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setShowAddKeyModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary" disabled={saving}>
-                  {saving ? 'Adding...' : 'Save Key'}
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
-
-        {/* Keys List Table */}
-        {keysLoading ? (
-          <p style={{ color: 'var(--text-secondary)' }}>Loading key pool...</p>
-        ) : keysList.length === 0 ? (
-          <p style={{ color: 'var(--text-secondary)', padding: '1rem 0' }}>
-            No API keys configured for {selectedVideoProvider.toUpperCase()}. Click "Add API Key" above or select <strong>Local AI & FFmpeg Generator</strong> in project settings for 100% free video generation.
-          </p>
-        ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Priority</th>
-                <th>Masked Key</th>
-                <th>Status</th>
-                <th>Requests (Success / Failed)</th>
-                <th>Quota / Balance</th>
-                <th style={{ textAlign: 'right' }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {keysList.map((k) => (
-                <tr key={k.key_id}>
-                  <td>
-                    <select
-                      className="form-select"
-                      style={{ width: '65px', padding: '0.15rem 0.4rem', fontSize: '0.85rem' }}
-                      value={k.priority}
-                      onChange={(e) => handlePriorityChange(k.key_id, e.target.value)}
-                    >
-                      {[1, 2, 3, 4, 5].map((p) => (
-                        <option key={p} value={p}>#{p}</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td style={{ fontWeight: '600', fontFamily: 'monospace' }}>{k.masked_key}</td>
-                  <td>{renderStatusBadge(k)}</td>
-                  <td>
-                    {k.total_requests} reqs ({k.successful_requests} ✅ / {k.failed_requests} ❌)
-                  </td>
-                  <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                    {k.quota_info?.status || 'Unknown / Not available'}
-                  </td>
-                  <td style={{ textAlign: 'right', display: 'flex', gap: '0.3rem', justifyContent: 'flex-end' }}>
-                    <button
-                      className="btn btn-secondary"
-                      style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
-                      title="Test Key Validity"
-                      onClick={() => handleTestKey(k.key_id)}
-                    >
-                      🧪 Test
-                    </button>
-                    <button
-                      className="btn btn-secondary"
-                      style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
-                      title="Check Quota"
-                      onClick={() => handleCheckQuota(k.key_id)}
-                    >
-                      📊 Quota
-                    </button>
-                    <button
-                      className="btn btn-secondary"
-                      style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
-                      onClick={() => handleToggleKeyStatus(k)}
-                    >
-                      {k.status === 'disabled' ? '▶️ Enable' : '⏸️ Disable'}
-                    </button>
-                    <button
-                      className="btn btn-danger"
-                      style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
-                      onClick={() => handleDeleteKey(k.key_id)}
-                    >
-                      🗑️
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {/* Inline Modal Form for Standard Single Key Configuration */}
-      {editingProvider && (
-        <div className="card" style={{ border: '1px solid var(--accent-primary)', backgroundColor: 'var(--bg-secondary)' }}>
-          <div className="card-title">
-            <span>⚙️ Configure API Key for <strong>{editingProvider.name}</strong></span>
-            <button
-              className="btn btn-secondary"
-              style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem' }}
-              onClick={() => setEditingProvider(null)}
-            >
-              ✕ Cancel
-            </button>
-          </div>
-          <form onSubmit={handleSaveKey}>
-            <div className="form-group">
-              <label className="form-label">Enter API Key</label>
-              <input
-                type="password"
-                className="form-control"
-                value={apiKeyInput}
-                onChange={(e) => setApiKeyInput(e.target.value)}
-                placeholder={`Paste your ${editingProvider.name} API Key here...`}
-                required
-                autoFocus
-              />
+                <div className="modal-footer">
+                  <button type="button" className="btn btn-secondary" onClick={() => { setShowAddKeyModal(false); setModalError(null); }}>Cancel</button>
+                  <button type="button" className="btn btn-primary" disabled={saving} onClick={handleAddKey}>
+                    {saving ? 'Saving...' : 'Save Key'}
+                  </button>
+                </div>
+              </form>
             </div>
-            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setEditingProvider(null)}
-              >
-                Cancel
-              </button>
-              <button type="submit" className="btn btn-primary" disabled={saving}>
-                {saving ? 'Validating & Saving...' : 'Save Key to .env'}
-              </button>
-            </div>
-          </form>
+          </div>
         </div>
       )}
 
-      {loading ? (
-        <p style={{ color: 'var(--text-secondary)' }}>Loading settings...</p>
-      ) : (
-        <div>
-          {/* Audio Providers */}
-          <div className="card">
-            <div className="card-title">
-              <span>🎙️ Text-to-Speech (Audio) Providers</span>
+      {/* MODAL: ADD CUSTOM PROVIDER */}
+      {showAddProviderModal && (
+        <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setShowAddProviderModal(false); }}>
+          <div className="modal-dialog">
+            <div className="modal-header">
+              <h3>Add Custom Provider</h3>
+              <button type="button" className="modal-close-btn" onClick={() => setShowAddProviderModal(false)}>&times;</button>
             </div>
-
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Provider</th>
-                  <th>Type</th>
-                  <th>API Key Required</th>
-                  <th>Status</th>
-                  <th style={{ textAlign: 'right' }}>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {providers.audio.map(renderProviderRow)}
-              </tbody>
-            </table>
+            <div className="modal-body">
+              <form onSubmit={handleAddCustomProvider}>
+                <div className="form-group">
+                  <label className="form-label">Provider ID (slug)</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. custom_llm"
+                    value={customProviderData.id}
+                    onChange={(e) => setCustomProviderData({ ...customProviderData, id: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Provider Display Name</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Custom LLM Provider"
+                    value={customProviderData.name}
+                    onChange={(e) => setCustomProviderData({ ...customProviderData, name: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Base URL</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="https://api.custom.com/v1"
+                    value={customProviderData.base_url}
+                    onChange={(e) => setCustomProviderData({ ...customProviderData, base_url: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">API Key</label>
+                  <input
+                    type="password"
+                    className="form-control"
+                    placeholder="Optional API Key..."
+                    value={customProviderData.api_key}
+                    onChange={(e) => setCustomProviderData({ ...customProviderData, api_key: e.target.value })}
+                  />
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowAddProviderModal(false)}>Cancel</button>
+                  <button type="submit" className="btn btn-primary" disabled={saving}>Add Provider</button>
+                </div>
+              </form>
+            </div>
           </div>
+        </div>
+      )}
 
-          {/* Video Providers */}
-          <div className="card">
-            <div className="card-title">
-              <span>🎥 Text-to-Video Providers</span>
+      {/* MODAL: ADD CUSTOM MODEL */}
+      {showAddModelModal && (
+        <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setShowAddModelModal(false); }}>
+          <div className="modal-dialog">
+            <div className="modal-header">
+              <h3>Add Custom Model</h3>
+              <button type="button" className="modal-close-btn" onClick={() => setShowAddModelModal(false)}>&times;</button>
             </div>
-
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Provider</th>
-                  <th>Type</th>
-                  <th>API Key Required</th>
-                  <th>Status</th>
-                  <th style={{ textAlign: 'right' }}>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {providers.video.map(renderProviderRow)}
-              </tbody>
-            </table>
+            <div className="modal-body">
+              <form onSubmit={handleAddCustomModel}>
+                <div className="form-group">
+                  <label className="form-label">Model ID</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. gemini-2.5-pro-custom"
+                    value={newModelData.id}
+                    onChange={(e) => setNewModelData({ ...newModelData, id: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Provider</label>
+                  <select
+                    className="form-control"
+                    value={newModelData.provider_id}
+                    onChange={(e) => setNewModelData({ ...newModelData, provider_id: e.target.value })}
+                  >
+                    <option value="gemini">Gemini</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="kling">Kling</option>
+                    <option value="fal">fal.ai</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Model Name</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Gemini Custom Fine-Tuned"
+                    value={newModelData.model_name}
+                    onChange={(e) => setNewModelData({ ...newModelData, model_name: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowAddModelModal(false)}>Cancel</button>
+                  <button type="submit" className="btn btn-primary" disabled={saving}>Add Model</button>
+                </div>
+              </form>
+            </div>
           </div>
+        </div>
+      )}
 
-          {/* LLM Providers */}
-          <div className="card">
-            <div className="card-title">
-              <span>🤖 Script & LLM Providers</span>
+      {/* MODAL: ADD SOCIAL ACCOUNT */}
+      {showAddSocialModal && (
+        <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setShowAddSocialModal(false); }}>
+          <div className="modal-dialog">
+            <div className="modal-header">
+              <h3>Connect Social Account</h3>
+              <button type="button" className="modal-close-btn" onClick={() => setShowAddSocialModal(false)}>&times;</button>
             </div>
-
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Provider</th>
-                  <th>Type</th>
-                  <th>API Key Required</th>
-                  <th>Status</th>
-                  <th style={{ textAlign: 'right' }}>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {providers.llm.map(renderProviderRow)}
-              </tbody>
-            </table>
+            <div className="modal-body">
+              <form onSubmit={handleAddSocialAccount}>
+                <div className="form-group">
+                  <label className="form-label">Platform</label>
+                  <select
+                    className="form-control"
+                    value={newSocialData.platform}
+                    onChange={(e) => setNewSocialData({ ...newSocialData, platform: e.target.value })}
+                  >
+                    <option value="youtube">YouTube</option>
+                    <option value="tiktok">TikTok</option>
+                    <option value="facebook">Facebook</option>
+                    <option value="instagram">Instagram</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Account / Channel Name</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. Official Channel"
+                    value={newSocialData.account_name}
+                    onChange={(e) => setNewSocialData({ ...newSocialData, account_name: e.target.value, channel_name: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Channel ID (Optional)</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. UC_x5XG1OV2P6uZZ5FSM9Ttw"
+                    value={newSocialData.channel_id}
+                    onChange={(e) => setNewSocialData({ ...newSocialData, channel_id: e.target.value })}
+                  />
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowAddSocialModal(false)}>Cancel</button>
+                  <button type="submit" className="btn btn-primary" disabled={saving}>Connect</button>
+                </div>
+              </form>
+            </div>
           </div>
         </div>
       )}
     </div>
+
   );
 }

@@ -134,7 +134,7 @@ async def global_exception_handler(request: Request, exc: Exception):
         },
     )
 
-from app.api.routes import projects, providers, system, video_translator, storage, apps, video_editor
+from app.api.routes import projects, providers, system, video_translator, storage, apps, video_editor, settings as settings_router
 
 # Mount API routes
 app.include_router(projects.router)
@@ -144,6 +144,8 @@ app.include_router(video_translator.router)
 app.include_router(storage.router)
 app.include_router(apps.router)
 app.include_router(video_editor.router)
+app.include_router(settings_router.router)
+
 
 # Mount Static Files for local media serving
 settings.DATA_DIR.mkdir(parents=True, exist_ok=True)

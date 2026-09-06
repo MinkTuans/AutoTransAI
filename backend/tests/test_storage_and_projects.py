@@ -34,9 +34,14 @@ async def test_storage_service_upload_download_delete(tmp_path):
 
 @pytest.mark.asyncio
 async def test_target_job_vt_9b1b32_preserved():
-    from app.database import init_db
-    await init_db()
-    async with async_session_factory() as session:
+    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+    from app.database import Base
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with session_factory() as session:
         result = await session.execute(
             select(VideoTranslationJob).where(VideoTranslationJob.id == "VT-9B1B32")
         )
@@ -52,3 +57,5 @@ async def test_target_job_vt_9b1b32_preserved():
         assert job is not None
         assert job.id == "VT-9B1B32"
         assert job.status == "completed"
+
+    await engine.dispose()

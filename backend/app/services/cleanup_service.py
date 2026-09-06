@@ -368,20 +368,20 @@ class FileCleanupService:
                                     except Exception:
                                         pass
 
-        # 4. Scan Local R2 Storage Emulator
-        r2_local_dir = storage_service.get_local_storage_dir()
-        if r2_local_dir.exists():
-            for root, _, files in os.walk(r2_local_dir):
+        # 4. Scan Local Supabase Storage Fallback Emulator
+        sub_local_dir = storage_service.get_local_storage_dir()
+        if sub_local_dir.exists():
+            for root, _, files in os.walk(sub_local_dir):
                 for f in files:
                     fp = Path(root) / f
-                    rel_key = str(fp.relative_to(r2_local_dir)).replace("\\", "/")
+                    rel_key = str(fp.relative_to(sub_local_dir)).replace("\\", "/")
                     if rel_key not in valid_r2_keys and not any(rel_key.startswith(f"translator/jobs/{j}/") for j in valid_job_ids):
                         age = now - fp.stat().st_mtime
                         if age >= max_age_sec:
                             try:
                                 sz = fp.stat().st_size
                                 reclaimable_bytes += sz
-                                orphan_local_files.append({"path": str(fp), "size": sz, "reason": f"Orphan R2 local file: {rel_key}"})
+                                orphan_local_files.append({"path": str(fp), "size": sz, "reason": f"Orphan local storage file: {rel_key}"})
                                 orphan_r2_keys.append(rel_key)
                             except Exception:
                                 pass

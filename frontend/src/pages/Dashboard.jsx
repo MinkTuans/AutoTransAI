@@ -128,7 +128,7 @@ export default function Dashboard({ onSelectProject, onCreateNew }) {
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h1 className="page-title">Projects Dashboard</h1>
-          <p className="page-subtitle">Unified Database & Persistent Cloudflare R2 Media Storage</p>
+          <p className="page-subtitle">Unified Supabase PostgreSQL & Persistent Supabase Media Storage</p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem' }}>
           {selectedIds.length > 0 && (

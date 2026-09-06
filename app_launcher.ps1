@@ -4,7 +4,7 @@ $rootDir = $PSScriptRoot
 # 1. Start Backend Process (Hidden)
 $backendInfo = New-Object System.Diagnostics.ProcessStartInfo
 $backendInfo.FileName = "$rootDir\backend\venv\Scripts\python.exe"
-$backendInfo.Arguments = "-m uvicorn app.main:app --host 127.0.0.1 --port 8000"
+$backendInfo.Arguments = "-m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload"
 $backendInfo.WorkingDirectory = "$rootDir\backend"
 $backendInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
 $backendInfo.CreateNoWindow = $true

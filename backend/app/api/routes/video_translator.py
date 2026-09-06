@@ -264,7 +264,7 @@ async def create_translation_job(
         stage_progress_pct=0.0,
         overall_progress_pct=0.0,
         current_step="Khởi tạo job",
-        last_heartbeat=datetime.now(timezone.utc),
+        last_heartbeat=datetime.now(timezone.utc).replace(tzinfo=None),
     )
     session.add(job)
     await session.commit()
@@ -455,7 +455,7 @@ async def start_translation_pipeline(
                         current_step=f"Lỗi tại stage {current_stage}: {err_name}",
                         error_message=db_err_detail[:1000],
                         pid=None,
-                        updated_at=datetime.now(timezone.utc),
+                        updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
                     )
                 )
                 await bg_session.commit()
@@ -510,8 +510,8 @@ async def _update_ffmpeg_stats(job_id: str, stage: str, pct: float, pid: Optiona
                 progress_pct=overall,
                 pid=pid if pct < 100.0 else None,
                 ffmpeg_stats_json=json.dumps(stats, ensure_ascii=False),
-                last_heartbeat=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
+                last_heartbeat=datetime.now(timezone.utc).replace(tzinfo=None),
+                updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
             )
         )
         await session.commit()
@@ -534,7 +534,7 @@ async def _update_pid(job_id: str, pid: int):
         await session.execute(
             update(VideoTranslationJob)
             .where(VideoTranslationJob.id == job_id)
-            .values(pid=pid, last_heartbeat=datetime.now(timezone.utc))
+            .values(pid=pid, last_heartbeat=datetime.now(timezone.utc).replace(tzinfo=None))
         )
         await session.commit()
 
@@ -572,8 +572,8 @@ async def get_translation_job(
             pass
 
     # Check heartbeat age
-    now = datetime.now(timezone.utc)
-    hb_age_sec = (now - job.last_heartbeat.replace(tzinfo=timezone.utc)).total_seconds() if job.last_heartbeat else 999.0
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    hb_age_sec = (now - job.last_heartbeat).total_seconds() if job.last_heartbeat else 999.0
 
     is_terminal = job.status in [TranslationJobStatus.FAILED.value, TranslationJobStatus.COMPLETED.value, "cancelled", TranslationJobStatus.SEGMENT_EDITING.value, "segment_editing"]
     heartbeat_active = (not is_terminal) and (hb_age_sec <= 30)
@@ -1031,7 +1031,7 @@ async def render_final_translated_video(
                         output_url=output_url,
                         is_cleaned=True,
                         pid=None,
-                        updated_at=datetime.now(timezone.utc),
+                        updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
                     )
                 )
                 await final_session.commit()
@@ -1062,7 +1062,7 @@ async def render_final_translated_video(
                         current_step=f"Lỗi tại stage {current_stage}: {err_name}",
                         error_message=db_err_detail[:1000],
                         pid=None,
-                        updated_at=datetime.now(timezone.utc),
+                        updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
                     )
                 )
                 await fail_session.commit()

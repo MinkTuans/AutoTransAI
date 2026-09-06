@@ -22,20 +22,38 @@ class Base(DeclarativeBase):
 
 
 def _ensure_db_directory() -> None:
-    """Ensure the database directory exists."""
-    db_path = settings.DATA_DIR / settings.DB_FILENAME
-    db_path.parent.mkdir(parents=True, exist_ok=True)
+    """Ensure the database directory exists if using SQLite."""
+    if settings.DB_URL.startswith("sqlite"):
+        db_path = settings.DATA_DIR / settings.DB_FILENAME
+        db_path.parent.mkdir(parents=True, exist_ok=True)
 
 
-_ensure_db_directory()
+db_url = settings.DB_URL
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+elif db_url.startswith("postgresql://") and not db_url.startswith("postgresql+asyncpg://"):
+    db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-is_sqlite = settings.DB_URL.startswith("sqlite")
-connect_args = {"check_same_thread": False} if is_sqlite else {}
+is_sqlite = db_url.startswith("sqlite")
+is_postgres = "postgresql" in db_url
+
+if is_sqlite:
+    _ensure_db_directory()
+
+connect_args = {}
+engine_kwargs = {"echo": settings.DEBUG}
+
+if is_sqlite:
+    connect_args["check_same_thread"] = False
+elif is_postgres:
+    engine_kwargs["pool_pre_ping"] = True
+    connect_args["statement_cache_size"] = 0
+    connect_args["prepared_statement_cache_size"] = 0
 
 engine = create_async_engine(
-    settings.DB_URL,
-    echo=settings.DEBUG,
+    db_url,
     connect_args=connect_args,
+    **engine_kwargs
 )
 
 
@@ -107,8 +125,14 @@ async def init_db() -> None:
             await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
             await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
 
-        await conn.run_sync(Base.metadata.create_all)
-        await conn.run_sync(_sync_schema_sync)
+        try:
+            await conn.run_sync(Base.metadata.create_all)
+        except Exception as ex:
+            if "already exists" not in str(ex).lower():
+                raise ex
+
+        if is_sqlite:
+            await conn.run_sync(_sync_schema_sync)
 
 
 

@@ -39,10 +39,10 @@ Toàn bộ công nghệ được kiểm tra và xác nhận từ các file depen
 - **Source Reference:** [requirements.txt](file:///c:/Hack/AutoTransAI/backend/requirements.txt), [main.py](file:///c:/Hack/AutoTransAI/backend/app/main.py)
 
 ### Database & ORM
-- **Engine:** SQLite 3 (Default: WAL mode `data/workflow.db`), hỗ trợ MySQL/MariaDB URL.
-- **ORM:** SQLAlchemy 2.0.30 (Async Engine `create_async_engine`), aiosqlite 0.20.0
-- **Migration:** Alembic 1.13.0 + Dynamic DDL Schema inspector listener (`_sync_schema_sync`)
-- **Source Reference:** [database.py](file:///c:/Hack/AutoTransAI/backend/app/database.py#L35)
+- **Engine:** Supabase PostgreSQL (`postgresql+asyncpg` driver) for both Local Development and Production environments (`db.qcxlljiewguxumtlucfc.supabase.co:5432/postgres`). Automatic SQLite fallback is completely disabled in runtime logic.
+- **ORM:** SQLAlchemy 2.0.30 (Async Engine `create_async_engine`), `asyncpg` 0.31.0, `aiosqlite` 0.20.0 (retained for offline export utilities & test fixtures).
+- **Migration:** Automated Supabase Migration script (`scripts/migrate_to_supabase.py`), Alembic 1.13.0 + Dynamic DDL Schema inspector listener (`_sync_schema_sync`).
+- **Source Reference:** [database.py](file:///c:/Hack/AutoTransAI/backend/app/database.py#L35), [migrate_to_supabase.py](file:///c:/Hack/AutoTransAI/backend/scripts/migrate_to_supabase.py)
 
 ### AI Providers & Models
 - **LLM:** Google Gemini (`gemini-2.5-flash`, `gemini-1.5-pro` via `google-genai`), OpenAI (`gpt-4o`, `gpt-4o-mini` via `openai`)
@@ -52,8 +52,8 @@ Toàn bộ công nghệ được kiểm tra và xác nhận từ các file depen
 - **Source Reference:** [registry.py](file:///c:/Hack/AutoTransAI/backend/app/providers/registry.py), [key_manager.py](file:///c:/Hack/AutoTransAI/backend/app/services/key_manager.py)
 
 ### Storage & Media Processing
-- **Storage:** Local Storage (`data/projects/`, `data/translator/assets/`, `data/translator/jobs/`), Cloudflare R2 Persistent Storage (`boto3` S3 API)
-- **Media Engine:** System FFmpeg & FFprobe (async subprocess execution, libx264, aac, filtergraphs, atempo, volume ducking, ebur128 LUFS, scale/crop, overlay)
+- **Storage:** Supabase Storage (`supabase` Python SDK, `autotransai-private` private bucket, `autotransai-public` public bucket), Local Storage Fallback (`data/projects/`, `data/translator/assets/`, `data/supabase_storage/`). Cloudflare R2 is 100% decommissioned.
+- **Media Engine:** System FFmpeg & FFprobe (async subprocess execution, libx264, aac, filtergraphs, atempo, volume ducking, ebur128 LUFS, scale/crop, overlay).
 - **Source Reference:** [storage_service.py](file:///c:/Hack/AutoTransAI/backend/app/services/storage_service.py), [ffmpeg_process.py](file:///c:/Hack/AutoTransAI/backend/app/media/ffmpeg_process.py)
 
 ---
@@ -146,7 +146,7 @@ Backend được xây dựng bằng FastAPI với mô hình bất đồng bộ h
 
 ## # 7 DATABASE ARCHITECTURE
 
-Danh sách 19 bảng ORM SQLAlchemy trong [backend/app/models/](file:///c:/Hack/AutoTransAI/backend/app/models):
+Danh sách 23 bảng ORM SQLAlchemy trong [backend/app/models/](file:///c:/Hack/AutoTransAI/backend/app/models):
 
 1. **`projects`:** Dự án Script-to-Video. PK: `id` (String(36)). [project.py](file:///c:/Hack/AutoTransAI/backend/app/models/project.py#L40)
 2. **`segments`:** Đoạn kịch bản. PK: `id` (Integer Auto), FK: `project_id -> projects.id`. [segment.py](file:///c:/Hack/AutoTransAI/backend/app/models/segment.py#L24)
@@ -167,8 +167,13 @@ Danh sách 19 bảng ORM SQLAlchemy trong [backend/app/models/](file:///c:/Hack/
 17. **`workflow_executions`:** Vết chạy 6-Stage Workflow Engine. PK: `id` (String(36)), FK: `project_id`. [workflow_engine.py](file:///c:/Hack/AutoTransAI/backend/app/models/workflow_engine.py#L94)
 18. **`workflow_stage_executions`:** Trạng thái từng Stage. PK: `id` (String(36)), FK: `workflow_execution_id`. [workflow_engine.py](file:///c:/Hack/AutoTransAI/backend/app/models/workflow_engine.py#L124)
 19. **`workflow_step_executions`:** Kết quả từng Step trong Stage. PK: `id` (String(36)), FK: `stage_execution_id`. [workflow_engine.py](file:///c:/Hack/AutoTransAI/backend/app/models/workflow_engine.py#L154)
+20. **`system_settings`:** Cấu hình hệ thống key-value (Storage, Processing, Workflow Defaults). [settings.py](file:///c:/Hack/AutoTransAI/backend/app/models/settings.py#L14)
+21. **`ai_function_configs`:** Ánh xạ cấu hình AI Functions (STT, Translation, TTS, Video Gen). [settings.py](file:///c:/Hack/AutoTransAI/backend/app/models/settings.py#L27)
+22. **`ai_models`:** Danh mục mô hình AI mặc định và custom models. [settings.py](file:///c:/Hack/AutoTransAI/backend/app/models/settings.py#L42)
+23. **`social_accounts`:** Danh sách kênh truyền thông xã hội (YouTube, TikTok, FB, IG). [settings.py](file:///c:/Hack/AutoTransAI/backend/app/models/settings.py#L57)
 
 - **Source Reference:** [database.py](file:///c:/Hack/AutoTransAI/backend/app/database.py), [models/__init__.py](file:///c:/Hack/AutoTransAI/backend/app/models/__init__.py)
+
 
 ---
 
@@ -178,7 +183,7 @@ Danh sách 19 bảng ORM SQLAlchemy trong [backend/app/models/](file:///c:/Hack/
 |---|---|---|---|---|---|---|
 | Video Translator | Import URL (YouTube/TikTok) | VideoTranslator.jsx | video_translator.py | video_assets | VideoSourceService | CODE EXISTS - VERIFIED |
 | Video Translator | File Upload Local | VideoTranslator.jsx | video_translator.py | video_assets | StorageService | CODE EXISTS - VERIFIED |
-| Video Translator | Speech-to-Text (STT) | VideoTranslator.jsx | analyze_stage.py | video_translation_segments | Gemini STT / Whisper | CODE EXISTS - VERIFIED |
+| Video Translator | Speech-to-Text (STT) | VideoTranslator.jsx | analyze_stage.py | video_translation_segments | Gemini STT (No auto-fallback to Whisper) | CODE EXISTS - VERIFIED |
 | Video Translator | Translation & Glossary | ProjectGlossaryManager.jsx | translate_stage.py | project_glossaries | Gemini LLM | CODE EXISTS - VERIFIED |
 | Video Translator | TTS Dubbing | VideoTranslator.jsx | dub_stage.py | video_translation_segments | Edge / Google / ElevenLabs | CODE EXISTS - VERIFIED |
 | Video Translator | Audio Sync & atempo | N/A (Auto) | sync_service.py | N/A | FFmpeg atempo | CODE EXISTS - VERIFIED |
@@ -188,7 +193,7 @@ Danh sách 19 bảng ORM SQLAlchemy trong [backend/app/models/](file:///c:/Hack/
 | Video Studio | LUFS & Black Frame QC | AIQCScorecard.jsx | qc_service.py | qc_reports | FFmpeg ebur128 | CODE EXISTS - VERIFIED |
 | Publishing | Gemini SEO Generation | YouTubePublisherModal.jsx | youtube_service.py | youtube_publications | Gemini LLM | CODE EXISTS - VERIFIED |
 | Publishing | YouTube OAuth Upload | YouTubePublisherModal.jsx | youtube_service.py | youtube_publications | YouTube API v3 | PARTIAL (Cần OAuth Key) |
-| Key System | Key Rotation & 429 Cooldown | Settings.jsx | key_manager.py | providers / JSON | KeyManager Singleton | CODE EXISTS - VERIFIED |
+| Settings & AI System | Settings & AI Management Studio | Settings.jsx | settings.py / providers.py | system_settings / providers / ai_models | SettingsService & KeyManager | CODE EXISTS - VERIFIED |
 
 - **Source Reference:** [UNIFIED_WORKFLOW_IMPLEMENTATION_REPORT.md](file:///c:/Hack/AutoTransAI/UNIFIED_WORKFLOW_IMPLEMENTATION_REPORT.md)
 
@@ -278,11 +283,21 @@ Danh sách các nhóm REST Endpoints chính:
 
 ---
 
-## # 16 SETTINGS SYSTEM
+## # 16 SETTINGS SYSTEM & AI PROVIDER MANAGEMENT
 
-Màn hình [Settings.jsx](file:///c:/Hack/AutoTransAI/frontend/src/pages/Settings.jsx) giao tiếp với API `/api/providers/{provider_id}/keys` cho phép xem danh sách key mờ, thêm key mới, đổi độ ưu tiên, test kết quả sống/chết của API key và đồng bộ với file `.env`.
+Màn hình [Settings.jsx](file:///c:/Hack/AutoTransAI/frontend/src/pages/Settings.jsx) là một **Settings Studio** đa tab hoàn chỉnh (Glassmorphism Dark UI) kết nối với REST API `/api/settings` và `/api/providers`:
 
-- **Source Reference:** [Settings.jsx](file:///c:/Hack/AutoTransAI/frontend/src/pages/Settings.jsx), [providers.py](file:///c:/Hack/AutoTransAI/backend/app/api/routes/providers.py#L87)
+1. **🤖 AI & API Providers:** Quản lý Multi-Key Pool cho tất cả provider (Gemini, OpenAI, ElevenLabs, Google Cloud TTS, Edge TTS, Kling, fal.ai, Custom Providers). Hỗ trợ xem key mờ (`AIza****XXXX`), thêm key, đổi priority, bật/tắt status, test connection, quota info, và thêm Custom Provider. Key Rotation chỉ kích hoạt khi bị lỗi `429 Rate Limit` hoặc `Quota Exceeded`.
+2. **⚡ AI Function Configuration:** Ánh xạ chức năng AI (`STT`, `Translation`, `TTS`, `Video Generation`, `Image Generation`) tới Provider & Model tương thích. Dropdown lọc các provider **Supported + Enabled + Key Configured + Capable**. STT mặc định dùng **Google Gemini**; khi Fallback bị tắt, lỗi Gemini sẽ dừng pipeline ngay mà không tự động gọi OpenAI/Whisper.
+3. **🧠 AI Models Catalog:** Danh mục mô hình AI hệ thống và custom models. Cho phép thêm Custom Model, quản lý model mặc định per capability.
+4. **📱 Social Accounts Manager:** Quản lý danh sách tài khoản/kênh YouTube, TikTok, Facebook, Instagram.
+5. **☁️ Storage Settings:** Cấu hình Local Storage vs Cloudflare R2 Persistent Storage (S3 API). Hỗ trợ nút **Test Storage Connection**.
+6. **⚙️ Processing Settings:** Concurrency max, Retries, Retry Backoff, Target Video Clip Duration, Audio Format/Sample Rate, Sync Strategy (`trim_video`, `loop_video`, `pad_video`, `speed_video`), Sync Tolerance.
+7. **🎯 Workflow Defaults:** Ngôn ngữ nguồn/đích mặc định, giọng đọc TTS mặc định, video provider mặc định.
+8. **🛠️ Advanced:** Trạng thái Database (SQLite WAL mode), dynamic DDL inspector listener (`_sync_schema_sync`), và kiểm tra System Health.
+
+- **Source Reference:** [Settings.jsx](file:///c:/Hack/AutoTransAI/frontend/src/pages/Settings.jsx), [settings.py](file:///c:/Hack/AutoTransAI/backend/app/api/routes/settings.py), [settings_service.py](file:///c:/Hack/AutoTransAI/backend/app/services/settings_service.py), [key_manager.py](file:///c:/Hack/AutoTransAI/backend/app/services/key_manager.py)
+
 
 ---
 
