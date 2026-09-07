@@ -5,6 +5,10 @@ import AIQCScorecard from '../components/AIQCScorecard';
 import YouTubePublisherModal from '../components/YouTubePublisherModal';
 import WorkflowTimeline from '../components/WorkflowTimeline';
 import ProjectGlossaryManager from '../components/ProjectGlossaryManager';
+import AIThumbnailPanel from '../components/AIThumbnailPanel';
+import { LoadingSpinner, ButtonSpinner, LoadingOverlay } from '../components/LoadingSpinner';
+
+
 
 
 export default function VideoTranslator({ initialJobId }) {
@@ -25,6 +29,39 @@ export default function VideoTranslator({ initialJobId }) {
   const [voices, setVoices] = useState([]);
   const [voiceId, setVoiceId] = useState('vi-VN-HoaiMyNeural');
   const [originalAudioMode, setOriginalAudioMode] = useState('mute');
+
+  // Watermark Settings State
+  const [watermarkEnabled, setWatermarkEnabled] = useState(false);
+  const [watermarkType, setWatermarkType] = useState('image');
+  const [watermarkImagePath, setWatermarkImagePath] = useState('');
+  const [watermarkImagePreview, setWatermarkImagePreview] = useState('');
+  const [watermarkText, setWatermarkText] = useState('© AutoTransAI Studio');
+  const [watermarkPosition, setWatermarkPosition] = useState('bottom_right');
+  const [watermarkScale, setWatermarkScale] = useState(0.20);
+  const [watermarkOpacity, setWatermarkOpacity] = useState(0.80);
+  const [watermarkMargin, setWatermarkMargin] = useState(20);
+  const [watermarkFontSize, setWatermarkFontSize] = useState(32);
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+  const [watermarkValidationError, setWatermarkValidationError] = useState('');
+
+  const handleLogoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setWatermarkValidationError('');
+    setIsUploadingLogo(true);
+    try {
+      const res = await videoTranslatorApi.uploadWatermarkLogo(file);
+      if (res.success && res.data) {
+        setWatermarkImagePath(res.data.image_path);
+        setWatermarkImagePreview(res.data.url || URL.createObjectURL(file));
+      }
+    } catch (err) {
+      setWatermarkValidationError('Lỗi upload logo: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setIsUploadingLogo(false);
+    }
+  };
+
 
   // Job execution state
   const [asset, setAsset] = useState(null);
@@ -275,6 +312,20 @@ export default function VideoTranslator({ initialJobId }) {
       }
       setAsset(importedAsset);
 
+      if (watermarkEnabled) {
+        if (watermarkType === 'image' && !watermarkImagePath) {
+          setWatermarkValidationError('❌ Vui lòng upload logo ảnh trước khi bắt đầu.');
+          setIsProcessing(false);
+          return;
+        }
+        if (watermarkType === 'text' && !watermarkText.trim()) {
+          setWatermarkValidationError('❌ Vui lòng nhập nội dung văn bản watermark.');
+          setIsProcessing(false);
+          return;
+        }
+      }
+      setWatermarkValidationError('');
+
       const jobRes = await videoTranslatorApi.createJob({
         asset_id: importedAsset.asset_id,
         source_language: 'auto',
@@ -283,7 +334,17 @@ export default function VideoTranslator({ initialJobId }) {
         llm_provider_id: llmProviderId,
         voice_id: voiceId,
         original_audio_mode: originalAudioMode,
+        watermark_enabled: watermarkEnabled,
+        watermark_type: watermarkType,
+        watermark_image_path: watermarkImagePath,
+        watermark_text: watermarkText,
+        watermark_position: watermarkPosition,
+        watermark_scale: watermarkScale,
+        watermark_opacity: watermarkOpacity,
+        watermark_margin: watermarkMargin,
+        watermark_font_size: watermarkFontSize,
       });
+
 
       const newJobId = jobRes.data.job_id || jobRes.data.id;
       // Immediately set job state so activeJobId is populated before startJob completes
@@ -544,9 +605,12 @@ export default function VideoTranslator({ initialJobId }) {
                   border: 'none',
                   fontWeight: 'bold',
                   cursor: isCheckingUrl ? 'not-allowed' : 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
                 }}
               >
-                {isCheckingUrl ? 'Đang kiểm tra...' : '🔍 Kiểm tra URL'}
+                {isCheckingUrl ? <><ButtonSpinner /> Đang kiểm tra...</> : '🔍 Kiểm tra URL'}
               </button>
             </div>
             {checkError && (
@@ -656,6 +720,157 @@ export default function VideoTranslator({ initialJobId }) {
           </div>
         </div>
 
+        {/* Watermark Branding Section */}
+        <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid #334155' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+            <span style={{ fontSize: '15px', fontWeight: 'bold', color: '#818cf8', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              🏷️ Gắn Logo / Watermark Tự Động
+            </span>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: '#e2e8f0' }}>
+              <input
+                type="checkbox"
+                checked={watermarkEnabled}
+                onChange={(e) => setWatermarkEnabled(e.target.checked)}
+                style={{ width: '18px', height: '18px', accentColor: '#6366f1', cursor: 'pointer' }}
+              />
+              Bật Watermark
+            </label>
+          </div>
+
+          {watermarkEnabled && (
+            <div style={{ background: '#0f172a', borderRadius: '8px', padding: '16px', border: '1px solid #334155' }}>
+              <div style={{ display: 'flex', gap: '16px', marginBottom: '16px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: '#cbd5e1', fontSize: '13px' }}>
+                  <input
+                    type="radio"
+                    name="wm_type"
+                    value="image"
+                    checked={watermarkType === 'image'}
+                    onChange={() => setWatermarkType('image')}
+                    style={{ accentColor: '#6366f1' }}
+                  />
+                  🖼️ Logo Ảnh (PNG/JPG/WEBP)
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: '#cbd5e1', fontSize: '13px' }}>
+                  <input
+                    type="radio"
+                    name="wm_type"
+                    value="text"
+                    checked={watermarkType === 'text'}
+                    onChange={() => setWatermarkType('text')}
+                    style={{ accentColor: '#6366f1' }}
+                  />
+                  🔤 Watermark Chữ (Text)
+                </label>
+              </div>
+
+              {watermarkType === 'image' ? (
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', fontSize: '13px', color: '#94a3b8', marginBottom: '6px' }}>
+                    Upload File Logo (Khuyên dùng PNG nền trong suốt):
+                  </label>
+                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      onChange={handleLogoUpload}
+                      disabled={isUploadingLogo}
+                      style={{ background: '#1e293b', padding: '8px', borderRadius: '6px', color: '#fff', border: '1px solid #475569', flex: 1 }}
+                    />
+                    {isUploadingLogo && <span style={{ color: '#818cf8', fontSize: '13px' }}><ButtonSpinner /> Đang tải...</span>}
+                  </div>
+                  {watermarkImagePreview && (
+                    <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <img src={watermarkImagePreview} alt="Logo Preview" style={{ maxHeight: '48px', maxWidth: '120px', objectFit: 'contain', background: '#334155', padding: '4px', borderRadius: '4px' }} />
+                      <span style={{ color: '#4ade80', fontSize: '12px' }}>✓ Logo đã chọn thành công</span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', fontSize: '13px', color: '#94a3b8', marginBottom: '6px' }}>Nội dung Text Watermark:</label>
+                  <input
+                    type="text"
+                    value={watermarkText}
+                    onChange={(e) => setWatermarkText(e.target.value)}
+                    placeholder="© AutoTransAI - Bản quyền thuộc về channel"
+                    style={{ width: '100%', padding: '10px', borderRadius: '6px', background: '#1e293b', border: '1px solid #475569', color: '#fff' }}
+                  />
+                </div>
+              )}
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Vị trí Watermark:</label>
+                  <select
+                    value={watermarkPosition}
+                    onChange={(e) => setWatermarkPosition(e.target.value)}
+                    style={{ width: '100%', padding: '8px', borderRadius: '6px', background: '#1e293b', color: '#fff', border: '1px solid #475569' }}
+                  >
+                    <option value="bottom_right">↘️ Góc Dưới Phải (Bottom Right)</option>
+                    <option value="bottom_left">↙️ Góc Dưới Trái (Bottom Left)</option>
+                    <option value="top_right">↗️ Góc Trên Phải (Top Right)</option>
+                    <option value="top_left">↖️ Góc Trên Trái (Top Left)</option>
+                    <option value="center">⏹️ Chính Giữa (Center)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
+                    Tỷ lệ Kích thước ({Math.round(watermarkScale * 100)}% rộng video):
+                  </label>
+                  <input
+                    type="range"
+                    min="0.10"
+                    max="0.50"
+                    step="0.05"
+                    value={watermarkScale}
+                    onChange={(e) => setWatermarkScale(parseFloat(e.target.value))}
+                    style={{ width: '100%', accentColor: '#818cf8' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
+                    Độ Trong Suốt ({Math.round(watermarkOpacity * 100)}%):
+                  </label>
+                  <input
+                    type="range"
+                    min="0.10"
+                    max="1.00"
+                    step="0.05"
+                    value={watermarkOpacity}
+                    onChange={(e) => setWatermarkOpacity(parseFloat(e.target.value))}
+                    style={{ width: '100%', accentColor: '#818cf8' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
+                    Khoảng Cách Mép ({watermarkMargin}px):
+                  </label>
+                  <input
+                    type="range"
+                    min="10"
+                    max="50"
+                    step="5"
+                    value={watermarkMargin}
+                    onChange={(e) => setWatermarkMargin(parseInt(e.target.value, 10))}
+                    style={{ width: '100%', accentColor: '#818cf8' }}
+                  />
+                </div>
+              </div>
+
+              {watermarkValidationError && (
+                <div style={{ color: '#ef4444', fontSize: '13px', marginTop: '12px', fontWeight: 'bold' }}>
+                  {watermarkValidationError}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+
         <button
           onClick={handleStartImportAndTranslation}
           disabled={isProcessing}
@@ -670,14 +885,26 @@ export default function VideoTranslator({ initialJobId }) {
             fontSize: '16px',
             border: 'none',
             cursor: isProcessing ? 'not-allowed' : 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '0.5rem',
           }}
         >
-          {isProcessing ? '⚡ Đang xử lý Pipeline...' : '🚀 Bắt đầu Nhập & Dịch Video'}
+          {isProcessing ? <><ButtonSpinner /> ⚡ Đang xử lý Pipeline...</> : '🚀 Bắt đầu Nhập & Dịch Video'}
         </button>
       </div>
 
       {/* Project Glossary Manager */}
       <ProjectGlossaryManager projectId={activeProjectId} />
+
+      {/* AI Auto Thumbnail Generation Panel */}
+      <AIThumbnailPanel
+        jobId={job?.id || job?.job_id}
+        assetId={job?.asset_id}
+        initialThumbnailUrl={job?.thumbnail_url}
+      />
+
 
       {/* Error Message Card */}
       {(pipelineError || (job && job.status === 'failed')) && (

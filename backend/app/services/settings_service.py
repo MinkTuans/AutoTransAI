@@ -43,7 +43,18 @@ DEFAULT_SYSTEM_SETTINGS = {
     "default_video_provider": "kling",
     # Social Strategy
     "social_account_strategy": "priority",
+    # Watermark Defaults
+    "watermark_enabled": "false",
+    "watermark_type": "image",
+    "watermark_image_path": "",
+    "watermark_text": "",
+    "watermark_position": "bottom_right",
+    "watermark_scale": "0.20",
+    "watermark_opacity": "0.80",
+    "watermark_margin": "20",
+    "watermark_font_size": "32",
 }
+
 
 DEFAULT_AI_FUNCTIONS = [
     {
@@ -110,7 +121,10 @@ DEFAULT_AI_MODELS = [
     {"id": "kling-v1", "provider_id": "kling", "model_name": "Kling AI Text2Video v1.0", "capabilities": json.dumps(["VIDEO_GENERATION"]), "is_default": True},
     {"id": "fal-ai/hunyuan-video", "provider_id": "fal", "model_name": "Hunyuan Video (fal.ai)", "capabilities": json.dumps(["VIDEO_GENERATION"]), "is_default": True},
     {"id": "fal-ai/flux", "provider_id": "fal", "model_name": "Flux Image Gen (fal.ai)", "capabilities": json.dumps(["IMAGE_GENERATION"]), "is_default": True},
+    {"id": "pollinations-default", "provider_id": "pollinations", "model_name": "Pollinations AI Image", "capabilities": json.dumps(["IMAGE_GENERATION"]), "is_default": True},
+    {"id": "dall-e-3", "provider_id": "openai", "model_name": "DALL-E 3", "capabilities": json.dumps(["IMAGE_GENERATION"]), "is_default": False},
 ]
+
 
 
 class SettingsService:
@@ -120,6 +134,12 @@ class SettingsService:
     async def ensure_defaults_seeded(db: AsyncSession) -> None:
         """Seed default system settings, AI functions, and AI models if DB is empty."""
         try:
+            # Check if DB is already seeded using a single fast query
+            stmt_check = select(SystemSetting.key).limit(1)
+            res_check = await db.execute(stmt_check)
+            if res_check.scalar_one_or_none():
+                return
+
             # Seed system settings
             for key, val in DEFAULT_SYSTEM_SETTINGS.items():
                 stmt = select(SystemSetting).where(SystemSetting.key == key)
@@ -147,6 +167,8 @@ class SettingsService:
         except Exception as e:
             await db.rollback()
             logger.error("Failed seeding settings defaults", error=str(e))
+
+
 
     # ── System Settings CRUD ───────────────────────────────────────────
     @staticmethod
@@ -344,6 +366,61 @@ class SettingsService:
             "is_default": new_m.is_default,
             "is_custom": True,
         }
+
+    @staticmethod
+    async def update_model(db: AsyncSession, model_id: str, model_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Update an existing AI model definition."""
+        stmt = select(AIModel).where(AIModel.id == model_id)
+        res = await db.execute(stmt)
+        m = res.scalar_one_or_none()
+        if not m:
+            raise ValueError(f"Model ID '{model_id}' not found")
+
+        if "provider_id" in model_data and model_data["provider_id"] is not None:
+            m.provider_id = model_data["provider_id"]
+        if "model_name" in model_data and model_data["model_name"] is not None:
+            m.model_name = model_data["model_name"]
+        if "capabilities" in model_data and model_data["capabilities"] is not None:
+            caps = model_data["capabilities"]
+            m.capabilities = json.dumps(caps) if isinstance(caps, list) else str(caps)
+        if "is_default" in model_data and model_data["is_default"] is not None:
+            m.is_default = bool(model_data["is_default"])
+        if "enabled" in model_data and model_data["enabled"] is not None:
+            m.enabled = bool(model_data["enabled"])
+        if "description" in model_data and model_data["description"] is not None:
+            m.description = str(model_data["description"])
+
+        await db.commit()
+
+        caps = []
+        try:
+            caps = json.loads(m.capabilities)
+        except Exception:
+            caps = [m.capabilities]
+
+        return {
+            "id": m.id,
+            "provider_id": m.provider_id,
+            "model_name": m.model_name,
+            "capabilities": caps,
+            "is_default": m.is_default,
+            "is_custom": m.is_custom,
+            "enabled": m.enabled,
+            "description": m.description,
+        }
+
+    @staticmethod
+    async def delete_model(db: AsyncSession, model_id: str) -> bool:
+        """Delete an AI model definition by ID."""
+        stmt = select(AIModel).where(AIModel.id == model_id)
+        res = await db.execute(stmt)
+        m = res.scalar_one_or_none()
+        if m:
+            await db.delete(m)
+            await db.commit()
+            return True
+        return False
+
 
     # ── Social Accounts Manager ───────────────────────────────────────
     @staticmethod

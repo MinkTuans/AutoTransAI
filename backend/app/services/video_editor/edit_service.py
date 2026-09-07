@@ -11,44 +11,35 @@ from typing import Optional, Dict, Any, List
 from app.core import get_logger
 from app.core.job_logger import log_job_event
 from app.media.ffprobe import probe_duration_async, get_video_metadata_async
-from app.media.ffmpeg_process import run_ffmpeg_with_progress_async
-from app.models.video_editor import WatermarkPositionEnum, AspectRatioEnum
+from app.models.video_editor import AspectRatioEnum, WatermarkPositionEnum
+from app.services.video_editor.watermark_service import build_image_watermark_filter, WatermarkPosition
 
 logger = get_logger(__name__)
+
 
 
 def build_watermark_filter(
     video_w: int,
     video_h: int,
-    logo_scale: float = 0.15,
-    position: str = "top_right",
-    opacity: float = 0.85,
+    logo_scale: float = 0.20,
+    position: str = "bottom_right",
+    opacity: float = 0.80,
     margin_px: int = 20,
 ) -> str:
     """
     Build FFmpeg complex filter string for logo overlay with scaling, opacity, and positioning.
     """
-    logo_w = int(video_w * logo_scale)
-    
-    # Position expressions for FFmpeg overlay filter
-    if position == WatermarkPositionEnum.TOP_LEFT.value:
-        pos_expr = f"{margin_px}:{margin_px}"
-    elif position == WatermarkPositionEnum.BOTTOM_LEFT.value:
-        pos_expr = f"{margin_px}:main_h-overlay_h-{margin_px}"
-    elif position == WatermarkPositionEnum.BOTTOM_RIGHT.value:
-        pos_expr = f"main_w-overlay_w-{margin_px}:main_h-overlay_h-{margin_px}"
-    elif position == WatermarkPositionEnum.CENTER.value:
-        pos_expr = "(main_w-overlay_w)/2:(main_h-overlay_h)/2"
-    else:  # TOP_RIGHT default
-        pos_expr = f"main_w-overlay_w-{margin_px}:{margin_px}"
-
-    # Filter string: Scale logo -> set opacity -> overlay on main video
-    filter_chain = (
-        f"[1:v]scale={logo_w}:-1,format=rgba,"
-        f"colorchannelmixer=aa={opacity:.2f}[logo];"
-        f"[0:v][logo]overlay={pos_expr}[outv]"
+    pos = WatermarkPosition.normalize(position)
+    filter_chain, _ = build_image_watermark_filter(
+        video_w=video_w,
+        video_h=video_h,
+        position=pos,
+        scale=logo_scale,
+        opacity=opacity,
+        margin_px=margin_px,
     )
     return filter_chain
+
 
 
 def build_reframing_filter(

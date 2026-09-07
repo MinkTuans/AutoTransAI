@@ -90,4 +90,8 @@ async def test_workflow_engine_start_and_pause():
         paused = await engine.pause_workflow(project_id, session)
         assert paused is True
 
+    from app.database import engine as db_engine
+    await db_engine.dispose()
+
+
 

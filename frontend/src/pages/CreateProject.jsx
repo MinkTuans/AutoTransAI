@@ -1,5 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { projectsApi } from '../api';
+import { ButtonSpinner } from '../components/LoadingSpinner';
+
 
 const SAMPLE_SCRIPT = `Phân đoạn 1: Hello everyone! Welcome to our video production workflow demonstration.
 Phân đoạn 2: In this project, we process your script locally, segment by segment.
@@ -190,7 +192,7 @@ export default function CreateProject({ onProjectCreated }) {
               className="btn btn-primary"
               disabled={submitting || stats.segments === 0}
             >
-              {submitting ? 'Parsing & Creating...' : 'Continue to Configuration →'}
+              {submitting ? <><ButtonSpinner /> Đang phân tích kịch bản & khởi tạo...</> : 'Tiếp tục Cấu hình →'}
             </button>
           </div>
         </div>

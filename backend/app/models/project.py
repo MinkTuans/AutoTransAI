@@ -56,6 +56,8 @@ class Project(Base):
     sync_strategy: Mapped[str] = mapped_column(String(30), default="trim_video")
     r2_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     media_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    thumbnail_r2_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    thumbnail_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
@@ -74,3 +76,7 @@ class Project(Base):
     jobs: Mapped[list["Job"]] = relationship(  # type: ignore[name-defined]
         back_populates="project", cascade="all, delete-orphan",
     )
+    thumbnails: Mapped[list["VideoThumbnail"]] = relationship(  # type: ignore[name-defined]
+        "VideoThumbnail", back_populates="project", cascade="all, delete-orphan"
+    )
+

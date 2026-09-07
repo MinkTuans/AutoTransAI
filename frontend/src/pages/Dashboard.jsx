@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { projectsApi, systemApi } from '../api';
+import { LoadingSpinner, SkeletonLoader } from '../components/LoadingSpinner';
 
 export default function Dashboard({ onSelectProject, onCreateNew }) {
+
   const [projects, setProjects] = useState([]);
   const [interrupted, setInterrupted] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -177,7 +179,12 @@ export default function Dashboard({ onSelectProject, onCreateNew }) {
         </div>
 
         {loading ? (
-          <p style={{ color: 'var(--text-secondary)', padding: '1rem' }}>Loading projects database...</p>
+          <div style={{ padding: '1.5rem 1rem' }}>
+            <LoadingSpinner size="md" label="Đang tải danh sách dự án..." sublabel="Đang đồng bộ từ PostgreSQL & Supabase Storage..." />
+            <div style={{ marginTop: '1.5rem' }}>
+              <SkeletonLoader type="card" rows={3} />
+            </div>
+          </div>
         ) : projects.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '3rem 1rem' }}>
             <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>

@@ -52,6 +52,9 @@ export const settingsApi = {
   updateFunction: (functionId, data) => api.put(`/settings/functions/${functionId}`, data).then(res => res.data),
   getModels: (providerId) => api.get('/settings/models', { params: { provider_id: providerId } }).then(res => res.data),
   addModel: (data) => api.post('/settings/models', data).then(res => res.data),
+  updateModel: (modelId, data) => api.put(`/settings/models/${encodeURIComponent(modelId)}`, data).then(res => res.data),
+  deleteModel: (modelId) => api.delete(`/settings/models/${encodeURIComponent(modelId)}`).then(res => res.data),
+
   getSocialAccounts: () => api.get('/settings/social-accounts').then(res => res.data),
   addSocialAccount: (data) => api.post('/settings/social-accounts', data).then(res => res.data),
   deleteSocialAccount: (id) => api.delete(`/settings/social-accounts/${id}`).then(res => res.data),
@@ -91,7 +94,15 @@ export const videoTranslatorApi = {
   renderJob: (jobId) => api.post(`/video-translator/jobs/${jobId}/render`).then(res => res.data),
   renderFinalVideo: (jobId) => api.post(`/video-translator/jobs/${jobId}/render`).then(res => res.data),
   getLogs: (jobId) => api.get(`/video-translator/jobs/${jobId}/logs`).then(res => res.data),
+  uploadWatermarkLogo: (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post('/video-translator/upload-watermark-logo', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }).then(res => res.data);
+  },
   cancelJob: (jobId) => api.post(`/video-translator/jobs/${jobId}/cancel`).then(res => res.data),
+
   retryJob: (jobId) => api.post(`/video-translator/jobs/${jobId}/retry`).then(res => res.data),
 };
 
@@ -109,5 +120,16 @@ export const videoEditorApi = {
   generateSEO: (jobId) => api.post(`/video-editor/jobs/${jobId}/generate-seo`).then(res => res.data),
   publishYouTube: (data) => api.post('/video-editor/jobs/' + data.job_id + '/publish-youtube', data).then(res => res.data),
 };
+
+export const thumbnailApi = {
+  generate: (data) => api.post('/thumbnails/generate', data).then(res => res.data),
+  get: (id) => api.get(`/thumbnails/${id}`).then(res => res.data),
+  getByProject: (projectId) => api.get(`/thumbnails/by-project/${projectId}`).then(res => res.data),
+  getByJob: (jobId) => api.get(`/thumbnails/by-job/${jobId}`).then(res => res.data),
+  regenerate: (id, data) => api.post(`/thumbnails/${id}/regenerate`, data).then(res => res.data),
+  setActive: (id) => api.post(`/thumbnails/${id}/set-active`).then(res => res.data),
+  delete: (id) => api.delete(`/thumbnails/${id}`).then(res => res.data),
+};
+
 
 

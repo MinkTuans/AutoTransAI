@@ -124,10 +124,12 @@ async def test_social_accounts_crud():
 async def test_key_masking_security():
     """Verify API keys are masked and raw secrets are never returned in list endpoints."""
     key_mgr = get_key_manager()
-    await key_mgr.add_key("gemini", "AIzaSySecretTestKey123456789", priority=1)
+    added_info = await key_mgr.add_key("gemini", "AIzaSySecretTestKey123456789", priority=1)
     keys = await key_mgr.get_keys_for_provider("gemini")
     assert len(keys) > 0
-    first_key = keys[0]
-    assert "api_key" not in first_key or first_key.get("api_key") != "AIzaSySecretTestKey123456789"
-    assert "AIza" in first_key["masked_key"]
-    assert "***" in first_key["masked_key"]
+    added_key_id = added_info.key_id if hasattr(added_info, "key_id") else added_info["key_id"]
+    target_key = next((k for k in keys if (k.key_id if hasattr(k, "key_id") else k["key_id"]) == added_key_id), keys[-1])
+    target_dict = target_key.to_dict() if hasattr(target_key, "to_dict") else target_key
+    assert "api_key" not in target_dict or target_dict.get("api_key") != "AIzaSySecretTestKey123456789"
+    assert "AIza" in target_dict["masked_key"]
+    assert "***" in target_dict["masked_key"]

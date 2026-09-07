@@ -85,7 +85,37 @@ class ProduceStage:
         return {"reframing_applied": False}
 
     async def _add_watermark_logo(self, ctx: WorkflowContext) -> dict[str, Any]:
-        return {"watermark_logo_applied": False}
+        wm_enabled = getattr(ctx, "watermark_enabled", False)
+        if not wm_enabled:
+            return {"watermark_logo_applied": False, "reason": "Watermark disabled in context"}
+
+        from app.services.video_editor.watermark_service import WatermarkService, WatermarkConfig, WatermarkType, WatermarkPosition
+        
+        in_video = Path(ctx.final_video_path or ctx.video_path)
+        out_video = in_video.parent / "final_watermarked_video.mp4"
+
+        config = WatermarkConfig(
+            enabled=True,
+            type=WatermarkType(getattr(ctx, "watermark_type", "image")),
+            image_path=getattr(ctx, "watermark_image_path", None),
+            text=getattr(ctx, "watermark_text", None),
+            position=WatermarkPosition.normalize(getattr(ctx, "watermark_position", "bottom_right")),
+            scale=getattr(ctx, "watermark_scale", 0.20),
+            opacity=getattr(ctx, "watermark_opacity", 0.80),
+            margin=getattr(ctx, "watermark_margin", 20),
+            font_size=getattr(ctx, "watermark_font_size", 32),
+        )
+
+        res_path = await WatermarkService.apply_watermark(
+            input_video_path=in_video,
+            output_video_path=out_video,
+            config=config,
+            job_id=getattr(ctx, "project_id", "PRODUCE-STAGE"),
+        )
+
+        ctx.final_video_path = str(res_path)
+        return {"watermark_logo_applied": True, "output_path": str(res_path)}
+
 
     async def _add_intro_outro(self, ctx: WorkflowContext) -> dict[str, Any]:
         return {"intro_outro_applied": False}

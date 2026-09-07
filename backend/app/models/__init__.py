@@ -12,6 +12,10 @@ from app.models.video_translator import (
     VideoTranslationJob,
     VideoTranslationSegment,
 )
+from app.models.video_thumbnail import (
+    VideoThumbnail,
+    ThumbnailStatus,
+)
 
 from app.models.video_editor import (
     VideoEditConfig,
@@ -48,6 +52,8 @@ __all__ = [
     "VideoAsset",
     "VideoTranslationJob",
     "VideoTranslationSegment",
+    "VideoThumbnail",
+    "ThumbnailStatus",
     "VideoEditConfig",
     "QCReport",
     "YouTubeChannel",
@@ -65,6 +71,7 @@ __all__ = [
     "AIModel",
     "SocialAccount",
 ]
+
 
 
 

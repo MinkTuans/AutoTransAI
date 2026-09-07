@@ -38,6 +38,13 @@ from app.models.video_translator import (
     TranslationJobStatus,
     AudioMixMode,
 )
+from app.services.video_editor.watermark_service import (
+    WatermarkService,
+    WatermarkConfig,
+    WatermarkType,
+    WatermarkPosition,
+)
+
 from app.providers.registry import get_registry
 from app.services.video_source import get_video_source_service
 from app.services.video_translator import (
@@ -106,6 +113,18 @@ class CreateJobRequest(BaseModel):
     llm_provider_id: str = "gemini"
     voice_id: Optional[str] = None
     original_audio_mode: str = "mute"
+    
+    # Watermark Settings
+    watermark_enabled: bool = False
+    watermark_type: str = "image"
+    watermark_image_path: Optional[str] = None
+    watermark_text: Optional[str] = None
+    watermark_position: str = "bottom_right"
+    watermark_scale: float = 0.20
+    watermark_opacity: float = 0.80
+    watermark_margin: int = 20
+    watermark_font_size: int = 32
+
 
 
 class SegmentUpdateItem(BaseModel):
@@ -238,7 +257,42 @@ async def import_video_asset(
     }
 
 
+@router.post("/upload-watermark-logo", response_model=dict)
+async def upload_watermark_logo(file: UploadFile = File(...)):
+    """Upload watermark logo image file (PNG/JPG/WEBP) for video processing."""
+    ext = Path(file.filename or "logo.png").suffix.lower()
+    if ext not in [".png", ".jpg", ".jpeg", ".webp"]:
+        raise HTTPException(status_code=400, detail="❌ Định dạng logo không hợp lệ. Chỉ chấp nhận file PNG, JPG, JPEG, WEBP.")
+
+    storage_dir = settings.DATA_DIR / "translator" / "watermarks"
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    
+    unique_filename = f"logo_{uuid.uuid4().hex[:8]}{ext}"
+    dest_path = storage_dir / unique_filename
+    
+    with open(dest_path, "wb") as buffer:
+        while chunk := await file.read(1024 * 1024):
+            buffer.write(chunk)
+
+    relative_key = f"translator/watermarks/{unique_filename}"
+    obj_key, public_url = await storage_service.upload_file(
+        dest_path,
+        relative_key,
+        content_type=file.content_type or "image/png"
+    )
+
+    return {
+        "success": True,
+        "data": {
+            "image_path": str(dest_path),
+            "filename": file.filename,
+            "url": public_url or f"/api/storage/files/{relative_key}",
+        }
+    }
+
+
 @router.post("/jobs", response_model=dict)
+
 async def create_translation_job(
     body: CreateJobRequest,
     session: AsyncSession = Depends(get_session),
@@ -264,8 +318,18 @@ async def create_translation_job(
         stage_progress_pct=0.0,
         overall_progress_pct=0.0,
         current_step="Khởi tạo job",
+        watermark_enabled=body.watermark_enabled,
+        watermark_type=body.watermark_type,
+        watermark_image_path=body.watermark_image_path,
+        watermark_text=body.watermark_text,
+        watermark_position=body.watermark_position,
+        watermark_scale=body.watermark_scale,
+        watermark_opacity=body.watermark_opacity,
+        watermark_margin=body.watermark_margin,
+        watermark_font_size=body.watermark_font_size,
         last_heartbeat=datetime.now(timezone.utc).replace(tzinfo=None),
     )
+
     session.add(job)
     await session.commit()
     log_job_event(job_id, "CREATED", f"Job created for asset '{asset.title}' (ID: {asset.id})")
@@ -986,6 +1050,48 @@ async def render_final_translated_video(
                     on_progress=on_render_progress,
                     on_pid=on_render_pid,
                 )
+
+                # Fetch fresh job configuration for watermark processing
+                job_stmt = select(VideoTranslationJob).where(VideoTranslationJob.id == job_id)
+                job_obj = (await render_session.execute(job_stmt)).scalar_one_or_none()
+
+            # Watermark Processing Step: Applied ONCE on Final Video
+            if job_obj and job_obj.watermark_enabled:
+                log_job_event(job_id, "APPLYING_WATERMARK", "Watermark enabled. Applying logo/text watermark overlay to final video...")
+                async with async_session_factory() as wm_session:
+                    await wm_session.execute(
+                        update(VideoTranslationJob)
+                        .where(VideoTranslationJob.id == job_id)
+                        .values(
+                            stage="APPLYING_WATERMARK",
+                            current_step="Đang gắn logo / watermark vào video bằng FFmpeg",
+                            stage_progress_pct=50.0,
+                            overall_progress_pct=calculate_overall_progress("RENDERING", 50.0),
+                        )
+                    )
+                    await wm_session.commit()
+
+                wm_config = WatermarkConfig(
+                    enabled=job_obj.watermark_enabled,
+                    type=WatermarkType(job_obj.watermark_type or "image"),
+                    image_path=job_obj.watermark_image_path,
+                    text=job_obj.watermark_text,
+                    position=WatermarkPosition.normalize(job_obj.watermark_position or "bottom_right"),
+                    scale=job_obj.watermark_scale or 0.20,
+                    opacity=job_obj.watermark_opacity or 0.80,
+                    margin=job_obj.watermark_margin or 20,
+                    font_size=job_obj.watermark_font_size or 32,
+                )
+
+                watermarked_final_path = job_dir / "final_dubbed_watermarked_video.mp4"
+                rendered_path = await WatermarkService.apply_watermark(
+                    input_video_path=rendered_path,
+                    output_video_path=watermarked_final_path,
+                    config=wm_config,
+                    job_id=job_id,
+                )
+                final_video_path = rendered_path
+
 
             # Strict FFprobe Validation
             meta = await get_video_metadata_async(rendered_path)

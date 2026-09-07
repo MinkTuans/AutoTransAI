@@ -40,9 +40,14 @@ router = APIRouter(prefix="/api/video-editor", tags=["Video Editor Automation"])
 class SaveEditConfigRequest(BaseModel):
     job_id: str
     target_aspect_ratio: str = AspectRatioEnum.LANDSCAPE_16_9.value
-    logo_position: str = WatermarkPositionEnum.TOP_RIGHT.value
-    logo_scale: float = 0.15
-    logo_opacity: float = 0.85
+    watermark_enabled: bool = False
+    watermark_type: str = "image"
+    watermark_text: Optional[str] = None
+    logo_position: str = WatermarkPositionEnum.BOTTOM_RIGHT.value
+    logo_scale: float = 0.20
+    logo_opacity: float = 0.80
+    watermark_margin: int = 20
+    watermark_font_size: int = 32
     bgm_volume_db: float = -18.0
     enable_bgm_ducking: bool = True
     enable_burned_subtitles: bool = True
@@ -74,15 +79,21 @@ async def save_video_edit_config(
         session.add(config)
 
     config.target_aspect_ratio = body.target_aspect_ratio
+    config.watermark_enabled = body.watermark_enabled
+    config.watermark_type = body.watermark_type
+    config.watermark_text = body.watermark_text
     config.logo_position = body.logo_position
     config.logo_scale = body.logo_scale
     config.logo_opacity = body.logo_opacity
+    config.watermark_margin = body.watermark_margin
+    config.watermark_font_size = body.watermark_font_size
     config.bgm_volume_db = body.bgm_volume_db
     config.enable_bgm_ducking = body.enable_bgm_ducking
     config.enable_burned_subtitles = body.enable_burned_subtitles
     
     await session.commit()
     return {"success": True, "data": {"config_id": config.id, "job_id": body.job_id}}
+
 
 
 @router.post("/upload-logo", response_model=dict)

@@ -3,9 +3,14 @@ import { videoEditorApi } from '../api';
 
 export default function VideoEditorStudio({ jobId, onConfigSaved }) {
   const [aspectRatio, setAspectRatio] = useState('16:9');
-  const [logoPosition, setLogoPosition] = useState('top_right');
-  const [logoScale, setLogoScale] = useState(0.15);
-  const [logoOpacity, setLogoOpacity] = useState(0.85);
+  const [watermarkEnabled, setWatermarkEnabled] = useState(false);
+  const [watermarkType, setWatermarkType] = useState('image');
+  const [watermarkText, setWatermarkText] = useState('© AutoTransAI Studio');
+  const [logoPosition, setLogoPosition] = useState('bottom_right');
+  const [logoScale, setLogoScale] = useState(0.20);
+  const [logoOpacity, setLogoOpacity] = useState(0.80);
+  const [watermarkMargin, setWatermarkMargin] = useState(20);
+  const [watermarkFontSize, setWatermarkFontSize] = useState(32);
   const [bgmVolumeDb, setBgmVolumeDb] = useState(-18.0);
   const [enableBgmDucking, setEnableBgmDucking] = useState(true);
   const [enableBurnedSubtitles, setEnableBurnedSubtitles] = useState(true);
@@ -37,9 +42,14 @@ export default function VideoEditorStudio({ jobId, onConfigSaved }) {
       const res = await videoEditorApi.saveConfig({
         job_id: jobId,
         target_aspect_ratio: aspectRatio,
+        watermark_enabled: watermarkEnabled,
+        watermark_type: watermarkType,
+        watermark_text: watermarkText,
         logo_position: logoPosition,
         logo_scale: parseFloat(logoScale),
         logo_opacity: parseFloat(logoOpacity),
+        watermark_margin: parseInt(watermarkMargin, 10),
+        watermark_font_size: parseInt(watermarkFontSize, 10),
         bgm_volume_db: parseFloat(bgmVolumeDb),
         enable_bgm_ducking: enableBgmDucking,
         enable_burned_subtitles: enableBurnedSubtitles,
@@ -54,6 +64,7 @@ export default function VideoEditorStudio({ jobId, onConfigSaved }) {
       setSaving(false);
     }
   };
+
 
   return (
     <div style={{

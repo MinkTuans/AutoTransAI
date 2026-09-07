@@ -28,6 +28,16 @@ class AddCustomModelRequest(BaseModel):
     description: Optional[str] = None
 
 
+class UpdateAIModelRequest(BaseModel):
+    provider_id: Optional[str] = None
+    model_name: Optional[str] = None
+    capabilities: Optional[List[str]] = None
+    is_default: Optional[bool] = None
+    enabled: Optional[bool] = None
+    description: Optional[str] = None
+
+
+
 class AddCustomProviderRequest(BaseModel):
     id: str
     name: str

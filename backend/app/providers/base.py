@@ -228,3 +228,52 @@ class LLMProvider(ABC):
     @abstractmethod
     async def get_quota(self) -> list[QuotaInfo]:
         ...
+
+
+class ImageProvider(ABC):
+    """Abstract base class for Image Generation providers (thumbnails & assets)."""
+
+    @property
+    @abstractmethod
+    def provider_id(self) -> str:
+        ...
+
+    @property
+    @abstractmethod
+    def provider_name(self) -> str:
+        ...
+
+    @property
+    @abstractmethod
+    def is_free(self) -> bool:
+        ...
+
+    @property
+    @abstractmethod
+    def requires_api_key(self) -> bool:
+        ...
+
+    @abstractmethod
+    async def validate_configuration(self) -> bool:
+        ...
+
+    @abstractmethod
+    async def generate_image(
+        self,
+        prompt: str,
+        width: int = 1280,
+        height: int = 720,
+        aspect_ratio: str = "16:9",
+        model: str = "default",
+        options: dict | None = None,
+    ) -> GenerationResult:
+        ...
+
+    @abstractmethod
+    async def estimate_usage(self, prompt: str) -> list[UsageEstimate]:
+        ...
+
+    @abstractmethod
+    async def get_quota(self) -> list[QuotaInfo]:
+        ...
+

@@ -20,7 +20,7 @@ class Error(Base):
     message: Mapped[str] = mapped_column(Text, default="")
     traceback: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )
 
     # Relationships

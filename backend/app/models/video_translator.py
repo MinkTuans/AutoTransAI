@@ -63,6 +63,8 @@ class VideoAsset(Base):
     status: Mapped[str] = mapped_column(String(30), default="ready")
     r2_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    thumbnail_r2_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    thumbnail_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
@@ -77,6 +79,10 @@ class VideoAsset(Base):
     jobs: Mapped[list["VideoTranslationJob"]] = relationship(
         back_populates="asset", cascade="all, delete-orphan"
     )
+    thumbnails: Mapped[list["VideoThumbnail"]] = relationship(
+        "VideoThumbnail", back_populates="asset", cascade="all, delete-orphan"
+    )
+
 
 
 class VideoTranslationJob(Base):
@@ -110,8 +116,22 @@ class VideoTranslationJob(Base):
     output_video_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     r2_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     output_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    thumbnail_r2_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    thumbnail_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_cleaned: Mapped[bool] = mapped_column(Boolean, default=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    # Watermark Settings
+    watermark_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    watermark_type: Mapped[str] = mapped_column(String(20), default="image")
+    watermark_image_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    watermark_text: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    watermark_position: Mapped[str] = mapped_column(String(30), default="bottom_right")
+    watermark_scale: Mapped[float] = mapped_column(Float, default=0.20)
+    watermark_opacity: Mapped[float] = mapped_column(Float, default=0.80)
+    watermark_margin: Mapped[int] = mapped_column(Integer, default=20)
+    watermark_font_size: Mapped[int] = mapped_column(Integer, default=32)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )
@@ -127,6 +147,10 @@ class VideoTranslationJob(Base):
     segments: Mapped[list["VideoTranslationSegment"]] = relationship(
         back_populates="job", cascade="all, delete-orphan", order_by="VideoTranslationSegment.segment_number"
     )
+    thumbnails: Mapped[list["VideoThumbnail"]] = relationship(
+        "VideoThumbnail", back_populates="job", cascade="all, delete-orphan"
+    )
+
 
 
 class VideoTranslationSegment(Base):

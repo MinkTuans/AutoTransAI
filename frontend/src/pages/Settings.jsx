@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { providersApi, settingsApi, systemApi } from '../api';
+import { LoadingSpinner, ButtonSpinner, LoadingOverlay, SkeletonLoader } from '../components/LoadingSpinner';
+
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState('providers');
@@ -35,6 +37,7 @@ export default function Settings() {
 
   // 3. AI Models State
   const [modelsList, setModelsList] = useState([]);
+  const [customModelInputMode, setCustomModelInputMode] = useState({});
   const [showAddModelModal, setShowAddModelModal] = useState(false);
   const [newModelData, setNewModelData] = useState({
     id: '',
@@ -44,6 +47,16 @@ export default function Settings() {
     is_default: false,
     description: '',
   });
+  const [showEditModelModal, setShowEditModelModal] = useState(false);
+  const [editingModelData, setEditingModelData] = useState({
+    id: '',
+    provider_id: 'gemini',
+    model_name: '',
+    capabilities: ['LLM'],
+    is_default: false,
+    description: '',
+  });
+
 
   // 4. Social Accounts State
   const [socialAccounts, setSocialAccounts] = useState([]);
@@ -87,7 +100,7 @@ export default function Settings() {
 
   // Data Loading Handlers
   const fetchProviders = () => {
-    providersApi.list()
+    return providersApi.list()
       .then(res => {
         if (res.success) setProviders(res.data);
       })
@@ -96,7 +109,7 @@ export default function Settings() {
 
   const fetchKeys = (providerId) => {
     setKeysLoading(true);
-    providersApi.listKeys(providerId)
+    return providersApi.listKeys(providerId)
       .then(res => {
         if (res.success) setKeysList(res.data);
       })
@@ -105,7 +118,7 @@ export default function Settings() {
   };
 
   const fetchFunctions = () => {
-    settingsApi.getFunctions()
+    return settingsApi.getFunctions()
       .then(res => {
         if (res.success) setFunctionsList(res.data);
       })
@@ -113,7 +126,7 @@ export default function Settings() {
   };
 
   const fetchModels = () => {
-    settingsApi.getModels()
+    return settingsApi.getModels()
       .then(res => {
         if (res.success) setModelsList(res.data);
       })
@@ -121,7 +134,7 @@ export default function Settings() {
   };
 
   const fetchSocialAccounts = () => {
-    settingsApi.getSocialAccounts()
+    return settingsApi.getSocialAccounts()
       .then(res => {
         if (res.success) setSocialAccounts(res.data);
       })
@@ -129,7 +142,7 @@ export default function Settings() {
   };
 
   const fetchSystemSettings = () => {
-    settingsApi.getSettings()
+    return settingsApi.getSettings()
       .then(res => {
         if (res.success) {
           setSystemSettings(prev => ({ ...prev, ...res.data }));
@@ -255,16 +268,30 @@ export default function Settings() {
   };
 
   // Handler: Update Function Config
-  const handleUpdateFunctionConfig = async (fnId, key, value) => {
+  const handleUpdateFunctionConfig = async (fnId, keyOrObj, value) => {
     try {
-      const res = await settingsApi.updateFunction(fnId, { [key]: value });
+      const payload = typeof keyOrObj === 'object' ? keyOrObj : { [keyOrObj]: value };
+      const res = await settingsApi.updateFunction(fnId, payload);
       if (res.success) {
-        setMessage({ type: 'success', text: `Function configuration updated successfully` });
+        setMessage({ type: 'success', text: `Cấu hình AI Function đã được cập nhật thành công!` });
         fetchFunctions();
       }
     } catch (err) {
-      setMessage({ type: 'danger', text: 'Failed updating function config' });
+      setMessage({ type: 'danger', text: 'Thất bại khi cập nhật cấu hình AI Function' });
     }
+  };
+
+  const handlePrimaryProviderChange = (fn, newProviderId) => {
+    const matchingModels = modelsList.filter(m => m.provider_id === newProviderId);
+    let defaultModelId = fn.model_id;
+    if (matchingModels.length > 0) {
+      const defaultModel = matchingModels.find(m => m.is_default) || matchingModels[0];
+      defaultModelId = defaultModel.id;
+    }
+    handleUpdateFunctionConfig(fn.function_id, {
+      primary_provider_id: newProviderId,
+      model_id: defaultModelId,
+    });
   };
 
   // Handler: Save System Settings
@@ -315,6 +342,49 @@ export default function Settings() {
     }
   };
 
+  const handleOpenEditModelModal = (model) => {
+    setEditingModelData({
+      id: model.id,
+      provider_id: model.provider_id || 'gemini',
+      model_name: model.model_name || '',
+      capabilities: Array.isArray(model.capabilities) ? [...model.capabilities] : ['LLM'],
+      is_default: !!model.is_default,
+      description: model.description || '',
+    });
+    setShowEditModelModal(true);
+  };
+
+  const handleUpdateCustomModel = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const res = await settingsApi.updateModel(editingModelData.id, editingModelData);
+      if (res.success) {
+        setMessage({ type: 'success', text: `Đã cập nhật model '${editingModelData.id}' thành công!` });
+        setShowEditModelModal(false);
+        fetchModels();
+      }
+    } catch (err) {
+      setMessage({ type: 'danger', text: err.response?.data?.detail || 'Thất bại khi cập nhật model' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteModel = async (modelId) => {
+    if (!window.confirm(`Bạn có chắc chắn muốn xóa model '${modelId}'?`)) return;
+    try {
+      const res = await settingsApi.deleteModel(modelId);
+      if (res.success) {
+        setMessage({ type: 'success', text: `Đã xóa model '${modelId}' thành công!` });
+        fetchModels();
+      }
+    } catch (err) {
+      setMessage({ type: 'danger', text: err.response?.data?.detail || 'Thất bại khi xóa model' });
+    }
+  };
+
+
   // Handler: Add Social Account
   const handleAddSocialAccount = async (e) => {
     e.preventDefault();
@@ -363,8 +433,18 @@ export default function Settings() {
   };
 
   if (loading) {
-    return <div className="card"><div className="card-body">Loading Settings Studio...</div></div>;
+    return (
+      <div className="card" style={{ marginTop: '1rem' }}>
+        <div className="card-body" style={{ padding: '2rem' }}>
+          <LoadingSpinner size="lg" label="Đang tải Settings Studio & AI Management..." sublabel="Khởi tạo danh mục AI Models, Key Pool và cấu hình hạ tầng..." />
+          <div style={{ marginTop: '1.5rem' }}>
+            <SkeletonLoader type="table" rows={6} columns={5} />
+          </div>
+        </div>
+      </div>
+    );
   }
+
 
   return (
     <div style={{ paddingBottom: '3rem' }}>
@@ -513,7 +593,10 @@ export default function Settings() {
                   ℹ️ Edge TTS là dịch vụ TTS miễn phí tích hợp sẵn. Không cần cấu hình API key.
                 </div>
               ) : keysLoading ? (
-                <div>Loading key pool for {selectedProviderForKeys}...</div>
+                <div style={{ padding: '1rem 0' }}>
+                  <LoadingSpinner size="sm" label={`Đang tải Key Pool cho ${selectedProviderForKeys.toUpperCase()}...`} />
+                  <SkeletonLoader type="table" rows={3} columns={6} />
+                </div>
               ) : keysList.length === 0 ? (
                 <div style={{ color: '#94a3b8', fontStyle: 'italic', padding: '1rem 0' }}>
                   Chưa có API key nào cho {selectedProviderForKeys.toUpperCase()}. Bấm nút "+ Add API Key to Pool" hoặc "+ Thêm Key" trên thẻ phía trên để nhập API key mới.
@@ -576,7 +659,13 @@ export default function Settings() {
               📌 <strong>Speech-to-Text Policy:</strong> High-precision audio transcription uses <strong>Google Gemini</strong>. When Gemini STT fallback is disabled, any Gemini API error stops pipeline immediately with a clear error without calling OpenAI/Whisper.
             </div>
 
-            <table className="table" style={{ width: '100%', fontSize: '0.9rem' }}>
+            {functionsList.length === 0 ? (
+              <div style={{ padding: '1rem 0' }}>
+                <LoadingSpinner size="sm" label="Đang tải danh sách AI Function Config..." />
+                <SkeletonLoader type="table" rows={5} columns={6} />
+              </div>
+            ) : (
+              <table className="table" style={{ width: '100%', fontSize: '0.9rem' }}>
               <thead>
                 <tr>
                   <th>AI Function</th>
@@ -597,7 +686,7 @@ export default function Settings() {
                         className="form-control"
                         style={{ padding: '0.3rem', fontSize: '0.85rem' }}
                         value={fn.primary_provider_id}
-                        onChange={(e) => handleUpdateFunctionConfig(fn.function_id, 'primary_provider_id', e.target.value)}
+                        onChange={(e) => handlePrimaryProviderChange(fn, e.target.value)}
                       >
                         {(fn.eligible_providers || []).map(p => (
                           <option key={p.id} value={p.id}>
@@ -607,13 +696,64 @@ export default function Settings() {
                       </select>
                     </td>
                     <td>
-                      <input
-                        type="text"
-                        className="form-control"
-                        style={{ padding: '0.3rem', fontSize: '0.85rem' }}
-                        value={fn.model_id}
-                        onChange={(e) => handleUpdateFunctionConfig(fn.function_id, 'model_id', e.target.value)}
-                      />
+                      {(() => {
+                        const providerModels = modelsList.filter(m => m.provider_id === fn.primary_provider_id);
+                        const hasCurrentInList = providerModels.some(m => m.id === fn.model_id);
+                        const isCustomManual = customModelInputMode[fn.function_id];
+
+                        if (isCustomManual || providerModels.length === 0) {
+                          return (
+                            <div style={{ display: 'flex', gap: '0.25rem' }}>
+                              <input
+                                type="text"
+                                className="form-control"
+                                style={{ padding: '0.3rem', fontSize: '0.85rem' }}
+                                value={fn.model_id}
+                                onChange={(e) => handleUpdateFunctionConfig(fn.function_id, 'model_id', e.target.value)}
+                                placeholder="Tên model custom..."
+                              />
+                              {providerModels.length > 0 && (
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary"
+                                  style={{ padding: '0.2rem 0.4rem', fontSize: '0.75rem' }}
+                                  onClick={() => setCustomModelInputMode(prev => ({ ...prev, [fn.function_id]: false }))}
+                                  title="Chọn từ Danh mục Model"
+                                >
+                                  📋
+                                </button>
+                              )}
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <select
+                            className="form-control"
+                            style={{ padding: '0.3rem', fontSize: '0.85rem' }}
+                            value={fn.model_id}
+                            onChange={(e) => {
+                              if (e.target.value === '__custom__') {
+                                setCustomModelInputMode(prev => ({ ...prev, [fn.function_id]: true }));
+                              } else {
+                                handleUpdateFunctionConfig(fn.function_id, 'model_id', e.target.value);
+                              }
+                            }}
+                          >
+                            {!hasCurrentInList && fn.model_id && (
+                              <option value={fn.model_id}>
+                                {fn.model_id} (Hiện tại)
+                              </option>
+                            )}
+                            {providerModels.map(m => (
+                              <option key={m.id} value={m.id}>
+                                {m.model_name} ({m.id}) {m.is_default ? '⭐' : ''}
+                              </option>
+                            ))}
+                            <option value="__custom__">✏️ Nhập model ID khác...</option>
+                          </select>
+                        );
+                      })()}
                     </td>
                     <td>
                       <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
@@ -643,6 +783,7 @@ export default function Settings() {
                 ))}
               </tbody>
             </table>
+            )}
           </div>
         </div>
       )}
@@ -662,7 +803,13 @@ export default function Settings() {
             </button>
           </div>
           <div className="card-body">
-            <table className="table" style={{ width: '100%', fontSize: '0.85rem' }}>
+            {modelsList.length === 0 ? (
+              <div style={{ padding: '1rem 0' }}>
+                <LoadingSpinner size="sm" label="Đang tải danh mục AI Models Catalog..." />
+                <SkeletonLoader type="table" rows={8} columns={7} />
+              </div>
+            ) : (
+              <table className="table" style={{ width: '100%', fontSize: '0.85rem' }}>
               <thead>
                 <tr>
                   <th>Model ID</th>
@@ -671,6 +818,7 @@ export default function Settings() {
                   <th>Capabilities</th>
                   <th>Default</th>
                   <th>Custom Model</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -686,10 +834,31 @@ export default function Settings() {
                     </td>
                     <td>{m.is_default ? <span className="badge badge-success">Default</span> : '-'}</td>
                     <td>{m.is_custom ? <span className="badge badge-warning">Custom</span> : <span className="badge badge-neutral">System</span>}</td>
+                    <td style={{ textAlign: 'right', verticalAlign: 'middle' }}>
+                      <div style={{ display: 'inline-flex', gap: '0.3rem', justifyContent: 'flex-end', alignItems: 'center' }}>
+                        <button
+                          className="btn btn-secondary"
+                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
+                          onClick={() => handleOpenEditModelModal(m)}
+                          title="Chỉnh sửa Model"
+                        >
+                          ✏️ Sửa
+                        </button>
+                        <button
+                          className="btn btn-danger"
+                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
+                          onClick={() => handleDeleteModel(m.id)}
+                          title="Xóa Model"
+                        >
+                          🗑️ Xóa
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            )}
           </div>
         </div>
       )}
@@ -919,7 +1088,7 @@ export default function Settings() {
                 </div>
               </div>
               <button type="submit" className="btn btn-primary" disabled={saving}>
-                {saving ? 'Saving...' : 'Save Workflow Defaults'}
+                {saving ? <><ButtonSpinner /> Đang lưu...</> : 'Save Workflow Defaults'}
               </button>
             </form>
           </div>
@@ -985,7 +1154,7 @@ export default function Settings() {
                 <div className="modal-footer">
                   <button type="button" className="btn btn-secondary" onClick={() => { setShowAddKeyModal(false); setModalError(null); }}>Cancel</button>
                   <button type="button" className="btn btn-primary" disabled={saving} onClick={handleAddKey}>
-                    {saving ? 'Saving...' : 'Save Key'}
+                    {saving ? <><ButtonSpinner /> Đang lưu...</> : 'Save Key'}
                   </button>
                 </div>
               </form>
@@ -1048,7 +1217,9 @@ export default function Settings() {
                 </div>
                 <div className="modal-footer">
                   <button type="button" className="btn btn-secondary" onClick={() => setShowAddProviderModal(false)}>Cancel</button>
-                  <button type="submit" className="btn btn-primary" disabled={saving}>Add Provider</button>
+                  <button type="submit" className="btn btn-primary" disabled={saving}>
+                    {saving ? <><ButtonSpinner /> Đang thêm...</> : 'Add Provider'}
+                  </button>
                 </div>
               </form>
             </div>
@@ -1103,7 +1274,102 @@ export default function Settings() {
                 </div>
                 <div className="modal-footer">
                   <button type="button" className="btn btn-secondary" onClick={() => setShowAddModelModal(false)}>Cancel</button>
-                  <button type="submit" className="btn btn-primary" disabled={saving}>Add Model</button>
+                  <button type="submit" className="btn btn-primary" disabled={saving}>
+                    {saving ? <><ButtonSpinner /> Đang thêm...</> : 'Add Model'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDIT MODEL */}
+      {showEditModelModal && (
+        <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setShowEditModelModal(false); }}>
+          <div className="modal-dialog">
+            <div className="modal-header">
+              <h3>Chỉnh Sửa AI Model — {editingModelData.id}</h3>
+              <button type="button" className="modal-close-btn" onClick={() => setShowEditModelModal(false)}>&times;</button>
+            </div>
+            <div className="modal-body">
+              <form onSubmit={handleUpdateCustomModel}>
+                <div className="form-group">
+                  <label className="form-label">Model ID</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={editingModelData.id}
+                    disabled
+                    style={{ opacity: 0.7, cursor: 'not-allowed', fontFamily: 'monospace' }}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Provider</label>
+                  <select
+                    className="form-control"
+                    value={editingModelData.provider_id}
+                    onChange={(e) => setEditingModelData({ ...editingModelData, provider_id: e.target.value })}
+                  >
+                    <option value="gemini">Gemini</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="edge_tts">Edge TTS</option>
+                    <option value="google_cloud_tts">Google Cloud TTS</option>
+                    <option value="elevenlabs">ElevenLabs</option>
+                    <option value="kling">Kling AI</option>
+                    <option value="fal">fal.ai</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Model Display Name</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="Tên hiển thị model..."
+                    value={editingModelData.model_name}
+                    onChange={(e) => setEditingModelData({ ...editingModelData, model_name: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Capabilities</label>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', marginTop: '0.3rem' }}>
+                    {['STT', 'LLM', 'TRANSLATION', 'TTS', 'VIDEO_GENERATION', 'IMAGE_GENERATION'].map(cap => {
+                      const checked = (editingModelData.capabilities || []).includes(cap);
+                      return (
+                        <label key={cap} style={{ fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              const currentCaps = editingModelData.capabilities || [];
+                              const updatedCaps = e.target.checked
+                                ? [...currentCaps, cap]
+                                : currentCaps.filter(c => c !== cap);
+                              setEditingModelData({ ...editingModelData, capabilities: updatedCaps });
+                            }}
+                          />
+                          {cap}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem' }}>
+                    <input
+                      type="checkbox"
+                      checked={editingModelData.is_default}
+                      onChange={(e) => setEditingModelData({ ...editingModelData, is_default: e.target.checked })}
+                    />
+                    Đặt làm model mặc định của Provider
+                  </label>
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowEditModelModal(false)}>Hủy</button>
+                  <button type="submit" className="btn btn-primary" disabled={saving}>
+                    {saving ? <><ButtonSpinner /> Đang lưu...</> : 'Lưu Thay Đổi'}
+                  </button>
                 </div>
               </form>
             </div>

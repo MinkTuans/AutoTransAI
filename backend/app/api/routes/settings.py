@@ -14,6 +14,7 @@ from app.database import get_session as get_db
 from app.schemas.settings_schema import (
     AIFunctionConfigUpdateRequest,
     AddCustomModelRequest,
+    UpdateAIModelRequest,
     AddSocialAccountRequest,
     SystemSettingsUpdateRequest,
     TestStorageRequest,
@@ -24,6 +25,7 @@ from app.core import get_logger
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+
 
 
 @router.get("", response_model=dict)
@@ -94,6 +96,30 @@ async def add_model(
         return {"success": True, "data": model, "message": "Custom model added"}
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
+
+
+@router.put("/models/{model_id:path}", response_model=dict)
+async def update_model(
+    model_id: str, body: UpdateAIModelRequest, db: AsyncSession = Depends(get_db)
+):
+    """Update an AI model definition."""
+    try:
+        model = await SettingsService.update_model(db, model_id, body.model_dump(exclude_none=True))
+        return {"success": True, "data": model, "message": f"Model '{model_id}' updated"}
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+
+
+@router.delete("/models/{model_id:path}", response_model=dict)
+async def delete_model(
+    model_id: str, db: AsyncSession = Depends(get_db)
+):
+    """Delete an AI model from catalog."""
+    success = await SettingsService.delete_model(db, model_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+    return {"success": True, "message": f"Model '{model_id}' deleted successfully"}
+
 
 
 @router.get("/social-accounts", response_model=dict)

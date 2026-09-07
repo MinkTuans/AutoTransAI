@@ -70,7 +70,30 @@ class PublishStage:
         return seo
 
     async def _select_thumbnail(self, ctx: WorkflowContext) -> dict[str, Any]:
-        return {"thumbnail_selected": "default"}
+        """Select or generate AI thumbnail for publication."""
+        from app.services.thumbnail_service import ThumbnailService
+        from app.database import async_session_factory
+        
+        thumbnail_url = getattr(ctx, "thumbnail_url", None)
+        if not thumbnail_url and ctx.project_id:
+            try:
+                async with async_session_factory() as session:
+                    record = await ThumbnailService.create_thumbnail(
+                        db=session,
+                        project_id=ctx.project_id,
+                        selected_style="auto",
+                    )
+                    if record and record.thumbnail_url:
+                        thumbnail_url = record.thumbnail_url
+                        ctx.thumbnail_url = thumbnail_url
+            except Exception as e:
+                logger.warning(f"[PublishStage] Thumbnail auto-generation bypassed: {str(e)}")
+
+        return {
+            "thumbnail_selected": thumbnail_url or "default",
+            "thumbnail_url": thumbnail_url,
+        }
+
 
     async def _user_approval(self, ctx: WorkflowContext) -> dict[str, Any]:
         return {"user_approved": True}

@@ -90,6 +90,27 @@ async def test_ai_models_and_custom_model(async_db: AsyncSession):
     assert new_model["id"] == "custom-gemini-v1"
     assert new_model["is_custom"] is True
 
+    # Update model
+    updated_model = await SettingsService.update_model(
+        async_db,
+        "custom-gemini-v1",
+        {
+            "model_name": "Updated Gemini Fine-tuned Model",
+            "capabilities": ["LLM", "TRANSLATION", "STT"],
+        },
+    )
+    assert updated_model["model_name"] == "Updated Gemini Fine-tuned Model"
+    assert "STT" in updated_model["capabilities"]
+
+    # Delete model
+    del_res = await SettingsService.delete_model(async_db, "custom-gemini-v1")
+    assert del_res is True
+
+    # Verify deleted
+    all_gemini = await SettingsService.get_models(async_db, provider_id="gemini")
+    assert not any(m["id"] == "custom-gemini-v1" for m in all_gemini)
+
+
 
 @pytest.mark.asyncio
 async def test_social_accounts_crud(async_db: AsyncSession):

@@ -24,7 +24,7 @@ class Asset(Base):
     file_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     duration: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )
 
     # Relationships

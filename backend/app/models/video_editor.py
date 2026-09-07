@@ -57,10 +57,16 @@ class VideoEditConfig(Base):
     target_aspect_ratio: Mapped[str] = mapped_column(String(20), default=AspectRatioEnum.LANDSCAPE_16_9.value)
     
     # Logo / Watermark
+    watermark_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    watermark_type: Mapped[str] = mapped_column(String(20), default="image")
     logo_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    logo_position: Mapped[str] = mapped_column(String(30), default=WatermarkPositionEnum.TOP_RIGHT.value)
-    logo_scale: Mapped[float] = mapped_column(Float, default=0.15)
-    logo_opacity: Mapped[float] = mapped_column(Float, default=0.85)
+    watermark_text: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    logo_position: Mapped[str] = mapped_column(String(30), default=WatermarkPositionEnum.BOTTOM_RIGHT.value)
+    logo_scale: Mapped[float] = mapped_column(Float, default=0.20)
+    logo_opacity: Mapped[float] = mapped_column(Float, default=0.80)
+    watermark_margin: Mapped[int] = mapped_column(Integer, default=20)
+    watermark_font_size: Mapped[int] = mapped_column(Integer, default=32)
+
     
     # Background Music (BGM)
     bgm_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)

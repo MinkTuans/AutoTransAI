@@ -8,7 +8,7 @@ use this registry to get providers by ID, never importing them directly.
 from __future__ import annotations
 
 from app.core import get_logger
-from app.providers.base import AudioProvider, VideoProvider, LLMProvider
+from app.providers.base import AudioProvider, VideoProvider, LLMProvider, ImageProvider
 
 logger = get_logger(__name__)
 
@@ -29,6 +29,7 @@ class ProviderRegistry:
         self._audio: dict[str, AudioProvider] = {}
         self._video: dict[str, VideoProvider] = {}
         self._llm: dict[str, LLMProvider] = {}
+        self._image: dict[str, ImageProvider] = {}
 
     def register_audio(self, provider: AudioProvider) -> None:
         """Register an audio provider."""
@@ -45,6 +46,11 @@ class ProviderRegistry:
         self._llm[provider.provider_id] = provider
         logger.info("Registered LLM provider", provider_id=provider.provider_id)
 
+    def register_image(self, provider: ImageProvider) -> None:
+        """Register an Image provider."""
+        self._image[provider.provider_id] = provider
+        logger.info("Registered image provider", provider_id=provider.provider_id)
+
     def get_audio(self, provider_id: str) -> AudioProvider | None:
         """Get an audio provider by ID."""
         return self._audio.get(provider_id)
@@ -56,6 +62,10 @@ class ProviderRegistry:
     def get_llm(self, provider_id: str) -> LLMProvider | None:
         """Get an LLM provider by ID."""
         return self._llm.get(provider_id)
+
+    def get_image(self, provider_id: str) -> ImageProvider | None:
+        """Get an image provider by ID."""
+        return self._image.get(provider_id)
 
     def list_audio(self) -> list[AudioProvider]:
         """List all registered audio providers."""
@@ -69,12 +79,17 @@ class ProviderRegistry:
         """List all registered LLM providers."""
         return list(self._llm.values())
 
+    def list_image(self) -> list[ImageProvider]:
+        """List all registered image providers."""
+        return list(self._image.values())
+
     def get_all_providers(self) -> dict[str, list]:
         """Get all providers grouped by type. Used by the /providers endpoint."""
         return {
             "audio": self.list_audio(),
             "video": self.list_video(),
             "llm": self.list_llm(),
+            "image": self.list_image(),
         }
 
 
@@ -115,6 +130,18 @@ def _register_defaults(reg: ProviderRegistry) -> None:
     except Exception as e:
         logger.warning("Failed to register LLM providers", error=str(e))
 
+    try:
+        from app.providers.image.pollinations_provider import PollinationsImageProvider
+        from app.providers.image.fal_image_provider import FalImageProvider
+        from app.providers.image.openai_image_provider import OpenAIImageProvider
+        from app.providers.image.local_image_provider import LocalImageProvider
+        reg.register_image(PollinationsImageProvider())
+        reg.register_image(FalImageProvider())
+        reg.register_image(OpenAIImageProvider())
+        reg.register_image(LocalImageProvider())
+    except Exception as e:
+        logger.warning("Failed to register image providers", error=str(e))
+
 
 def get_registry() -> ProviderRegistry:
     """Get the global provider registry singleton."""
@@ -123,3 +150,4 @@ def get_registry() -> ProviderRegistry:
         _registry = ProviderRegistry()
         _register_defaults(_registry)
     return _registry
+

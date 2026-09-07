@@ -1,7 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { projectsApi, providersApi } from '../api';
+import { LoadingSpinner, ButtonSpinner, SkeletonLoader } from '../components/LoadingSpinner';
+import AIThumbnailPanel from '../components/AIThumbnailPanel';
+
 
 export default function ProjectDetail({ projectId, onBack }) {
+
   const [project, setProject] = useState(null);
   const [providers, setProviders] = useState({ audio: [], video: [], llm: [] });
   const [voices, setVoices] = useState([]);
@@ -201,7 +205,17 @@ export default function ProjectDetail({ projectId, onBack }) {
     }
   };
 
-  if (loading) return <div className="card">Loading project...</div>;
+  if (loading) {
+    return (
+      <div className="card" style={{ padding: '2rem' }}>
+        <LoadingSpinner size="lg" label="Đang tải chi tiết dự án..." sublabel="Đang nạp thông tin kịch bản, âm thanh và trạng thái workflow..." />
+        <div style={{ marginTop: '1.5rem' }}>
+          <SkeletonLoader type="card" rows={2} />
+        </div>
+      </div>
+    );
+  }
+
   if (!project) return <div className="card">Project not found</div>;
 
   const isRunning = [
@@ -428,6 +442,16 @@ export default function ProjectDetail({ projectId, onBack }) {
           </div>
         )}
       </div>
+
+      {/* AI Auto Thumbnail Generation Panel */}
+      <AIThumbnailPanel
+        projectId={projectId}
+        initialThumbnailUrl={project.thumbnail_url}
+        onThumbnailUpdated={(newUrl) => {
+          setProject((prev) => (prev ? { ...prev, thumbnail_url: newUrl } : prev));
+        }}
+      />
+
 
       {/* Resource Estimate Results */}
       {estimate && (

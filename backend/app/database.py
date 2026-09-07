@@ -85,9 +85,11 @@ def _sync_schema_sync(sync_conn):
 
     inspector = inspect(sync_conn)
     existing_tables = set(inspector.get_table_names())
+    is_pg = sync_conn.dialect.name.startswith("postgres")
+
 
     for table_name, table_obj in Base.metadata.tables.items():
-        if table_name not in existing_tables:
+        if table_name.lower() not in existing_tables:
             continue
 
         existing_cols = {col["name"].lower(): col for col in inspector.get_columns(table_name)}
@@ -97,25 +99,23 @@ def _sync_schema_sync(sync_conn):
                 continue
 
             col_type_sql = column_obj.type.compile(sync_conn.dialect)
-            default_clause = ""
-            if column_obj.default is not None and hasattr(column_obj.default, "arg"):
-                arg = column_obj.default.arg
-                if isinstance(arg, (str, int, float, bool)):
-                    default_clause = f" DEFAULT '{arg}'" if isinstance(arg, str) else f" DEFAULT {arg}"
 
-            null_clause = " NULL" if column_obj.nullable else " NOT NULL"
-            alter_sql = f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type_sql}{null_clause}{default_clause}"
+            if is_pg:
+                alter_sql = f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {col_name} {col_type_sql}"
+            else:
+                default_clause = ""
+                if column_obj.default is not None and hasattr(column_obj.default, "arg"):
+                    arg = column_obj.default.arg
+                    if isinstance(arg, (str, int, float, bool)):
+                        default_clause = f" DEFAULT '{arg}'" if isinstance(arg, str) else f" DEFAULT {arg}"
+                alter_sql = f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type_sql}{default_clause}"
 
             try:
                 sync_conn.exec_driver_sql(alter_sql)
                 logger.info(f"Added column '{col_name}' to table '{table_name}' via DDL")
-            except Exception as ex1:
-                try:
-                    fallback_sql = f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type_sql}"
-                    sync_conn.exec_driver_sql(fallback_sql)
-                    logger.info(f"Added column '{col_name}' to table '{table_name}' via fallback DDL")
-                except Exception as ex2:
-                    logger.error(f"Failed adding column '{col_name}' to table '{table_name}': {str(ex2)}")
+            except Exception as ex:
+                logger.error(f"Failed adding column '{col_name}' to table '{table_name}': {str(ex)}")
+
 
 
 async def init_db() -> None:
@@ -131,8 +131,9 @@ async def init_db() -> None:
             if "already exists" not in str(ex).lower():
                 raise ex
 
-        if is_sqlite:
-            await conn.run_sync(_sync_schema_sync)
+        # Run dynamic DDL schema migration across all dialects (Postgres, SQLite, MySQL)
+        await conn.run_sync(_sync_schema_sync)
+
 
 
 
