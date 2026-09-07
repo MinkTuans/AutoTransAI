@@ -10,13 +10,15 @@ const api = axios.create({
 export default api;
 
 export const projectsApi = {
-  list: () => api.get('/projects').then(res => res.data),
+  list: (page, pageSize = 8) => api.get('/projects', { params: page ? { page, page_size: pageSize } : {} }).then(res => res.data),
   get: (id) => api.get(`/projects/${id}`).then(res => res.data),
   create: (data) => api.post('/projects', data).then(res => res.data),
   delete: (id) => api.delete(`/projects/${id}`).then(res => res.data),
   batchDelete: (ids) => api.post('/projects/batch-delete', { ids }).then(res => res.data),
   estimate: (id) => api.post(`/projects/${id}/estimate`).then(res => res.data),
   configure: (id, config) => api.post(`/projects/${id}/configure`, config).then(res => res.data),
+  getSettings: (id) => api.get(`/projects/${id}/settings`).then(res => res.data),
+  saveSettings: (id, settings) => api.post(`/projects/${id}/settings`, settings).then(res => res.data),
   precheck: (id) => api.post(`/projects/${id}/precheck`).then(res => res.data),
   run: (id) => api.post(`/projects/${id}/run`).then(res => res.data),
   resume: (id) => api.post(`/projects/${id}/resume`).then(res => res.data),
@@ -94,16 +96,35 @@ export const videoTranslatorApi = {
   renderJob: (jobId) => api.post(`/video-translator/jobs/${jobId}/render`).then(res => res.data),
   renderFinalVideo: (jobId) => api.post(`/video-translator/jobs/${jobId}/render`).then(res => res.data),
   getLogs: (jobId) => api.get(`/video-translator/jobs/${jobId}/logs`).then(res => res.data),
-  uploadWatermarkLogo: (file) => {
+  uploadWatermarkLogo: (file, projectId = null) => {
     const formData = new FormData();
     formData.append('file', file);
+    if (projectId) {
+      formData.append('project_id', projectId);
+    }
     return api.post('/video-translator/upload-watermark-logo', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }).then(res => res.data);
   },
   cancelJob: (jobId) => api.post(`/video-translator/jobs/${jobId}/cancel`).then(res => res.data),
-
   retryJob: (jobId) => api.post(`/video-translator/jobs/${jobId}/retry`).then(res => res.data),
+
+  // Unified 6-Stage Workflow Engine APIs
+  preflightWorkflow: (projectId, data) => api.post(`/video-translator/projects/${projectId}/workflow/preflight`, data || {}).then(res => res.data),
+  getWorkflowStatus: (projectId) => api.get(`/video-translator/projects/${projectId}/workflow-status`).then(res => res.data),
+  startWorkflow: (projectId, data) => api.post(`/video-translator/projects/${projectId}/workflow/start`, data || {}).then(res => res.data),
+  pauseWorkflow: (projectId) => api.post(`/video-translator/projects/${projectId}/workflow/pause`).then(res => res.data),
+  resumeWorkflow: (projectId) => api.post(`/video-translator/projects/${projectId}/workflow/resume`).then(res => res.data),
+  cancelWorkflow: (projectId) => api.post(`/video-translator/projects/${projectId}/workflow/cancel`).then(res => res.data),
+  retryStage: (projectId, stageName) => api.post(`/video-translator/projects/${projectId}/workflow/stage/${stageName}/retry`).then(res => res.data),
+
+  // Terminology & Glossary
+  getGlossary: (projectId) => api.get(`/video-translator/projects/${projectId}/glossary`).then(res => res.data),
+  addGlossary: (projectId, data) => api.post(`/video-translator/projects/${projectId}/glossary`, data).then(res => res.data),
+  deleteGlossary: (projectId, termId) => api.delete(`/video-translator/projects/${projectId}/glossary/${termId}`).then(res => res.data),
+  getTerminologyMemory: (projectId) => api.get(`/video-translator/projects/${projectId}/terminology-memory`).then(res => res.data),
+  addTerminologyMemory: (projectId, data) => api.post(`/video-translator/projects/${projectId}/terminology-memory`, data).then(res => res.data),
+  deleteTerminologyMemory: (projectId, termId) => api.delete(`/video-translator/projects/${projectId}/terminology-memory/${termId}`).then(res => res.data),
 };
 
 export const videoEditorApi = {

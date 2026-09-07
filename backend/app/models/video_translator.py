@@ -89,6 +89,9 @@ class VideoTranslationJob(Base):
     __tablename__ = "video_translation_jobs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     asset_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("video_assets.id", ondelete="CASCADE"), index=True
     )

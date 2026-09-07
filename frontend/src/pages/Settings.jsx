@@ -920,9 +920,9 @@ export default function Settings() {
       {activeTab === 'storage' && (
         <div className="card">
           <div className="card-header">
-            <h3 style={{ margin: 0, fontSize: '1.1rem' }}>☁️ Storage Settings (Supabase Storage & Local Fallback)</h3>
+            <h3 style={{ margin: 0, fontSize: '1.1rem' }}>📁 Storage Settings (Local Disk Storage & Laragon MySQL)</h3>
             <p style={{ margin: 0, fontSize: '0.85rem', color: '#94a3b8' }}>
-              Configure media object storage and verify Supabase Storage bucket connectivity.
+              Hệ thống lưu trữ Media file trực tiếp trên ổ đĩa local (`storage/projects/`) và quản lý CSDL MySQL (Laragon).
             </p>
           </div>
           <div className="card-body">
@@ -934,33 +934,9 @@ export default function Settings() {
                   value={systemSettings.storage_provider}
                   onChange={(e) => setSystemSettings({ ...systemSettings, storage_provider: e.target.value })}
                 >
-                  <option value="supabase">Supabase Cloud Storage (`autotransai-private` / `autotransai-public`)</option>
-                  <option value="local">Local Storage Fallback (`data/supabase_storage`)</option>
+                  <option value="local">Local Disk Storage (`storage/projects/{'{project_id}'}/...`)</option>
                 </select>
               </div>
-
-              {systemSettings.storage_provider === 'supabase' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', background: 'rgba(15, 23, 42, 0.4)', padding: '1rem', borderRadius: '8px', marginBottom: '1.25rem' }}>
-                  <div className="form-group">
-                    <label>Private Bucket Name</label>
-                    <input
-                      type="text"
-                      className="form-control"
-                      value={systemSettings.supabase_bucket_private || 'autotransai-private'}
-                      onChange={(e) => setSystemSettings({ ...systemSettings, supabase_bucket_private: e.target.value })}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Public Bucket Name</label>
-                    <input
-                      type="text"
-                      className="form-control"
-                      value={systemSettings.supabase_bucket_public || 'autotransai-public'}
-                      onChange={(e) => setSystemSettings({ ...systemSettings, supabase_bucket_public: e.target.value })}
-                    />
-                  </div>
-                </div>
-              )}
 
               {storageTestStatus && (
                 <div className={`alert alert-${storageTestStatus.success ? 'success' : 'danger'}`} style={{ marginBottom: '1rem' }}>

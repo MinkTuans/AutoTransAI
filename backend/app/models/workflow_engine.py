@@ -68,6 +68,30 @@ class ProjectGlossary(Base):
     )
 
 
+class ProjectTerminologyMemory(Base):
+    """AI auto-detected terminology memory for characters, locations, sects, skills, etc."""
+    __tablename__ = "project_terminology_memory"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+
+    source_term: Mapped[str] = mapped_column(String(255), nullable=False)
+    suggested_term: Mapped[str] = mapped_column(String(255), nullable=False)
+    term_type: Mapped[str] = mapped_column(String(50), default="other")
+    confidence: Mapped[float] = mapped_column(Float, default=0.9)
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    source_context: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+
+
 class SpeakerVoiceMapping(Base):
     """Voice provider assignment for specific speakers detected in the transcript."""
     __tablename__ = "speaker_voice_mappings"

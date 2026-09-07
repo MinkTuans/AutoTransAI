@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy import select
 from app.workflow.workflow_context import WorkflowContext
-from app.models.workflow_engine import ProjectGlossary
+from app.models.workflow_engine import ProjectGlossary, ProjectTerminologyMemory
 
 logger = logging.getLogger(__name__)
 
@@ -78,20 +78,39 @@ class TranslateStage:
         }
 
     async def _create_load_glossary(self, ctx: WorkflowContext, db: Any) -> dict[str, Any]:
+        glossary_list = []
         if db:
             result = await db.execute(
                 select(ProjectGlossary).where(ProjectGlossary.project_id == ctx.project_id)
             )
             terms = result.scalars().all()
-            ctx.glossary = [
+            glossary_list = [
                 {
                     "source_term": t.source_term,
                     "translated_term": t.translated_term,
                     "term_type": t.term_type,
                     "approved": t.approved,
+                    "priority": 1,
                 }
                 for t in terms if t.approved
             ]
+
+            manual_sources = {t["source_term"].lower() for t in glossary_list}
+            tm_res = await db.execute(
+                select(ProjectTerminologyMemory).where(ProjectTerminologyMemory.project_id == ctx.project_id)
+            )
+            tm_terms = tm_res.scalars().all()
+            for tm in tm_terms:
+                if tm.source_term.lower() not in manual_sources:
+                    glossary_list.append({
+                        "source_term": tm.source_term,
+                        "translated_term": tm.suggested_term,
+                        "term_type": tm.term_type,
+                        "approved": True,
+                        "priority": 2,
+                    })
+
+        ctx.glossary = glossary_list
         return {"glossary_count": len(ctx.glossary)}
 
     async def _extract_entities(self, ctx: WorkflowContext) -> dict[str, Any]:

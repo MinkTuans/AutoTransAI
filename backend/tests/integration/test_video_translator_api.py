@@ -71,3 +71,84 @@ async def test_upload_local_video_and_pipeline_flow(tmp_path):
         job_data = get_res.json()["data"]
         assert job_data["job_id"] == job_id
         assert job_data["target_language"] == "vi"
+        assert job_data.get("project_id") is not None
+
+
+@pytest.mark.anyio
+async def test_workflow_start_with_invalid_project_id_returns_404():
+    """Verify that calling workflow/start with 'default_project' returns 404, not 500."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        res = await client.post("/api/video-translator/projects/default_project/workflow/start", json={})
+        assert res.status_code == 404
+        data = res.json()
+        assert data["detail"]["error"] == "PROJECT_NOT_FOUND"
+
+
+@pytest.mark.anyio
+async def test_create_job_auto_creates_project_and_starts_workflow(tmp_path):
+    """Verify that creating a job auto-creates a real Project and workflow/start succeeds."""
+    real_video = Path(__file__).parent.parent.parent / "test_with_audio.mp4"
+    if not real_video.exists():
+        pytest.skip("test_with_audio.mp4 missing")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # 1. Import
+        with open(real_video, "rb") as f:
+            imp_res = await client.post(
+                "/api/video-translator/import",
+                data={"source_type": "upload"},
+                files={"file": ("test_sample.mp4", f, "video/mp4")},
+            )
+        assert imp_res.status_code == 200
+        asset_id = imp_res.json()["data"]["asset_id"]
+
+        # 2. Create Job
+        job_res = await client.post(
+            "/api/video-translator/jobs",
+            json={"asset_id": asset_id, "target_language": "vi"},
+        )
+        assert job_res.status_code == 200
+        project_id = job_res.json()["data"]["project_id"]
+        assert project_id is not None
+        assert project_id != "default_project"
+
+        # 3. Start 6-Stage Workflow with real Project ID
+        wf_res = await client.post(
+            f"/api/video-translator/projects/{project_id}/workflow/start",
+            json={"target_language": "vi"},
+        )
+        assert wf_res.status_code == 200
+        assert wf_res.json()["success"] is True
+        assert wf_res.json()["data"]["status"] == "running"
+
+        # 4. Fetch Workflow Status
+        st_res = await client.get(f"/api/video-translator/projects/{project_id}/workflow-status")
+        assert st_res.status_code == 200
+        st_data = st_res.json()["data"]
+        assert st_data["execution_id"] is not None
+        assert st_data["status"] in ["running", "completed"]
+
+
+@pytest.mark.anyio
+async def test_list_projects_pagination():
+    """Verify GET /api/projects supports 8-items-per-page pagination metadata."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # Unpaginated request
+        res1 = await client.get("/api/projects")
+        assert res1.status_code == 200
+        data1 = res1.json()
+        assert data1["success"] is True
+        assert isinstance(data1["data"], list)
+        assert "total" in data1
+
+        # Paginated request (8 per page)
+        res2 = await client.get("/api/projects?page=1&page_size=8")
+        assert res2.status_code == 200
+        data2 = res2.json()
+        assert data2["success"] is True
+        assert len(data2["data"]) <= 8
+        assert data2["page"] == 1
+        assert data2["page_size"] == 8
+        assert "total_pages" in data2
+
+

@@ -1,0 +1,136 @@
+- **Project-Based Settings Persistence & Project Management Upgrade**:
+  - **Single Source of Truth & Settings Normalization**:
+    - Created `DEFAULT_PROJECT_SETTINGS` and `normalize_project_settings()` helper in `backend/app/api/routes/projects.py`, enforcing system default fallbacks and strict numeric/enum constraints (`watermark_position`, `watermark_scale`, `watermark_opacity`, `watermark_margin`).
+    - Upgraded `GET /api/projects/{project_id}/settings` and `POST / PUT /api/projects/{project_id}/settings` to validate, save, commit, and return exact server persisted configuration.
+    - Added structured runtime diagnostic logging (`[PROJECT SETTINGS LOAD]` and `[PROJECT SETTINGS SAVE]`).
+  - **Watermark Logo Asset Persistence**:
+    - Upgraded `POST /api/video-translator/upload-watermark-logo` to accept `project_id`, storing logo files in `storage/projects/{project_id}/assets/watermarks/`, creating `Asset` DB records (`asset_type="watermark_logo"`), and persisting `watermark_image_asset_id` into project `settings_json`.
+  - **Frontend State Sync, Comprehensive Dirty State & Project Switching Guard**:
+    - Overhauled `VideoTranslator.jsx` to track 100% of UI controls across all 9 categories (Video Input, Language, AI Models, Voice, Original Audio, Watermark, AI Thumbnail).
+    - Built deep equality comparison in dirty state `useEffect`, activating the unsaved changes alert bar whenever ANY option is modified.
+    - Built `handleDiscardChanges()` and project switching guard modal (`showSwitchGuardModal`), prompting users to save, discard, or cancel project switching when unsaved changes exist.
+  - **Workflow Configuration Snapshotting**:
+    - Upgraded `POST /api/video-translator/projects/{project_id}/workflow/start` in `video_translator.py` to freeze project settings into `WorkflowExecution.context_data["settings_snapshot"]`, logging `[WORKFLOW SETTINGS SNAPSHOT]`.
+  - **Project Detail Page & Management Upgrade**:
+    - Upgraded `ProjectDetail.jsx` with tabbed navigation: Overview & Videos table, Project Settings summary (with logo preview & AI provider details), and Glossary Manager.
+    - Added interactive `⚙️ Chỉnh sửa cấu hình & Dịch Video` button navigating directly to Video Translator view with project pre-selected.
+  - **Automated Regression Suite**:
+    - Added `backend/tests/unit/test_project_settings_persistence.py` (100% passed).
+
+- **Critical AI Model Routing & Single Source of Truth Bug Fix**:
+  - **Root Cause Resolution**: Resolved configuration drift bug where `transcribe_audio_with_gemini` ignored UI database settings and iterated a hardcoded legacy array containing deprecated `gemini-2.0-flash` (HTTP 404).
+  - **Configuration Priority Hierarchy**: Added `AIRouter.resolve_stt_model(db, requested_model)` enforcing:
+    `REQUESTED MODEL` -> `DATABASE AI FUNCTION CONFIG` -> `ENVIRONMENT DEFAULT` -> `HARDCODED SAFE DEFAULT (gemini-2.5-flash)`.
+  - **Model Normalization**: Built `normalize_gemini_model_name()` in `gemini_provider.py` stripping `models/` prefix and auto-migrating deprecated model strings to `gemini-2.5-flash`.
+  - **Diagnostic Logging**: Added structured debug logs (`[STT CONFIG]`, `[STT ROUTING]`, `[STT API REQUEST]`) tracing exact database model, resolved router model, and actual API URL requested.
+  - **Preflight & Defaults**: Updated `run_video_translator_preflight()` to report exact active model (`gemini-2.5-flash`) and removed legacy `gemini-2.0-flash` defaults.
+  - **Automated Regression Tests**: Added `tests/unit/test_stt_model_routing.py` (100% passed).
+
+- **Project Detail Page Fix & Backend Endpoint Integration**:
+  - **Backend Payload Enhancement**:
+    - Updated `GET /api/projects/{project_id}` in `projects.py` to query and include the `segments` array for standard projects, preventing React `TypeError: Cannot read properties of undefined (reading 'length')` crashes.
+    - Added fallback query in `GET /api/projects/{project_id}` checking `VideoTranslationJob` & `VideoTranslationSegment` records if a translation job ID is queried.
+  - **Frontend Null Safety & Defensive Rendering**:
+    - Added safe optional chaining and fallback arrays `(project.segments || [])`, `(providers?.audio || [])`, and `(providers?.video || [])` in `ProjectDetail.jsx`.
+    - Added safe title String formatting `(project.title || 'Project').replace(...)`.
+    - Built friendly error / empty state card with `← Quay lại Dashboard` button in `ProjectDetail.jsx` and `App.jsx` when project ID is invalid or not found, preventing blank dark screen rendering.
+
+- **Unified Workflow Pipeline Layout, Active Animations & Collapsible Accordion Overhaul**:
+  - **Layout Restructuring**:
+    - Placed `Unified 6-Stage Workflow Pipeline` (`WorkflowTimeline.jsx`) permanently fixed at the top of the Video Translator view.
+    - Moved Error Message Card (`❌ Xử Lý Thất Bại`) directly beneath `WorkflowTimeline.jsx` so pipeline execution failures are immediately visible below the stage pipeline.
+    - Positioned Job Progress Panel (`📊 Tiến Trình Xử Lý Pipeline (Job: ...)`) directly beneath the Error Card.
+    - Converted all configuration panels (`⚙️ Cấu hình Nhập Video, Dịch & Lồng Tiếng`, `📖 Quản Lý Thuật Ngữ`, `🖼️ Tạo Thumbnail AI`) into collapsible cards (`CollapsibleCard`) with clean accordion toggle controls (`▼ Mở rộng` / `▲ Thu gọn`).
+  - **Stage Execution Visual Feedback & Animations**:
+    - Added CSS keyframe animations `@keyframes stagePulseGlow` and `@keyframes spinIcon`.
+    - Active/Running stages (`running` state) now display an animated cyan pulsing border glow, spinning gear icon, and cyan step badge.
+    - Passed/Completed stages (`passed` state) display a solid emerald green border (`#10B981`), green checkmark badge (`✓ Passed`), and emerald highlight.
+  - **Optimistic State Feedback on Start Workflow**:
+    - Updated `executeStartWorkflowAfterPreflight` and `handleStartWorkflow` to optimistically update frontend state (`status: 'running'`, `current_stage: 'INGEST'`) as soon as `Start Workflow` is clicked, providing instant visual button transition (`⏸ Pause` & `🛑 Cancel`) without UI delay.
+
+- **Laragon MySQL Database Connection Update**:
+  - Updated `DATABASE_URL` in `.env` and `config.py` to `mysql+aiomysql://root:210606@127.0.0.1:3306/autotransai`.
+  - Installed `aiomysql` and `pymysql` in python environment.
+  - Automatically created `autotransai` database and initialized all tables via DDL schema migration.
+  - Added project ID deduplication in `GET /api/projects` endpoint.
+- **Workflow UI Action Controls & Smart Retry Flow**:
+  - **Button State Machine**: Refined `WorkflowTimeline.jsx` control button display logic:
+    - Initial / finished / idle states (`not_started`, `completed`, `cancelled`, `failed`): Renders only `▶ Start Workflow` button.
+    - Running state (`running`): Hides `Start Workflow`; renders `⏸ Pause` and `🛑 Cancel` buttons.
+    - Paused state (`paused`): Replaces `Pause` with `▶ Resume` button while retaining `🛑 Cancel` button.
+  - **Smart Retry Error Delegation**:
+    - Updated `handleRetryJob` in `VideoTranslator.jsx` so clicking `🔄 Smart Retry` delegates to stage retry (`POST /api/video-translator/projects/{project_id}/workflow/stage/{stage_name}/retry`) resuming workflow execution from the exact stage that failed.
+    - Enhanced Error Message Card rendering to trigger when `workflowStatusData` status is `failed` and display `workflowStatusData?.error_message`.
+- **Unified 6-Stage Workflow Execution APIs**:
+  - `POST /api/video-translator/projects/{project_id}/workflow/start`: Accepts `StartWorkflowRequest` with full pipeline context (`video_url`, `video_path`, `target_language`, `audio_provider_id`, `llm_provider_id`, `voice_id`, `watermark` settings).
+  - `POST /api/video-translator/projects/{project_id}/workflow/cancel`: Safely cancels running 6-stage workflow tasks and updates DB state to `cancelled`.
+  - `POST /api/video-translator/projects/{project_id}/workflow/stage/{stage_name}/retry`: Resets stage state and steps to `pending` and resumes execution from specified stage.
+- **Frontend Timeline Controls & Live Polling**:
+  - Added **🛑 Cancel Workflow** and **🔄 Retry Stage** action buttons to `WorkflowTimeline.jsx`.
+  - Added loading indicator states (`loadingAction`), disabling buttons while API calls are pending.
+  - Added stage step breakdown drawer showing live step statuses (`import_video`, `speech_to_text`, `translate_transcript`, etc.).
+  - Unified real-time polling in `VideoTranslator.jsx` to fetch `/workflow-status` alongside `/jobs/{id}` every 1.5s.
+
+- **`backend/app/models/video_translator.py`**:
+  - Added `project_id` foreign key column to `VideoTranslationJob` referencing `projects.id`.
+- **`backend/app/api/routes/video_translator.py`**:
+  - Updated `create_translation_job` (`POST /jobs`) to auto-create and link a real `Project` row in `projects` table if no valid `project_id` is supplied.
+  - Added `_validate_project_exists()` helper returning structured HTTP 404 (`PROJECT_NOT_FOUND`) if `project_id` is missing, invalid, or `'default_project'`, eliminating database `ForeignKeyViolationError` (HTTP 500).
+- **`frontend/src/pages/VideoTranslator.jsx`**:
+  - Removed `'default_project'` string fallback completely.
+  - Added project validation check before calling workflow APIs (`Start`, `Pause`, `Resume`, `Cancel`, `Retry Stage`), prompting user if no valid project is active.
+
+- **Server-Side Projects List Pagination (8 items per page)**:
+  - Updated `GET /api/projects` endpoint in `projects.py` to support `page` and `page_size` query parameters (default 8 items per page).
+  - Returns pagination metadata (`total`, `page`, `page_size`, `total_pages`).
+  - Updated `projectsApi.list(page, pageSize)` in `frontend/src/api.js` to send query params.
+  - Updated `Dashboard.jsx` to fetch exact 8 items per page from backend on page navigation, avoiding fetching full dataset over network.
+
+- **Unified Workflow, Project System & Pre-flight Validation Overhaul**:
+  - **Project System & Selector**:
+    - Enhanced `Project` model with `description` and `settings_json` columns for persistent project configurations.
+    - Built interactive `Project Selector` header in `VideoTranslator.jsx` with direct "Select Project" dropdown, "Create Project Modal", current project badge, and "Dirty Settings Indicator" bar.
+    - Completely eliminated `default_project` and fake hardcoded project IDs across frontend and backend.
+  - **Pre-flight Check Engine**:
+    - Created `run_video_translator_preflight()` service in `preflight.py` checking Video Input, Project Existence, DB connection, FFmpeg binaries, Storage Permissions, LLM Provider Health, TTS Health, Watermark Settings, and Optional Thumbnail AI.
+    - Classified pre-flight checks into **CRITICAL** (blocks execution if failed) vs **OPTIONAL** (displays warnings, allows execution).
+    - Exposed `POST /api/video-translator/projects/{project_id}/workflow/preflight` endpoint.
+    - Created interactive `Pre-flight Result Modal` displaying categorized green checkmarks, yellow warnings, and critical error messages with "Start Workflow", "Retry Check", or "Open Settings" actions.
+  - **Hybrid Terminology System**:
+    - Added `ProjectTerminologyMemory` ORM model & `project_terminology_memory` database table.
+    - Added REST endpoints for listing, adding, and deleting project terminology memory items.
+    - Enhanced `TranslateStage` to load Manual Glossary terms (Priority 1) and Terminology Memory (Priority 2), injecting explicit terminology rules into LLM prompts.
+    - Upgraded `ProjectGlossaryManager.jsx` with a tabbed interface separating Manual Glossary and AI Terminology Memory.
+  - **Optional Thumbnail AI & Watermark Handling**:
+    - Thumbnail AI works dynamically even when custom instructions are empty.
+    - Failures in Thumbnail AI generate optional warnings and do not crash or halt the video translation pipeline.
+    - Watermark validation checks for text/image parameters when enabled.
+
+- **Complete Supabase Removal & Full Local Migration (Laragon MySQL + Local File Storage)**:
+  - **Database Migration to Laragon MySQL**:
+    - Updated `backend/app/config.py` with `DATABASE_URL` defaulting to `mysql+aiomysql://root:@127.0.0.1:3306/autotransai` (with graceful SQLite fallback if MySQL service is stopped).
+    - Updated `backend/app/database.py` with MySQL dialect support (`is_mysql`), `pool_pre_ping=True`, `pool_recycle=3600`, and MySQL backtick DDL column migration.
+    - Updated `backend/requirements.txt`: Removed `supabase`, added `aiomysql` and `pymysql`.
+    - Created `backend/scripts/migrate_to_mysql.py` for exporting SQLite DB to Laragon MySQL.
+  - **Pure Local Storage Architecture**:
+    - Refactored `backend/app/services/storage_service.py` to `LocalStorageService`, stripping all Supabase SDK dependencies.
+    - Standardized local file structure under `storage/projects/{project_id}/` (`videos/source/`, `videos/processed/`, `audio/original/`, `audio/extracted/`, `audio/dubbed/`, `subtitles/`, `thumbnails/`, `outputs/`, `temporary/`).
+    - Configured local media file streaming via `GET /api/storage/files/{file_path:path}`.
+  - **UI & Configuration Clean-up**:
+    - Updated `frontend/src/pages/Settings.jsx`, `frontend/src/pages/Dashboard.jsx`, and `frontend/src/components/AIThumbnailPanel.jsx` to reflect Local Disk Storage and Laragon MySQL setup.
+    - Cleaned up `.env.example` removing all `SUPABASE_*` configuration keys.
+
+### Affected Files
+- `backend/app/config.py`
+- `backend/app/database.py`
+- `backend/app/services/storage_service.py`
+- `backend/app/services/settings_service.py`
+- `backend/app/services/preflight.py`
+- `backend/scripts/migrate_to_mysql.py`
+- `backend/requirements.txt`
+- `frontend/src/pages/Settings.jsx`
+- `frontend/src/pages/Dashboard.jsx`
+- `frontend/src/components/AIThumbnailPanel.jsx`
+- `.env.example`
+- `PROJECT_KNOWLEDGE_BASE.md`
+- `CHANGELOG_AI.md`

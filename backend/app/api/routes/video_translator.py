@@ -30,6 +30,8 @@ from app.services.storage_service import storage_service
 from app.core.job_logger import log_job_event, get_job_logs
 from app.database import get_session, async_session_factory
 from app.core.security_url import SSRFValidationError
+from app.models.project import Project
+from app.models.asset import Asset
 from app.models.video_translator import (
     VideoAsset,
     VideoTranslationJob,
@@ -106,6 +108,7 @@ class CheckURLRequest(BaseModel):
 
 
 class CreateJobRequest(BaseModel):
+    project_id: Optional[str] = Field(None, description="Project ID to link job")
     asset_id: str
     source_language: str = "auto"
     target_language: str = "vi"
@@ -258,13 +261,21 @@ async def import_video_asset(
 
 
 @router.post("/upload-watermark-logo", response_model=dict)
-async def upload_watermark_logo(file: UploadFile = File(...)):
+async def upload_watermark_logo(
+    file: UploadFile = File(...),
+    project_id: Optional[str] = Form(None),
+    session: AsyncSession = Depends(get_session),
+):
     """Upload watermark logo image file (PNG/JPG/WEBP) for video processing."""
     ext = Path(file.filename or "logo.png").suffix.lower()
     if ext not in [".png", ".jpg", ".jpeg", ".webp"]:
         raise HTTPException(status_code=400, detail="❌ Định dạng logo không hợp lệ. Chỉ chấp nhận file PNG, JPG, JPEG, WEBP.")
 
-    storage_dir = settings.DATA_DIR / "translator" / "watermarks"
+    if project_id and project_id != "default_project":
+        storage_dir = settings.STORAGE_ROOT / "projects" / project_id / "assets" / "watermarks"
+    else:
+        storage_dir = settings.DATA_DIR / "translator" / "watermarks"
+    
     storage_dir.mkdir(parents=True, exist_ok=True)
     
     unique_filename = f"logo_{uuid.uuid4().hex[:8]}{ext}"
@@ -274,38 +285,87 @@ async def upload_watermark_logo(file: UploadFile = File(...)):
         while chunk := await file.read(1024 * 1024):
             buffer.write(chunk)
 
-    relative_key = f"translator/watermarks/{unique_filename}"
+    if project_id and project_id != "default_project":
+        relative_key = f"projects/{project_id}/assets/watermarks/{unique_filename}"
+    else:
+        relative_key = f"translator/watermarks/{unique_filename}"
+
     obj_key, public_url = await storage_service.upload_file(
         dest_path,
         relative_key,
         content_type=file.content_type or "image/png"
     )
 
+    asset_id = None
+    if project_id and project_id != "default_project":
+        p_res = await session.execute(select(Project).where(Project.id == project_id))
+        project = p_res.scalar_one_or_none()
+        if project:
+            asset_id = str(uuid.uuid4())
+            file_size = dest_path.stat().st_size if dest_path.exists() else 0
+            asset = Asset(
+                id=asset_id,
+                project_id=project_id,
+                asset_type="watermark_logo",
+                file_path=relative_key,
+                file_format=ext.replace(".", ""),
+                file_size=file_size,
+            )
+            session.add(asset)
+
+            curr_settings = project.settings_json or {}
+            curr_settings["watermark_image_asset_id"] = asset_id
+            curr_settings["watermark_image_path"] = relative_key
+            project.settings_json = curr_settings
+            await session.commit()
+
     return {
         "success": True,
         "data": {
-            "image_path": str(dest_path),
+            "asset_id": asset_id,
+            "image_path": relative_key,
             "filename": file.filename,
             "url": public_url or f"/api/storage/files/{relative_key}",
+            "relative_path": relative_key,
         }
     }
 
 
 @router.post("/jobs", response_model=dict)
-
 async def create_translation_job(
     body: CreateJobRequest,
     session: AsyncSession = Depends(get_session),
 ):
-    """Create a new video translation job."""
+    """Create a new video translation job and link/create a real Project record."""
     res = await session.execute(select(VideoAsset).where(VideoAsset.id == body.asset_id))
     asset = res.scalar_one_or_none()
     if not asset:
         raise HTTPException(status_code=404, detail="❌ VideoAsset không tồn tại.")
 
+    # Ensure a valid Project exists in projects table
+    project_id = body.project_id
+    if project_id:
+        p_res = await session.execute(select(Project).where(Project.id == project_id))
+        proj = p_res.scalar_one_or_none()
+        if not proj:
+            project_id = None
+
+    if not project_id:
+        proj_id = str(uuid.uuid4())[:8]
+        proj = Project(
+            id=proj_id,
+            title=asset.title or "Video Translation Project",
+            workflow_mode="video_translator",
+            workflow_status=WorkflowStatus.CREATED.value,
+        )
+        session.add(proj)
+        await session.flush()
+        project_id = proj.id
+
     job_id = f"VT-{str(uuid.uuid4())[:6].upper()}"
     job = VideoTranslationJob(
         id=job_id,
+        project_id=project_id,
         asset_id=body.asset_id,
         source_language=body.source_language,
         target_language=body.target_language,
@@ -332,7 +392,7 @@ async def create_translation_job(
 
     session.add(job)
     await session.commit()
-    log_job_event(job_id, "CREATED", f"Job created for asset '{asset.title}' (ID: {asset.id})")
+    log_job_event(job_id, "CREATED", f"Job created for asset '{asset.title}' (ID: {asset.id}, Project: {project_id})")
 
     return {
         "success": True,
@@ -675,6 +735,7 @@ async def get_translation_job(
         "data": {
             "id": job.id,
             "job_id": job.id,
+            "project_id": job.project_id,
             "asset": {
                 "id": asset.id if asset else None,
                 "title": asset.title if asset else "",
@@ -1240,17 +1301,66 @@ async def smart_retry_job_api(
 from app.workflow.workflow_engine import WorkflowEngine
 from app.models.workflow_engine import (
     ProjectGlossary,
+    ProjectTerminologyMemory,
     SpeakerVoiceMapping,
     WorkflowExecution,
     WorkflowStageExecution,
+    WorkflowStepExecution,
 )
 
 _global_workflow_engine = WorkflowEngine()
 
 
+class StartWorkflowRequest(BaseModel):
+    video_url: Optional[str] = Field(None, description="Source video URL")
+    video_path: Optional[str] = Field(None, description="Local source video file path")
+    has_upload_file: Optional[bool] = Field(False, description="Whether a local video file has been selected in UI")
+    target_language: Optional[str] = Field("vi", description="Target translation language")
+    audio_provider_id: Optional[str] = Field("edge_tts", description="Audio TTS provider ID")
+    llm_provider_id: Optional[str] = Field("gemini", description="LLM translation provider ID")
+    voice_id: Optional[str] = Field(None, description="Voice model ID")
+    watermark_enabled: Optional[bool] = Field(False, description="Enable watermark embedding")
+    watermark_type: Optional[str] = Field("image", description="Watermark type: image or text")
+    watermark_image_path: Optional[str] = Field(None, description="Watermark image path")
+    watermark_text: Optional[str] = Field(None, description="Watermark text")
+    watermark_position: Optional[str] = Field("bottom_right", description="Watermark position")
+    watermark_scale: Optional[float] = Field(0.20, description="Watermark scale")
+    watermark_opacity: Optional[float] = Field(0.80, description="Watermark opacity")
+    watermark_margin: Optional[int] = Field(20, description="Watermark margin")
+    watermark_font_size: Optional[int] = Field(32, description="Watermark font size")
+
+
+async def _validate_project_exists(project_id: str, session: AsyncSession) -> Project:
+    """Validate that project_id exists in the projects table, returning 404 if invalid or missing."""
+    if not project_id or project_id == "default_project":
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "PROJECT_NOT_FOUND",
+                "message": "Invalid project_id 'default_project'. Please create or select a valid project before running workflow.",
+                "project_id": project_id,
+            },
+        )
+
+    res = await session.execute(select(Project).where(Project.id == project_id))
+    project = res.scalars().first()
+    if not project:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "PROJECT_NOT_FOUND",
+                "message": f"Project '{project_id}' does not exist in database.",
+                "project_id": project_id,
+            },
+        )
+    return project
+
+
 @router.get("/projects/{project_id}/workflow-status", response_model=dict)
 async def get_workflow_status_api(project_id: str, session: AsyncSession = Depends(get_session)):
     """Get complete 6-stage workflow execution status, current stage, steps, and QC reports."""
+    await _validate_project_exists(project_id, session)
+
     stmt = select(WorkflowExecution).where(WorkflowExecution.project_id == project_id)
     res = await session.execute(stmt)
     wf_exec = res.scalars().first()
@@ -1262,6 +1372,7 @@ async def get_workflow_status_api(project_id: str, session: AsyncSession = Depen
                 "status": "not_started",
                 "current_stage": "INGEST",
                 "current_step": "import_video",
+                "overall_progress_pct": 0,
                 "stages": [
                     {"name": s, "status": "pending", "steps": []}
                     for s in ["INGEST", "ANALYZE", "TRANSLATE", "DUB", "PRODUCE", "PUBLISH"]
@@ -1274,18 +1385,40 @@ async def get_workflow_status_api(project_id: str, session: AsyncSession = Depen
     stages_list = stages_res.scalars().all()
 
     stages_data = []
+    passed_stages = 0
+
     for s_name in ["INGEST", "ANALYZE", "TRANSLATE", "DUB", "PRODUCE", "PUBLISH"]:
         match = next((st for st in stages_list if st.stage_name == s_name), None)
         if match:
+            if match.status == "passed":
+                passed_stages += 1
+
+            stmt_steps = select(WorkflowStepExecution).where(WorkflowStepExecution.stage_execution_id == match.id)
+            steps_res = await session.execute(stmt_steps)
+            steps_list = steps_res.scalars().all()
+
             stages_data.append({
                 "name": s_name,
                 "status": match.status,
                 "error": match.error,
                 "qc_report": match.qc_report,
                 "retry_count": match.retry_count,
+                "steps": [
+                    {
+                        "name": step.step_name,
+                        "status": step.status,
+                        "error": step.error,
+                        "retry_count": step.retry_count,
+                    }
+                    for step in steps_list
+                ],
             })
         else:
             stages_data.append({"name": s_name, "status": "pending", "steps": []})
+
+    overall_pct = int((passed_stages / 6.0) * 100)
+    if wf_exec.status == "completed":
+        overall_pct = 100
 
     return {
         "success": True,
@@ -1294,6 +1427,7 @@ async def get_workflow_status_api(project_id: str, session: AsyncSession = Depen
             "status": wf_exec.status,
             "current_stage": wf_exec.current_stage,
             "current_step": wf_exec.current_step,
+            "overall_progress_pct": overall_pct,
             "error_message": wf_exec.error_message,
             "stages": stages_data,
             "context": wf_exec.context_data,
@@ -1301,16 +1435,61 @@ async def get_workflow_status_api(project_id: str, session: AsyncSession = Depen
     }
 
 
+@router.post("/projects/{project_id}/workflow/preflight", response_model=dict)
+async def preflight_workflow_api(
+    project_id: str,
+    payload: Optional[StartWorkflowRequest] = None,
+    session: AsyncSession = Depends(get_session),
+):
+    """Run pre-flight checks before starting the 6-stage video translation workflow."""
+    from app.services.preflight import run_video_translator_preflight
+
+    await _validate_project_exists(project_id, session)
+
+    res = await run_video_translator_preflight(
+        project_id=project_id,
+        video_url=payload.video_url if payload else None,
+        video_path=payload.video_path if payload else None,
+        has_upload_file=payload.has_upload_file if payload else False,
+        llm_provider_id=payload.llm_provider_id if payload and payload.llm_provider_id else "gemini",
+        audio_provider_id=payload.audio_provider_id if payload and payload.audio_provider_id else "edge_tts",
+        voice_id=payload.voice_id if payload else "vi-VN-HoaiMyNeural",
+        target_language=payload.target_language if payload and payload.target_language else "vi",
+        watermark_enabled=payload.watermark_enabled if payload else False,
+        watermark_type=payload.watermark_type if payload else "image",
+        watermark_image_path=payload.watermark_image_path if payload else None,
+        watermark_text=payload.watermark_text if payload else None,
+        db=session,
+    )
+
+    return {"success": True, "data": res.model_dump()}
+
+
 @router.post("/projects/{project_id}/workflow/start", response_model=dict)
-async def start_workflow_api(project_id: str, session: AsyncSession = Depends(get_session)):
+async def start_workflow_api(
+    project_id: str,
+    payload: Optional[StartWorkflowRequest] = None,
+    session: AsyncSession = Depends(get_session),
+):
     """Start unified 6-stage workflow engine for a project."""
-    wf_exec = await _global_workflow_engine.start_workflow(project_id, session)
+    await _validate_project_exists(project_id, session)
+    ctx_data = payload.dict(exclude_none=True) if payload else {}
+
+    # Snapshot Project Settings
+    p_res = await session.execute(select(Project).where(Project.id == project_id))
+    project = p_res.scalar_one_or_none()
+    proj_settings = (project.settings_json or {}) if project else {}
+    ctx_data["settings_snapshot"] = proj_settings
+
+    print(f"[WORKFLOW SETTINGS SNAPSHOT] Project ID: {project_id} | Settings Snapshot Frozen: {list(proj_settings.keys())}")
+    wf_exec = await _global_workflow_engine.start_workflow(project_id, context_data=ctx_data, db=session)
     return {"success": True, "data": {"workflow_id": wf_exec.id, "status": wf_exec.status}}
 
 
 @router.post("/projects/{project_id}/workflow/pause", response_model=dict)
 async def pause_workflow_api(project_id: str, session: AsyncSession = Depends(get_session)):
     """Pause unified 6-stage workflow engine for a project."""
+    await _validate_project_exists(project_id, session)
     ok = await _global_workflow_engine.pause_workflow(project_id, session)
     return {"success": True, "data": {"paused": ok}}
 
@@ -1318,8 +1497,25 @@ async def pause_workflow_api(project_id: str, session: AsyncSession = Depends(ge
 @router.post("/projects/{project_id}/workflow/resume", response_model=dict)
 async def resume_workflow_api(project_id: str, session: AsyncSession = Depends(get_session)):
     """Resume unified 6-stage workflow engine from failed/paused stage."""
+    await _validate_project_exists(project_id, session)
     wf_exec = await _global_workflow_engine.resume_workflow(project_id, session)
     return {"success": True, "data": {"workflow_id": wf_exec.id, "status": wf_exec.status}}
+
+
+@router.post("/projects/{project_id}/workflow/cancel", response_model=dict)
+async def cancel_workflow_api(project_id: str, session: AsyncSession = Depends(get_session)):
+    """Cancel unified 6-stage workflow engine for a project."""
+    await _validate_project_exists(project_id, session)
+    ok = await _global_workflow_engine.cancel_workflow(project_id, session)
+    return {"success": True, "data": {"cancelled": ok}}
+
+
+@router.post("/projects/{project_id}/workflow/stage/{stage_name}/retry", response_model=dict)
+async def retry_stage_api(project_id: str, stage_name: str, session: AsyncSession = Depends(get_session)):
+    """Reset and retry a specific stage within the 6-stage workflow."""
+    await _validate_project_exists(project_id, session)
+    wf_exec = await _global_workflow_engine.retry_stage(project_id, stage_name, session)
+    return {"success": True, "data": {"workflow_id": wf_exec.id, "status": wf_exec.status, "current_stage": wf_exec.current_stage}}
 
 
 # ── Project Glossary Endpoints ─────────────────────────────────────
@@ -1377,6 +1573,85 @@ async def delete_project_glossary_api(
     await session.execute(
         delete(ProjectGlossary).where(
             ProjectGlossary.id == term_id, ProjectGlossary.project_id == project_id
+        )
+    )
+    await session.commit()
+    return {"success": True, "data": {"deleted": True}}
+
+
+# ── Terminology Memory Endpoints ────────────────────────────────────
+
+class TerminologyMemoryCreate(BaseModel):
+    source_term: str = Field(..., description="Source term")
+    suggested_term: str = Field(..., description="Suggested/translated term")
+    term_type: str = Field("other", description="character, location, organization, skill, weapon, title, other")
+    confidence: float = Field(0.9, description="Confidence score")
+    needs_review: bool = Field(False, description="Requires human review")
+
+
+@router.get("/projects/{project_id}/terminology-memory", response_model=dict)
+async def get_terminology_memory_api(project_id: str, session: AsyncSession = Depends(get_session)):
+    """List AI auto-detected terminology memory terms."""
+    stmt = select(ProjectTerminologyMemory).where(ProjectTerminologyMemory.project_id == project_id)
+    res = await session.execute(stmt)
+    terms = res.scalars().all()
+    return {
+        "success": True,
+        "data": [
+            {
+                "id": t.id,
+                "source_term": t.source_term,
+                "suggested_term": t.suggested_term,
+                "term_type": t.term_type,
+                "confidence": t.confidence,
+                "needs_review": t.needs_review,
+            }
+            for t in terms
+        ],
+    }
+
+
+@router.post("/projects/{project_id}/terminology-memory", response_model=dict)
+async def add_terminology_memory_api(
+    project_id: str, payload: TerminologyMemoryCreate, session: AsyncSession = Depends(get_session)
+):
+    """Add or update term in terminology memory."""
+    stmt = select(ProjectTerminologyMemory).where(
+        ProjectTerminologyMemory.project_id == project_id,
+        ProjectTerminologyMemory.source_term == payload.source_term,
+    )
+    res = await session.execute(stmt)
+    term = res.scalars().first()
+
+    if not term:
+        term = ProjectTerminologyMemory(
+            id=str(uuid.uuid4()),
+            project_id=project_id,
+            source_term=payload.source_term,
+            suggested_term=payload.suggested_term,
+            term_type=payload.term_type,
+            confidence=payload.confidence,
+            needs_review=payload.needs_review,
+        )
+        session.add(term)
+    else:
+        term.suggested_term = payload.suggested_term
+        term.term_type = payload.term_type
+        term.confidence = payload.confidence
+        term.needs_review = payload.needs_review
+
+    await session.commit()
+    return {"success": True, "data": {"id": term.id, "source_term": term.source_term}}
+
+
+@router.delete("/projects/{project_id}/terminology-memory/{term_id}", response_model=dict)
+async def delete_terminology_memory_api(
+    project_id: str, term_id: str, session: AsyncSession = Depends(get_session)
+):
+    """Delete a terminology memory item."""
+    await session.execute(
+        delete(ProjectTerminologyMemory).where(
+            ProjectTerminologyMemory.id == term_id, ProjectTerminologyMemory.project_id == project_id
         )
     )
     await session.commit()

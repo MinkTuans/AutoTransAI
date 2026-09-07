@@ -58,14 +58,36 @@ export default function App() {
           <CreateProject onProjectCreated={handleProjectCreated} />
         )}
 
-        {activePage === 'detail' && selectedProjectId && (
-          <ProjectDetail
-            projectId={selectedProjectId}
-            onBack={() => setActivePage('dashboard')}
-          />
+        {activePage === 'detail' && (
+          selectedProjectId ? (
+            <ProjectDetail
+              projectId={selectedProjectId}
+              onBack={() => setActivePage('dashboard')}
+              onEditInTranslator={(projId) => {
+                setSelectedProjectId(projId);
+                setActivePage('translator');
+              }}
+            />
+          ) : (
+            <div className="card" style={{ padding: '2rem', textAlign: 'center', color: '#cbd5e1' }}>
+              <h3 style={{ color: '#f87171', marginBottom: '0.5rem' }}>⚠️ Chưa chọn dự án</h3>
+              <p style={{ color: '#94a3b8', marginBottom: '1.5rem' }}>Vui lòng chọn một dự án từ danh sách Dashboard để xem chi tiết.</p>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setActivePage('dashboard')}
+              >
+                ← Quay lại Dashboard
+              </button>
+            </div>
+          )
         )}
 
-        {activePage === 'translator' && <VideoTranslator initialJobId={selectedJobId} />}
+        {activePage === 'translator' && (
+          <VideoTranslator
+            initialJobId={selectedJobId}
+            initialProjectId={selectedProjectId}
+          />
+        )}
 
         {activePage === 'settings' && <Settings />}
       </main>

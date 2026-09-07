@@ -10,6 +10,11 @@ export default function Dashboard({ onSelectProject, onCreateNew }) {
   
   // Selection state
   const [selectedIds, setSelectedIds] = useState([]);
+
+  // Pagination state (8 items per page)
+  const ITEMS_PER_PAGE = 8;
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
   
   // Delete confirmation modal state
   const [confirmModal, setConfirmModal] = useState({
@@ -19,15 +24,16 @@ export default function Dashboard({ onSelectProject, onCreateNew }) {
     itemsToDelete: [],
   });
 
-  const loadData = async () => {
+  const loadData = async (targetPage = currentPage) => {
     setLoading(true);
     try {
       const [projRes, intRes] = await Promise.all([
-        projectsApi.list(),
+        projectsApi.list(targetPage, ITEMS_PER_PAGE),
         systemApi.interrupted().catch(() => ({ success: false, data: [] })),
       ]);
       if (projRes.success && Array.isArray(projRes.data)) {
         setProjects(projRes.data);
+        setTotalCount(projRes.total !== undefined ? projRes.total : projRes.data.length);
       }
       if (intRes.success && Array.isArray(intRes.data)) {
         setInterrupted(intRes.data);
@@ -40,15 +46,27 @@ export default function Dashboard({ onSelectProject, onCreateNew }) {
   };
 
   useEffect(() => {
-    loadData();
-  }, []);
+    loadData(currentPage);
+  }, [currentPage]);
 
-  // Multi-select handlers
-  const handleSelectAll = (e) => {
+  // Paginated projects calculations (server-side 8 per page)
+  const totalPages = Math.max(1, Math.ceil(totalCount / ITEMS_PER_PAGE));
+  const validCurrentPage = Math.min(currentPage, totalPages);
+  const currentProjects = projects;
+  const startIndex = totalCount === 0 ? 0 : (validCurrentPage - 1) * ITEMS_PER_PAGE + 1;
+  const endIndex = Math.min((validCurrentPage - 1) * ITEMS_PER_PAGE + currentProjects.length, totalCount);
+
+  // Multi-select handlers for current page
+  const isCurrentPageAllSelected =
+    currentProjects.length > 0 && currentProjects.every((p) => selectedIds.includes(p.id));
+
+  const handleSelectAllCurrentPage = (e) => {
     if (e.target.checked) {
-      setSelectedIds(projects.map((p) => p.id));
+      const pageIds = currentProjects.map((p) => p.id);
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...pageIds])));
     } else {
-      setSelectedIds([]);
+      const pageIds = new Set(currentProjects.map((p) => p.id));
+      setSelectedIds((prev) => prev.filter((id) => !pageIds.has(id)));
     }
   };
 
@@ -123,14 +141,12 @@ export default function Dashboard({ onSelectProject, onCreateNew }) {
     }
   };
 
-  const isAllSelected = projects.length > 0 && selectedIds.length === projects.length;
-
   return (
     <div>
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h1 className="page-title">Projects Dashboard</h1>
-          <p className="page-subtitle">Unified Supabase PostgreSQL & Persistent Supabase Media Storage</p>
+          <p className="page-subtitle">Laragon MySQL Database & Persistent Local Media Storage</p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem' }}>
           {selectedIds.length > 0 && (
@@ -168,8 +184,8 @@ export default function Dashboard({ onSelectProject, onCreateNew }) {
       )}
 
       {/* Projects List */}
-      <div className="card">
-        <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--border-color)', margin: 0 }}>
           <span>All Projects ({projects.length})</span>
           {selectedIds.length > 0 && (
             <span style={{ fontSize: '0.85rem', color: 'var(--accent-color)' }}>
@@ -180,7 +196,7 @@ export default function Dashboard({ onSelectProject, onCreateNew }) {
 
         {loading ? (
           <div style={{ padding: '1.5rem 1rem' }}>
-            <LoadingSpinner size="md" label="Đang tải danh sách dự án..." sublabel="Đang đồng bộ từ PostgreSQL & Supabase Storage..." />
+            <LoadingSpinner size="md" label="Đang tải danh sách dự án..." sublabel="Đang đồng bộ từ MySQL & Local Disk Storage..." />
             <div style={{ marginTop: '1.5rem' }}>
               <SkeletonLoader type="card" rows={3} />
             </div>
@@ -195,112 +211,160 @@ export default function Dashboard({ onSelectProject, onCreateNew }) {
             </button>
           </div>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th style={{ width: '40px' }}>
-                  <input
-                    type="checkbox"
-                    checked={isAllSelected}
-                    onChange={handleSelectAll}
-                    title="Select All Projects"
-                  />
-                </th>
-                <th>Title / Name</th>
-                <th>Type</th>
-                <th>Job ID</th>
-                <th>Segments</th>
-                <th>Status & Progress</th>
-                <th>Created</th>
-                <th style={{ textAlign: 'right' }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {projects.map((p) => {
-                const isSelected = selectedIds.includes(p.id);
-                return (
-                  <tr
-                    key={p.id}
-                    onClick={() => onSelectProject(p)}
+          <>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th style={{ width: '40px' }}>
+                    <input
+                      type="checkbox"
+                      checked={isCurrentPageAllSelected}
+                      onChange={handleSelectAllCurrentPage}
+                      title="Select All Projects on Current Page"
+                    />
+                  </th>
+                  <th>Title / Name</th>
+                  <th>Type</th>
+                  <th>Job ID</th>
+                  <th>Segments</th>
+                  <th>Status & Progress</th>
+                  <th>Created</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {currentProjects.map((p) => {
+                  const isSelected = selectedIds.includes(p.id);
+                  return (
+                    <tr
+                      key={p.id}
+                      onClick={() => onSelectProject(p)}
+                      style={{
+                        cursor: 'pointer',
+                        backgroundColor: isSelected ? 'rgba(99, 102, 241, 0.1)' : 'transparent',
+                      }}
+                    >
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => handleToggleSelect(p.id, e)}
+                        />
+                      </td>
+                      <td style={{ fontWeight: '600' }}>
+                        {p.title}
+                        {p.output_video_url && (
+                          <div style={{ fontSize: '0.75rem', color: '#10b981', marginTop: '2px' }}>
+                            🎥 Final Media Ready
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        {p.type === 'video_translator' ? (
+                          <span className="badge" style={{ backgroundColor: 'rgba(139, 92, 246, 0.2)', color: '#a78bfa' }}>
+                            🌐 Video Translator
+                          </span>
+                        ) : (
+                          <span className="badge" style={{ backgroundColor: 'rgba(59, 130, 246, 0.2)', color: '#60a5fa' }}>
+                            🎬 Script to Video
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ fontFamily: 'monospace', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                        {p.id}
+                      </td>
+                      <td>{p.segment_count || 0}</td>
+                      <td>
+                        <div>{getStatusBadge(p)}</div>
+                        {p.progress > 0 && p.progress < 100 && (
+                          <div style={{ width: '100px', height: '4px', backgroundColor: '#374151', borderRadius: '2px', marginTop: '4px', overflow: 'hidden' }}>
+                            <div style={{ width: `${p.progress}%`, height: '100%', backgroundColor: '#6366f1' }} />
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                        {p.created_at ? new Date(p.created_at).toLocaleDateString() : 'N/A'}
+                      </td>
+                      <td style={{ textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
+                        {p.output_video_url && (
+                          <a
+                            href={p.output_video_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="btn btn-secondary"
+                            style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', marginRight: '0.4rem', textDecoration: 'none' }}
+                            title="View / Download Final Video"
+                          >
+                            🎥 View
+                          </a>
+                        )}
+                        <button
+                          className="btn btn-secondary"
+                          style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', marginRight: '0.4rem' }}
+                          onClick={() => onSelectProject(p)}
+                        >
+                          Open
+                        </button>
+                        <button
+                          className="btn btn-danger"
+                          style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}
+                          onClick={(e) => promptDeleteSingle(p, e)}
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            {/* Pagination Controls Bar */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.875rem 1.5rem', borderTop: '1px solid var(--border-color)', backgroundColor: 'var(--bg-secondary)' }}>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                Hiển thị <strong>{startIndex}</strong> - <strong>{endIndex}</strong> trong tổng số <strong>{totalCount}</strong> dự án (8 dự án/trang)
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <button
+                  className="btn btn-secondary"
+                  style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
+                  disabled={validCurrentPage === 1}
+                  onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+                >
+                  ◀ Trang trước
+                </button>
+
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
+                  <button
+                    key={pageNum}
+                    onClick={() => setCurrentPage(pageNum)}
                     style={{
+                      padding: '0.35rem 0.7rem',
+                      fontSize: '0.8rem',
+                      borderRadius: '6px',
+                      border: pageNum === validCurrentPage ? '1px solid #6366f1' : '1px solid #374151',
+                      backgroundColor: pageNum === validCurrentPage ? '#6366f1' : '#1f2937',
+                      color: '#fff',
+                      fontWeight: pageNum === validCurrentPage ? 'bold' : 'normal',
                       cursor: 'pointer',
-                      backgroundColor: isSelected ? 'rgba(99, 102, 241, 0.1)' : 'transparent',
                     }}
                   >
-                    <td onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={(e) => handleToggleSelect(p.id, e)}
-                      />
-                    </td>
-                    <td style={{ fontWeight: '600' }}>
-                      {p.title}
-                      {p.output_video_url && (
-                        <div style={{ fontSize: '0.75rem', color: '#10b981', marginTop: '2px' }}>
-                          🎥 Final Media Ready
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      {p.type === 'video_translator' ? (
-                        <span className="badge" style={{ backgroundColor: 'rgba(139, 92, 246, 0.2)', color: '#a78bfa' }}>
-                          🌐 Video Translator
-                        </span>
-                      ) : (
-                        <span className="badge" style={{ backgroundColor: 'rgba(59, 130, 246, 0.2)', color: '#60a5fa' }}>
-                          🎬 Script to Video
-                        </span>
-                      )}
-                    </td>
-                    <td style={{ fontFamily: 'monospace', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                      {p.id}
-                    </td>
-                    <td>{p.segment_count || 0}</td>
-                    <td>
-                      <div>{getStatusBadge(p)}</div>
-                      {p.progress > 0 && p.progress < 100 && (
-                        <div style={{ width: '100px', height: '4px', backgroundColor: '#374151', borderRadius: '2px', marginTop: '4px', overflow: 'hidden' }}>
-                          <div style={{ width: `${p.progress}%`, height: '100%', backgroundColor: '#6366f1' }} />
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                      {p.created_at ? new Date(p.created_at).toLocaleDateString() : 'N/A'}
-                    </td>
-                    <td style={{ textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
-                      {p.output_video_url && (
-                        <a
-                          href={p.output_video_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="btn btn-secondary"
-                          style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', marginRight: '0.4rem', textDecoration: 'none' }}
-                          title="View / Download Final Video"
-                        >
-                          🎥 View
-                        </a>
-                      )}
-                      <button
-                        className="btn btn-secondary"
-                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', marginRight: '0.4rem' }}
-                        onClick={() => onSelectProject(p)}
-                      >
-                        Open
-                      </button>
-                      <button
-                        className="btn btn-danger"
-                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}
-                        onClick={(e) => promptDeleteSingle(p, e)}
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    {pageNum}
+                  </button>
+                ))}
+
+                <button
+                  className="btn btn-secondary"
+                  style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
+                  disabled={validCurrentPage === totalPages}
+                  onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+                >
+                  Trang sau ▶
+                </button>
+              </div>
+            </div>
+          </>
         )}
       </div>
 

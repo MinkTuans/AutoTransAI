@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { videoTranslatorApi, providersApi } from '../api';
+import { videoTranslatorApi, providersApi, projectsApi } from '../api';
 import VideoEditorStudio from '../components/VideoEditorStudio';
 import AIQCScorecard from '../components/AIQCScorecard';
 import YouTubePublisherModal from '../components/YouTubePublisherModal';
@@ -8,10 +8,42 @@ import ProjectGlossaryManager from '../components/ProjectGlossaryManager';
 import AIThumbnailPanel from '../components/AIThumbnailPanel';
 import { LoadingSpinner, ButtonSpinner, LoadingOverlay } from '../components/LoadingSpinner';
 
+function CollapsibleCard({ title, icon, defaultOpen = true, children, extraHeaderRight }) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+
+  return (
+    <div className="card" style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '12px', marginBottom: '24px', overflow: 'hidden' }}>
+      <div
+        onClick={() => setIsOpen(!isOpen)}
+        style={{
+          padding: '16px 20px',
+          background: '#0f172a',
+          cursor: 'pointer',
+          display: 'flex',
+          justify: 'space-between',
+          alignItems: 'center',
+          userSelect: 'none',
+          borderBottom: isOpen ? '1px solid #334155' : 'none',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ fontSize: '18px' }}>{icon}</span>
+          <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold', color: '#f8fafc' }}>{title}</h3>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {extraHeaderRight && <div onClick={(e) => e.stopPropagation()}>{extraHeaderRight}</div>}
+          <span style={{ fontSize: '13px', color: '#94a3b8', background: '#1e293b', padding: '4px 10px', borderRadius: '6px', fontWeight: 'bold', border: '1px solid #334155' }}>
+            {isOpen ? '▲ Thu gọn' : '▼ Mở rộng'}
+          </span>
+        </div>
+      </div>
+      {isOpen && <div style={{ padding: '20px' }}>{children}</div>}
+    </div>
+  );
+}
 
 
-
-export default function VideoTranslator({ initialJobId }) {
+export default function VideoTranslator({ initialJobId, initialProjectId }) {
   const [showYouTubeModal, setShowYouTubeModal] = useState(false);
   const [inputMode, setInputMode] = useState('url');
   const [videoUrl, setVideoUrl] = useState('');
@@ -23,17 +55,21 @@ export default function VideoTranslator({ initialJobId }) {
   const [checkError, setCheckError] = useState(null);
 
   // Config options
+  const [sourceLanguage, setSourceLanguage] = useState('auto');
   const [targetLanguage, setTargetLanguage] = useState('vi');
   const [audioProviderId, setAudioProviderId] = useState('edge_tts');
   const [llmProviderId, setLlmProviderId] = useState('gemini');
+  const [sttModel, setSttModel] = useState('gemini-2.5-flash');
   const [voices, setVoices] = useState([]);
   const [voiceId, setVoiceId] = useState('vi-VN-HoaiMyNeural');
   const [originalAudioMode, setOriginalAudioMode] = useState('mute');
+  const [originalAudioVolume, setOriginalAudioVolume] = useState(0.20);
 
   // Watermark Settings State
   const [watermarkEnabled, setWatermarkEnabled] = useState(false);
   const [watermarkType, setWatermarkType] = useState('image');
   const [watermarkImagePath, setWatermarkImagePath] = useState('');
+  const [watermarkImageAssetId, setWatermarkImageAssetId] = useState(null);
   const [watermarkImagePreview, setWatermarkImagePreview] = useState('');
   const [watermarkText, setWatermarkText] = useState('© AutoTransAI Studio');
   const [watermarkPosition, setWatermarkPosition] = useState('bottom_right');
@@ -44,16 +80,77 @@ export default function VideoTranslator({ initialJobId }) {
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const [watermarkValidationError, setWatermarkValidationError] = useState('');
 
+  // AI Thumbnail Settings State
+  const [thumbnailEnabled, setThumbnailEnabled] = useState(false);
+  const [thumbnailProvider, setThumbnailProvider] = useState('pollinations');
+  const [thumbnailModel, setThumbnailModel] = useState('default');
+  const [thumbnailStyle, setThumbnailStyle] = useState('auto');
+  const [thumbnailInstruction, setThumbnailInstruction] = useState('');
+
+  // Project Management & Pre-flight State
+  const [projectsList, setProjectsList] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState(initialProjectId || null);
+  const [savedProjectSettings, setSavedProjectSettings] = useState(null);
+  const [isSettingsDirty, setIsSettingsDirty] = useState(false);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+
+  // Modals & Switch Project Guard
+  const [showNoProjectModal, setShowNoProjectModal] = useState(false);
+  const [showCreateProjectModal, setShowCreateProjectModal] = useState(false);
+  const [newProjectTitle, setNewProjectTitle] = useState('');
+  const [newProjectDescription, setNewProjectDescription] = useState('');
+  const [isCreatingProject, setIsCreatingProject] = useState(false);
+
+  const [showPreflightModal, setShowPreflightModal] = useState(false);
+  const [isPreflighting, setIsPreflighting] = useState(false);
+  const [preflightResult, setPreflightResult] = useState(null);
+
+  const [showSwitchGuardModal, setShowSwitchGuardModal] = useState(false);
+  const [pendingSwitchProjectId, setPendingSwitchProjectId] = useState(null);
+
+  const getCurrentSettingsObject = () => ({
+    input_mode: inputMode,
+    video_url: videoUrl,
+    source_language: sourceLanguage,
+    target_language: targetLanguage,
+    stt_provider_id: llmProviderId,
+    stt_model: sttModel,
+    llm_provider_id: llmProviderId,
+    translation_provider_id: llmProviderId,
+    translation_model: sttModel,
+    audio_provider_id: audioProviderId,
+    voice_id: voiceId,
+    original_audio_mode: originalAudioMode,
+    original_audio_volume: originalAudioVolume,
+    watermark_enabled: watermarkEnabled,
+    watermark_type: watermarkType,
+    watermark_image_path: watermarkImagePath,
+    watermark_image_asset_id: watermarkImageAssetId,
+    watermark_text: watermarkText,
+    watermark_position: watermarkPosition,
+    watermark_scale: watermarkScale,
+    watermark_opacity: watermarkOpacity,
+    watermark_margin: watermarkMargin,
+    watermark_font_size: watermarkFontSize,
+    thumbnail_enabled: thumbnailEnabled,
+    thumbnail_provider: thumbnailProvider,
+    thumbnail_model: thumbnailModel,
+    thumbnail_style: thumbnailStyle,
+    thumbnail_custom_instruction: thumbnailInstruction,
+  });
+
   const handleLogoUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setWatermarkValidationError('');
     setIsUploadingLogo(true);
     try {
-      const res = await videoTranslatorApi.uploadWatermarkLogo(file);
+      const res = await videoTranslatorApi.uploadWatermarkLogo(file, selectedProjectId);
       if (res.success && res.data) {
         setWatermarkImagePath(res.data.image_path);
-        setWatermarkImagePreview(res.data.url || URL.createObjectURL(file));
+        if (res.data.asset_id) setWatermarkImageAssetId(res.data.asset_id);
+        const urlStr = res.data.url || URL.createObjectURL(file);
+        setWatermarkImagePreview(urlStr);
       }
     } catch (err) {
       setWatermarkValidationError('Lỗi upload logo: ' + (err.response?.data?.detail || err.message));
@@ -70,47 +167,390 @@ export default function VideoTranslator({ initialJobId }) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [pipelineError, setPipelineError] = useState(null);
 
-  // Workflow engine state
+  // Workflow engine state & actions
   const [workflowStatusData, setWorkflowStatusData] = useState(null);
+  const [loadingWorkflowAction, setLoadingWorkflowAction] = useState(null);
 
-  const activeProjectId = job?.project_id || asset?.project_id || 'default_project';
+  const activeProjectId = selectedProjectId || job?.project_id || asset?.project_id || (job?.id && job.id !== 'default_project' ? job.id : null);
 
-  const fetchWorkflowStatus = async (projectId) => {
+  // Load Projects List
+  const fetchProjectsList = async () => {
     try {
-      const res = await fetch(`/api/video-translator/projects/${projectId || activeProjectId}/workflow-status`);
-      const data = await res.json();
-      if (data.success) {
-        setWorkflowStatusData(data.data);
+      const res = await projectsApi.list(1, 100);
+      if (res.success && Array.isArray(res.data)) {
+        setProjectsList(res.data);
+      }
+    } catch (err) {
+      console.error('Failed fetching projects list', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchProjectsList();
+  }, []);
+
+  const hydrateSettings = (cfg) => {
+    setSavedProjectSettings(cfg);
+    if (cfg.input_mode) setInputMode(cfg.input_mode);
+    if (cfg.video_url !== undefined) setVideoUrl(cfg.video_url);
+    if (cfg.source_language) setSourceLanguage(cfg.source_language);
+    if (cfg.target_language) setTargetLanguage(cfg.target_language);
+    if (cfg.audio_provider_id) setAudioProviderId(cfg.audio_provider_id);
+    if (cfg.llm_provider_id) setLlmProviderId(cfg.llm_provider_id);
+    if (cfg.stt_model) setSttModel(cfg.stt_model);
+    if (cfg.voice_id) setVoiceId(cfg.voice_id);
+    if (cfg.original_audio_mode) setOriginalAudioMode(cfg.original_audio_mode);
+    if (cfg.original_audio_volume !== undefined) setOriginalAudioVolume(cfg.original_audio_volume);
+    
+    setWatermarkEnabled(Boolean(cfg.watermark_enabled));
+    setWatermarkType(cfg.watermark_type || 'image');
+    setWatermarkImagePath(cfg.watermark_image_path || '');
+    setWatermarkImageAssetId(cfg.watermark_image_asset_id || null);
+    if (cfg.watermark_image_path) {
+      const rel = cfg.watermark_image_path.replace(/\\/g, '/');
+      setWatermarkImagePreview(rel.startsWith('http') || rel.startsWith('blob:') ? rel : `/api/storage/files/${rel}`);
+    } else {
+      setWatermarkImagePreview('');
+    }
+    setWatermarkText(cfg.watermark_text || '© AutoTransAI Studio');
+    setWatermarkPosition(cfg.watermark_position || 'bottom_right');
+    setWatermarkScale(cfg.watermark_scale !== undefined ? cfg.watermark_scale : 0.20);
+    setWatermarkOpacity(cfg.watermark_opacity !== undefined ? cfg.watermark_opacity : 0.80);
+    setWatermarkMargin(cfg.watermark_margin !== undefined ? cfg.watermark_margin : 20);
+    setWatermarkFontSize(cfg.watermark_font_size !== undefined ? cfg.watermark_font_size : 32);
+
+    setThumbnailEnabled(Boolean(cfg.thumbnail_enabled));
+    setThumbnailProvider(cfg.thumbnail_provider || 'pollinations');
+    setThumbnailModel(cfg.thumbnail_model || 'default');
+    setThumbnailStyle(cfg.thumbnail_style || 'auto');
+    setThumbnailInstruction(cfg.thumbnail_custom_instruction || '');
+
+    setIsSettingsDirty(false);
+  };
+
+  // Sync Project Settings when Project selection changes
+  useEffect(() => {
+    if (!selectedProjectId || selectedProjectId === 'default_project') return;
+
+    projectsApi.getSettings(selectedProjectId).then(res => {
+      if (res.success && (res.data || res.settings)) {
+        const cfg = res.data || res.settings;
+        hydrateSettings(cfg);
+      }
+    }).catch(err => console.error('Failed loading project settings', err));
+
+    fetchWorkflowStatus(selectedProjectId);
+  }, [selectedProjectId]);
+
+  // Detect dirty state changes across ALL fields
+  useEffect(() => {
+    if (!savedProjectSettings || !selectedProjectId) {
+      setIsSettingsDirty(false);
+      return;
+    }
+    const current = getCurrentSettingsObject();
+    const compareKeys = [
+      'target_language', 'source_language', 'audio_provider_id', 'llm_provider_id',
+      'stt_model', 'voice_id', 'original_audio_mode', 'original_audio_volume',
+      'watermark_enabled', 'watermark_type', 'watermark_image_path', 'watermark_text',
+      'watermark_position', 'watermark_scale', 'watermark_opacity', 'watermark_margin',
+      'watermark_font_size', 'thumbnail_enabled', 'thumbnail_provider', 'thumbnail_model',
+      'thumbnail_style', 'thumbnail_custom_instruction'
+    ];
+    
+    let isDifferent = false;
+    for (const key of compareKeys) {
+      const curVal = current[key];
+      const savedVal = savedProjectSettings[key];
+      if (JSON.stringify(curVal) !== JSON.stringify(savedVal)) {
+        isDifferent = true;
+        break;
+      }
+    }
+
+    setIsSettingsDirty(isDifferent);
+  }, [
+    selectedProjectId,
+    targetLanguage,
+    sourceLanguage,
+    audioProviderId,
+    llmProviderId,
+    sttModel,
+    voiceId,
+    originalAudioMode,
+    originalAudioVolume,
+    watermarkEnabled,
+    watermarkType,
+    watermarkImagePath,
+    watermarkImageAssetId,
+    watermarkText,
+    watermarkPosition,
+    watermarkScale,
+    watermarkOpacity,
+    watermarkMargin,
+    watermarkFontSize,
+    thumbnailEnabled,
+    thumbnailProvider,
+    thumbnailModel,
+    thumbnailStyle,
+    thumbnailInstruction,
+    savedProjectSettings,
+  ]);
+
+  const handleSaveSettingsToProject = async () => {
+    if (!selectedProjectId) return;
+    setIsSavingSettings(true);
+    try {
+      const currentConfig = getCurrentSettingsObject();
+      const res = await projectsApi.saveSettings(selectedProjectId, currentConfig);
+      if (res.success && (res.data || res.settings)) {
+        const savedData = res.data || res.settings;
+        setSavedProjectSettings(savedData);
+        setIsSettingsDirty(false);
+      }
+    } catch (err) {
+      alert('Không thể lưu cấu hình dự án: ' + formatApiError(err, 'Lỗi hệ thống'));
+    } finally {
+      setIsSavingSettings(false);
+    }
+  };
+
+  const handleDiscardChanges = () => {
+    if (savedProjectSettings) {
+      hydrateSettings(savedProjectSettings);
+    }
+  };
+
+  const handleProjectSelectAttempt = (targetId) => {
+    if (targetId === selectedProjectId) return;
+    if (isSettingsDirty) {
+      setPendingSwitchProjectId(targetId);
+      setShowSwitchGuardModal(true);
+    } else {
+      setSelectedProjectId(targetId);
+    }
+  };
+
+  const fetchWorkflowStatus = async (targetProjId) => {
+    const projId = targetProjId || activeProjectId;
+    if (!projId || projId === 'default_project') return;
+    try {
+      const res = await videoTranslatorApi.getWorkflowStatus(projId);
+      if (res.success) {
+        setWorkflowStatusData(res.data);
       }
     } catch (err) {
       console.error('Failed fetching workflow status', err);
     }
   };
 
-  const handleStartWorkflow = async () => {
+  const handleOpenPreflightOrPromptProject = async () => {
+    if (!activeProjectId || activeProjectId === 'default_project') {
+      setShowNoProjectModal(true);
+      return;
+    }
+    runPreflightCheck(activeProjectId);
+  };
+
+  const runPreflightCheck = async (targetProjId) => {
+    const projId = targetProjId || activeProjectId;
+    if (!projId || projId === 'default_project') return;
+
+    setIsPreflighting(true);
+    setShowPreflightModal(true);
     try {
-      await fetch(`/api/video-translator/projects/${activeProjectId}/workflow/start`, { method: 'POST' });
-      fetchWorkflowStatus(activeProjectId);
+      const payload = {
+        video_url: inputMode === 'url' ? videoUrl : null,
+        video_path: asset?.file_path || asset?.video_path || null,
+        has_upload_file: inputMode === 'upload' && Boolean(uploadFile),
+        target_language: targetLanguage,
+        audio_provider_id: audioProviderId,
+        llm_provider_id: llmProviderId,
+        voice_id: voiceId,
+        watermark_enabled: watermarkEnabled,
+        watermark_type: watermarkType,
+        watermark_image_path: watermarkImagePath,
+        watermark_text: watermarkText,
+        watermark_position: watermarkPosition,
+        watermark_scale: watermarkScale,
+        watermark_opacity: watermarkOpacity,
+        watermark_margin: watermarkMargin,
+        watermark_font_size: watermarkFontSize,
+      };
+
+      const res = await videoTranslatorApi.preflightWorkflow(projId, payload);
+      if (res.success) {
+        setPreflightResult(res.data);
+      }
     } catch (err) {
-      console.error('Failed starting workflow', err);
+      alert('Không thể thực hiện Pre-flight check: ' + formatApiError(err, 'Lỗi hệ thống'));
+    } finally {
+      setIsPreflighting(false);
+    }
+  };
+
+  const executeStartWorkflowAfterPreflight = async () => {
+    setShowPreflightModal(false);
+    setLoadingWorkflowAction('start');
+    setIsProcessing(true);
+    setPipelineError(null);
+    setWorkflowStatusData(prev => ({
+      ...(prev || {}),
+      status: 'running',
+      current_stage: 'INGEST',
+      current_step: 'Đang khởi chạy workflow...',
+      overall_progress_pct: 0,
+      stages: [
+        { name: 'INGEST', status: 'running' },
+        { name: 'ANALYZE', status: 'pending' },
+        { name: 'TRANSLATE', status: 'pending' },
+        { name: 'DUB', status: 'pending' },
+        { name: 'PRODUCE', status: 'pending' },
+        { name: 'PUBLISH', status: 'pending' },
+      ]
+    }));
+    if (!asset && ((inputMode === 'upload' && uploadFile) || (inputMode === 'url' && videoUrl))) {
+      handleStartImportAndTranslation();
+    } else {
+      handleStartWorkflow();
+    }
+  };
+
+  const handleCreateProjectSubmit = async (e) => {
+    e.preventDefault();
+    if (!newProjectTitle.trim()) return;
+
+    setIsCreatingProject(true);
+    try {
+      const currentConfig = getCurrentSettingsObject();
+
+      const res = await projectsApi.create({
+        title: newProjectTitle,
+        description: newProjectDescription,
+        workflow_mode: 'video_translator',
+        settings_json: currentConfig,
+      });
+
+      if (res.success && res.data) {
+        const createdId = res.data.project_id || res.data.id;
+        setSelectedProjectId(createdId);
+        hydrateSettings(res.data.settings || currentConfig);
+        setIsSettingsDirty(false);
+        setShowCreateProjectModal(false);
+        setShowNoProjectModal(false);
+        setNewProjectTitle('');
+        setNewProjectDescription('');
+        await fetchProjectsList();
+        runPreflightCheck(createdId);
+      }
+    } catch (err) {
+      alert('Không thể tạo dự án mới: ' + formatApiError(err, 'Lỗi hệ thống'));
+    } finally {
+      setIsCreatingProject(false);
+    }
+  };
+
+  const handleStartWorkflow = async () => {
+    if (!activeProjectId || activeProjectId === 'default_project') {
+      setShowNoProjectModal(true);
+      return;
+    }
+    setLoadingWorkflowAction('start');
+    setIsProcessing(true);
+    setPipelineError(null);
+    setWorkflowStatusData(prev => ({
+      ...(prev || {}),
+      status: 'running',
+      current_stage: prev?.current_stage || 'INGEST',
+      current_step: 'Đang gửi yêu cầu khởi chạy...',
+      overall_progress_pct: prev?.overall_progress_pct || 0,
+      stages: prev?.stages || [
+        { name: 'INGEST', status: 'running' },
+        { name: 'ANALYZE', status: 'pending' },
+        { name: 'TRANSLATE', status: 'pending' },
+        { name: 'DUB', status: 'pending' },
+        { name: 'PRODUCE', status: 'pending' },
+        { name: 'PUBLISH', status: 'pending' },
+      ]
+    }));
+    try {
+      const payload = {
+        video_url: inputMode === 'url' ? videoUrl : null,
+        video_path: asset?.file_path || asset?.video_path || null,
+        target_language: targetLanguage,
+        audio_provider_id: audioProviderId,
+        llm_provider_id: llmProviderId,
+        voice_id: voiceId,
+        watermark_enabled: watermarkEnabled,
+        watermark_type: watermarkType,
+        watermark_image_path: watermarkImagePath,
+        watermark_text: watermarkText,
+        watermark_position: watermarkPosition,
+        watermark_scale: watermarkScale,
+        watermark_opacity: watermarkOpacity,
+        watermark_margin: watermarkMargin,
+        watermark_font_size: watermarkFontSize,
+      };
+
+      await videoTranslatorApi.startWorkflow(activeProjectId, payload);
+      await fetchWorkflowStatus(activeProjectId);
+    } catch (err) {
+      alert('Không thể bắt đầu workflow: ' + formatApiError(err, 'Lỗi hệ thống'));
+      setIsProcessing(false);
+    } finally {
+      setLoadingWorkflowAction(null);
     }
   };
 
   const handlePauseWorkflow = async () => {
+    if (!validateProjectBeforeAction()) return;
+    setLoadingWorkflowAction('pause');
     try {
-      await fetch(`/api/video-translator/projects/${activeProjectId}/workflow/pause`, { method: 'POST' });
-      fetchWorkflowStatus(activeProjectId);
+      await videoTranslatorApi.pauseWorkflow(activeProjectId);
+      await fetchWorkflowStatus(activeProjectId);
     } catch (err) {
-      console.error('Failed pausing workflow', err);
+      alert('Không thể tạm dừng workflow: ' + formatApiError(err, 'Lỗi hệ thống'));
+    } finally {
+      setLoadingWorkflowAction(null);
     }
   };
 
   const handleResumeWorkflow = async () => {
+    if (!validateProjectBeforeAction()) return;
+    setLoadingWorkflowAction('resume');
     try {
-      await fetch(`/api/video-translator/projects/${activeProjectId}/workflow/resume`, { method: 'POST' });
-      fetchWorkflowStatus(activeProjectId);
+      await videoTranslatorApi.resumeWorkflow(activeProjectId);
+      await fetchWorkflowStatus(activeProjectId);
     } catch (err) {
-      console.error('Failed resuming workflow', err);
+      alert('Không thể tiếp tục workflow: ' + formatApiError(err, 'Lỗi hệ thống'));
+    } finally {
+      setLoadingWorkflowAction(null);
+    }
+  };
+
+  const handleCancelWorkflow = async () => {
+    if (!validateProjectBeforeAction()) return;
+    setLoadingWorkflowAction('cancel');
+    try {
+      await videoTranslatorApi.cancelWorkflow(activeProjectId);
+      await fetchWorkflowStatus(activeProjectId);
+    } catch (err) {
+      alert('Không thể hủy workflow: ' + formatApiError(err, 'Lỗi hệ thống'));
+    } finally {
+      setLoadingWorkflowAction(null);
+    }
+  };
+
+  const handleRetryStage = async (stageName) => {
+    if (!validateProjectBeforeAction()) return;
+    setLoadingWorkflowAction('retry');
+    try {
+      await videoTranslatorApi.retryStage(activeProjectId, stageName);
+      await fetchWorkflowStatus(activeProjectId);
+    } catch (err) {
+      alert(`Không thể thử lại stage ${stageName}: ` + formatApiError(err, 'Lỗi hệ thống'));
+    } finally {
+      setLoadingWorkflowAction(null);
     }
   };
 
@@ -220,12 +660,16 @@ export default function VideoTranslator({ initialJobId }) {
     };
 
     fetchJobStatus();
-    pollingRef.current = setInterval(fetchJobStatus, 1500);
+    fetchWorkflowStatus(activeProjectId);
+    pollingRef.current = setInterval(() => {
+      fetchJobStatus();
+      fetchWorkflowStatus(activeProjectId);
+    }, 1500);
 
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
-  }, [activeJobId, job?.status]);
+  }, [activeJobId, activeProjectId, job?.status]);
 
   const formatApiError = (err, defaultMsg) => {
     const status = err.response?.status ? `[HTTP ${err.response.status}] ` : '';
@@ -327,6 +771,7 @@ export default function VideoTranslator({ initialJobId }) {
       setWatermarkValidationError('');
 
       const jobRes = await videoTranslatorApi.createJob({
+        project_id: activeProjectId,
         asset_id: importedAsset.asset_id,
         source_language: 'auto',
         target_language: targetLanguage,
@@ -347,10 +792,13 @@ export default function VideoTranslator({ initialJobId }) {
 
 
       const newJobId = jobRes.data.job_id || jobRes.data.id;
-      // Immediately set job state so activeJobId is populated before startJob completes
+      const realProjectId = jobRes.data.project_id || newJobId;
+
+      // Immediately set job state so activeJobId and project_id are populated before startJob completes
       const initialPendingJob = {
         id: newJobId,
         job_id: newJobId,
+        project_id: realProjectId,
         status: 'created',
         stage: 'QUEUED',
         overall_progress_pct: 0,
@@ -364,6 +812,7 @@ export default function VideoTranslator({ initialJobId }) {
       const normalizedInitial = {
         ...initialJob.data,
         id: initialJob.data.id || initialJob.data.job_id,
+        project_id: initialJob.data.project_id || realProjectId,
       };
       setJob(normalizedInitial);
       if (normalizedInitial.segments && normalizedInitial.segments.length > 0) {
@@ -420,13 +869,37 @@ export default function VideoTranslator({ initialJobId }) {
   };
 
   const handleRetryJob = async () => {
-    if (!activeJobId) return;
     setIsProcessing(true);
     setPipelineError(null);
+
+    // If workflow execution is present for active project, delegate smart retry to stage retry from current/failed stage
+    if (activeProjectId && activeProjectId !== 'default_project' && workflowStatusData) {
+      const targetStage = workflowStatusData.current_stage || 'INGEST';
+      setLoadingWorkflowAction('retry');
+      try {
+        await videoTranslatorApi.retryStage(activeProjectId, targetStage);
+        await fetchWorkflowStatus(activeProjectId);
+        if (activeJobId) {
+          const res = await videoTranslatorApi.getJob(activeJobId);
+          if (res.success && res.data) {
+            setJob({ ...res.data, id: res.data.id || res.data.job_id });
+          }
+        }
+        return;
+      } catch (err) {
+        setPipelineError(`Không thể Smart Retry workflow từ stage ${targetStage}: ` + formatApiError(err, 'Lỗi hệ thống'));
+      } finally {
+        setLoadingWorkflowAction(null);
+        setIsProcessing(false);
+      }
+      return;
+    }
+
+    if (!activeJobId) return;
     try {
       await videoTranslatorApi.retryJob(activeJobId);
       const res = await videoTranslatorApi.getJob(activeJobId);
-      if (res.success) {
+      if (res.success && res.data) {
         const normalized = {
           ...res.data,
           id: res.data.id || res.data.job_id,
@@ -435,6 +908,7 @@ export default function VideoTranslator({ initialJobId }) {
       }
     } catch (err) {
       setPipelineError('Không thể thử lại job: ' + formatApiError(err, 'Lỗi hệ thống'));
+    } finally {
       setIsProcessing(false);
     }
   };
@@ -518,12 +992,113 @@ export default function VideoTranslator({ initialJobId }) {
         Tự động dịch giọng nói trong video từ URL Internet hoặc file Upload với cơ chế real-time tracking, heartbeat và FFmpeg process log.
       </p>
 
+      {/* Project Selector Bar */}
+      <div style={{ background: '#1e1b4b', border: '1px solid #4338ca', borderRadius: '12px', padding: '16px 24px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <span style={{ fontSize: '15px', fontWeight: 'bold', color: '#fff' }}>📁 Dự án hiện tại:</span>
+          <select
+            value={selectedProjectId || ''}
+            onChange={(e) => handleProjectSelectAttempt(e.target.value || null)}
+            style={{ minWidth: '280px', padding: '10px 14px', borderRadius: '8px', background: '#0f1117', color: '#fff', border: '1px solid #4338ca', fontSize: '14px', fontWeight: '500' }}
+          >
+            <option value="">-- Chưa chọn dự án (Bấm để chọn) --</option>
+            {projectsList.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.title} (ID: {p.id})
+              </option>
+            ))}
+          </select>
+        </div>
+        <button
+          onClick={() => setShowCreateProjectModal(true)}
+          style={{ background: '#4f46e5', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px' }}
+        >
+          ➕ Tạo dự án mới
+        </button>
+      </div>
+
+      {/* Dirty Settings Indicator Bar */}
+      {isSettingsDirty && selectedProjectId && (
+        <div style={{ background: '#1e3a8a', border: '1px solid #3b82f6', borderRadius: '10px', padding: '14px 20px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#fff', flexWrap: 'wrap', gap: '12px' }}>
+          <span style={{ color: '#93c5fd', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            ⚠️ Bạn có thay đổi chưa lưu cho dự án này.
+          </span>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              onClick={handleSaveSettingsToProject}
+              disabled={isSavingSettings}
+              style={{ background: '#2563eb', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}
+            >
+              {isSavingSettings ? 'Đang lưu DB...' : '💾 Lưu cấu hình dự án'}
+            </button>
+            <button
+              onClick={handleDiscardChanges}
+              style={{ background: '#475569', color: '#f8fafc', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}
+            >
+              ↩️ Hủy thay đổi
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Switch Project Guard Modal */}
+      {showSwitchGuardModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+          <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '14px', padding: '28px', maxWidth: '480px', width: '90%', color: '#fff' }}>
+            <h3 style={{ margin: '0 0 12px 0', fontSize: '18px', color: '#f59e0b' }}>⚠️ Có thay đổi cấu hình chưa lưu</h3>
+            <p style={{ color: '#94a3b8', fontSize: '14px', marginBottom: '20px', lineHeight: '1.5' }}>
+              Bạn vừa thay đổi cấu hình của dự án hiện tại nhưng chưa bấm <strong>Lưu cấu hình</strong>. Bạn muốn làm gì trước khi chuyển sang dự án mới?
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <button
+                onClick={async () => {
+                  await handleSaveSettingsToProject();
+                  setSelectedProjectId(pendingSwitchProjectId);
+                  setShowSwitchGuardModal(false);
+                }}
+                style={{ background: '#2563eb', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' }}
+              >
+                💾 Lưu thay đổi & Chuyển dự án
+              </button>
+              <button
+                onClick={() => {
+                  handleDiscardChanges();
+                  setSelectedProjectId(pendingSwitchProjectId);
+                  setShowSwitchGuardModal(false);
+                }}
+                style={{ background: '#475569', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' }}
+              >
+                🗑️ Bỏ qua thay đổi & Chuyển dự án
+              </button>
+              <button
+                onClick={() => setShowSwitchGuardModal(false)}
+                style={{ background: 'transparent', color: '#94a3b8', border: '1px solid #475569', padding: '10px 16px', borderRadius: '8px', cursor: 'pointer', fontSize: '14px' }}
+              >
+                ❌ Hủy (Ở lại dự án này)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Visual 6-Stage Workflow Timeline */}
       <WorkflowTimeline
         projectId={activeProjectId}
         statusData={workflowStatusData || {
+          status: job?.status === 'running' || ['extracting_audio', 'stt', 'translating', 'generating_tts', 'syncing_audio', 'rendering'].includes(job?.status)
+            ? 'running'
+            : job?.status === 'paused'
+            ? 'paused'
+            : job?.status === 'failed'
+            ? 'failed'
+            : job?.status === 'completed'
+            ? 'completed'
+            : job?.status === 'cancelled'
+            ? 'cancelled'
+            : (job?.status || 'not_started'),
           current_stage: job?.stage || 'INGEST',
           current_step: job?.current_step || 'Ready',
+          overall_progress_pct: job?.overall_progress_pct || 0,
           stages: [
             { name: 'INGEST', status: job ? 'passed' : 'pending' },
             { name: 'ANALYZE', status: job?.stage === 'TRANSLATING' || job?.status === 'completed' ? 'passed' : job?.stage === 'TRANSCRIBING' ? 'running' : 'pending' },
@@ -533,14 +1108,207 @@ export default function VideoTranslator({ initialJobId }) {
             { name: 'PUBLISH', status: 'pending' },
           ]
         }}
-        onStart={handleStartWorkflow}
+        onStart={handleOpenPreflightOrPromptProject}
         onPause={handlePauseWorkflow}
         onResume={handleResumeWorkflow}
+        onCancel={handleCancelWorkflow}
+        onRetryStage={handleRetryStage}
+        loadingAction={loadingWorkflowAction}
       />
 
-      {/* Input Selection Card */}
-      <div className="card" style={{ background: '#1e1b4b', border: '1px solid #3730a3', borderRadius: '12px', padding: '24px', color: '#fff', marginBottom: '24px' }}>
+      {/* Error Message Card - Displayed directly below Workflow Timeline */}
+      {(pipelineError || (job && job.status === 'failed') || (workflowStatusData && workflowStatusData.status === 'failed')) && (
+        <div style={{ marginBottom: '24px', padding: '20px', background: '#7f1d1d', border: '1px solid #ef4444', borderRadius: '12px', color: '#fee2e2' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <h4 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold', color: '#fca5a5' }}>
+              ❌ Xử Lý Thất Bại (Job / Workflow Failed)
+            </h4>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={handleOpenLogs}
+                style={{ padding: '6px 12px', borderRadius: '6px', background: '#451a03', color: '#fde68a', border: '1px solid #d97706', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
+              >
+                📜 Xem Log Chi Tiết
+              </button>
+              <button
+                onClick={handleRetryJob}
+                style={{ padding: '6px 12px', borderRadius: '6px', background: '#d97706', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
+              >
+                🔄 Smart Retry
+              </button>
+            </div>
+          </div>
+          <div style={{ fontSize: '14px', fontFamily: 'monospace', background: '#450a0a', padding: '12px', borderRadius: '6px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+            {job?.error_message || workflowStatusData?.error_message || pipelineError || 'Xảy ra lỗi không xác định trong pipeline.'}
+          </div>
+        </div>
+      )}
 
+      {/* Real-time Tracking & Progress Panel - Displayed directly below Workflow Timeline */}
+      {job && (
+        <div className="card" style={{ background: '#0f172a', border: `1px solid ${job.status === 'failed' ? '#ef4444' : '#3b82f6'}`, borderRadius: '12px', padding: '24px', color: '#fff', marginBottom: '24px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h3 style={{ fontSize: '18px', fontWeight: 'bold', color: job.status === 'failed' ? '#fca5a5' : '#60a5fa', margin: 0 }}>
+              📊 Tiến Trình Xử Lý Pipeline (Job: {job.id || job.job_id})
+            </h3>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={handleOpenLogs}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: '6px',
+                  background: '#334155',
+                  color: '#fff',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontWeight: '600',
+                  fontSize: '13px',
+                }}
+              >
+                📜 Xem Log Chi Tiết
+              </button>
+
+              {['extracting_audio', 'stt', 'translating', 'generating_tts', 'syncing_audio', 'rendering'].includes(job.status) && (
+                <button
+                  onClick={handleCancelJob}
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: '6px',
+                    background: '#991b1b',
+                    color: '#fff',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontWeight: '600',
+                    fontSize: '13px',
+                  }}
+                >
+                  ❌ Hủy Xử Lý
+                </button>
+              )}
+
+              {(job.status === 'failed' || job.status === 'stalled') && (
+                <button
+                  onClick={handleRetryJob}
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: '6px',
+                    background: '#d97706',
+                    color: '#fff',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontWeight: '600',
+                    fontSize: '13px',
+                  }}
+                >
+                  🔄 Smart Retry
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Heartbeat Status Badge */}
+          <div style={{ marginBottom: '16px', padding: '10px 14px', background: '#1e293b', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>{getHeartbeatBadge(job)}</div>
+            <div style={{ fontSize: '12px', color: '#94a3b8' }}>
+              Stage: <strong>{job.stage || 'QUEUED'}</strong> | Status: <strong>{(job.status || '').toUpperCase()}</strong>
+            </div>
+          </div>
+
+          {/* Overall Progress Bar */}
+          <div style={{ marginBottom: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '6px' }}>
+              <span>Tiến trình Tổng thể:</span>
+              <span style={{ fontWeight: 'bold', color: job.status === 'failed' ? '#fca5a5' : '#60a5fa' }}>
+                {job.overall_progress_pct}%
+              </span>
+            </div>
+            <div style={{ background: '#1e293b', borderRadius: '8px', height: '14px', width: '100%', overflow: 'hidden' }}>
+              <div
+                style={{
+                  width: `${job.overall_progress_pct}%`,
+                  height: '100%',
+                  background: job.status === 'failed' ? '#ef4444' : 'linear-gradient(90deg, #3b82f6, #8b5cf6)',
+                  transition: 'width 0.3s ease',
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Stage Detail Stats */}
+          <div style={{ background: '#1e293b', borderRadius: '8px', padding: '16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', fontSize: '13px' }}>
+            <div>
+              <span style={{ color: '#94a3b8' }}>Bước hiện tại:</span>
+              <div style={{ fontWeight: 'bold', color: job.status === 'failed' ? '#fca5a5' : '#e2e8f0', marginTop: '2px' }}>
+                {job.current_step}
+              </div>
+            </div>
+
+            <div>
+              <span style={{ color: '#94a3b8' }}>Tiến trình Stage ({job.stage}):</span>
+              <div style={{ fontWeight: 'bold', color: job.status === 'failed' ? '#ef4444' : '#a7f3d0', marginTop: '2px' }}>
+                {job.stage_progress_pct}%
+              </div>
+            </div>
+
+            <div>
+              <span style={{ color: '#94a3b8' }}>FFmpeg Process Status:</span>
+              <div style={{ fontWeight: 'bold', color: job.process?.status === 'RUNNING' ? '#60a5fa' : (job.process?.status === 'COMPLETED' ? '#4ade80' : (job.process?.status === 'FAILED' ? '#ef4444' : '#94a3b8')), marginTop: '2px' }}>
+                {job.process?.status === 'RUNNING' ? `⚡ RUNNING (PID: ${job.process.pid})` : (job.process?.status === 'COMPLETED' ? '✅ COMPLETED' : (job.process?.status || 'IDLE'))}
+              </div>
+            </div>
+
+            {job.ffmpeg_stats && job.status !== 'failed' && (
+              <>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Đã xử lý (FFmpeg):</span>
+                  <div style={{ fontWeight: 'bold', color: '#facc15', marginTop: '2px' }}>
+                    {formatTime(job.ffmpeg_stats.processed_seconds)} / {formatTime(job.ffmpeg_stats.total_duration)}
+                  </div>
+                </div>
+                <div>
+                  <span style={{ color: '#94a3b8' }}>Tốc độ & FPS:</span>
+                  <div style={{ fontWeight: 'bold', color: '#e2e8f0', marginTop: '2px' }}>
+                    Speed: {job.ffmpeg_stats.speed} | FPS: {job.ffmpeg_stats.fps}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {job.stage === 'GENERATING_TTS' && (
+              <div>
+                <span style={{ color: '#94a3b8' }}>Phân đoạn TTS:</span>
+                <div style={{ fontWeight: 'bold', color: '#c084fc', marginTop: '2px' }}>
+                  {job.completed_segments_count} / {job.total_segments_count} Phân đoạn
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* DEBUG JOB STATE PANEL (Dev Mode Single Source of Truth) */}
+          <details open style={{ marginTop: '20px', padding: '14px 18px', background: '#020617', border: '1px solid #1e293b', borderRadius: '10px', fontSize: '12px', fontFamily: 'monospace', color: '#38bdf8' }}>
+            <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: '#facc15', fontSize: '14px' }}>🐞 DEBUG JOB STATE (Single Source of Truth)</summary>
+            <div style={{ marginTop: '12px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '10px' }}>
+              <div>Job ID: <strong style={{ color: '#fff' }}>{job.id || job.job_id}</strong></div>
+              <div>Backend Status: <strong style={{ color: '#a7f3d0' }}>{job.status}</strong></div>
+              <div>Backend Stage: <strong style={{ color: '#60a5fa' }}>{job.stage}</strong></div>
+              <div>Overall Progress: <strong style={{ color: '#facc15' }}>{job.overall_progress_pct}%</strong></div>
+              <div>Stage Progress: <strong style={{ color: '#facc15' }}>{job.stage_progress_pct}%</strong></div>
+              <div>Heartbeat Active: <strong style={{ color: job.heartbeat?.active ? '#4ade80' : '#f87171' }}>{job.heartbeat?.active ? 'ACTIVE (TRUE)' : 'INACTIVE (FALSE)'}</strong> ({job.heartbeat?.age_seconds ?? 'N/A'}s)</div>
+              <div>FFmpeg Status: <strong style={{ color: job.process?.status === 'COMPLETED' ? '#4ade80' : '#60a5fa' }}>{job.process?.status || 'IDLE'}</strong> (PID: {job.process?.pid || 'N/A'})</div>
+              <div>STT Status: <strong style={{ color: job.stt?.status === 'COMPLETED' ? '#4ade80' : '#60a5fa' }}>{job.stt?.status || 'PENDING'}</strong> ({job.stt?.provider || 'gemini'})</div>
+              <div>Detected Language: <strong style={{ color: '#fbbf24' }}>{job.detected_language || 'Auto'}</strong></div>
+              <div>Translation Status: <strong style={{ color: job.translation?.status === 'COMPLETED' ? '#4ade80' : '#60a5fa' }}>{job.translation?.status || 'PENDING'}</strong></div>
+              <div>Segments Loaded: <strong style={{ color: '#c084fc' }}>{segments.length} / {job.total_segments_count || segments.length}</strong></div>
+              <div>Last Backend Update: <strong style={{ color: '#cbd5e1' }}>{job.updated_at ? new Date(job.updated_at).toLocaleTimeString('vi-VN') : 'N/A'}</strong></div>
+              <div>Last Frontend Poll: <strong style={{ color: '#cbd5e1' }}>{lastPollTime || 'N/A'}</strong></div>
+              <div>API Response Time: <strong style={{ color: '#cbd5e1' }}>{lastApiResponseTime || 'N/A'}</strong></div>
+            </div>
+          </details>
+        </div>
+      )}
+
+      {/* Collapsible Card: Input Selection & Configuration Options */}
+      <CollapsibleCard title="⚙️ Cấu hình Nhập Video, Dịch & Lồng Tiếng" icon="⚙️" defaultOpen={true}>
         <div style={{ display: 'flex', gap: '12px', marginBottom: '20px' }}>
           <button
             onClick={() => setInputMode('url')}
@@ -575,7 +1343,7 @@ export default function VideoTranslator({ initialJobId }) {
         </div>
 
         {inputMode === 'url' ? (
-          <div>
+          <div style={{ marginBottom: '20px' }}>
             <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', color: '#cbd5e1' }}>
               Nhập Đường Dẫn Video (Direct MP4, YouTube, Bilibili, TikTok...):
             </label>
@@ -627,7 +1395,7 @@ export default function VideoTranslator({ initialJobId }) {
             )}
           </div>
         ) : (
-          <div>
+          <div style={{ marginBottom: '20px' }}>
             <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', color: '#cbd5e1' }}>
               Chọn File Video (MP4, MOV, MKV, AVI):
             </label>
@@ -646,12 +1414,8 @@ export default function VideoTranslator({ initialJobId }) {
             />
           </div>
         )}
-      </div>
 
-      {/* Configuration Options */}
-      <div className="card" style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '12px', padding: '24px', color: '#fff', marginBottom: '24px' }}>
-        <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '16px' }}>⚙️ Cấu hình Dịch & Lồng tiếng</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '20px' }}>
           <div>
             <label style={{ display: 'block', fontSize: '13px', marginBottom: '6px', color: '#94a3b8' }}>LLM / Script Provider:</label>
             <select
@@ -870,9 +1634,8 @@ export default function VideoTranslator({ initialJobId }) {
           )}
         </div>
 
-
         <button
-          onClick={handleStartImportAndTranslation}
+          onClick={handleOpenPreflightOrPromptProject}
           disabled={isProcessing}
           style={{
             marginTop: '20px',
@@ -893,210 +1656,21 @@ export default function VideoTranslator({ initialJobId }) {
         >
           {isProcessing ? <><ButtonSpinner /> ⚡ Đang xử lý Pipeline...</> : '🚀 Bắt đầu Nhập & Dịch Video'}
         </button>
-      </div>
+      </CollapsibleCard>
 
-      {/* Project Glossary Manager */}
-      <ProjectGlossaryManager projectId={activeProjectId} />
+      {/* Collapsible Card: Project Glossary Manager */}
+      <CollapsibleCard title="📖 Quản Lý Thuật Ngữ Dự Án (Glossary & Terminology Memory)" icon="📖" defaultOpen={false}>
+        <ProjectGlossaryManager projectId={activeProjectId} />
+      </CollapsibleCard>
 
-      {/* AI Auto Thumbnail Generation Panel */}
-      <AIThumbnailPanel
-        jobId={job?.id || job?.job_id}
-        assetId={job?.asset_id}
-        initialThumbnailUrl={job?.thumbnail_url}
-      />
-
-
-      {/* Error Message Card */}
-      {(pipelineError || (job && job.status === 'failed')) && (
-
-        <div style={{ marginBottom: '24px', padding: '20px', background: '#7f1d1d', border: '1px solid #ef4444', borderRadius: '12px', color: '#fee2e2' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <h4 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold', color: '#fca5a5' }}>
-              ❌ Xử Lý Thất Bại (Job Failed)
-            </h4>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                onClick={handleOpenLogs}
-                style={{ padding: '6px 12px', borderRadius: '6px', background: '#451a03', color: '#fde68a', border: '1px solid #d97706', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
-              >
-                📜 Xem Log Chi Tiết
-              </button>
-              <button
-                onClick={handleRetryJob}
-                style={{ padding: '6px 12px', borderRadius: '6px', background: '#d97706', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
-              >
-                🔄 Smart Retry
-              </button>
-            </div>
-          </div>
-          <div style={{ fontSize: '14px', fontFamily: 'monospace', background: '#450a0a', padding: '12px', borderRadius: '6px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-            {job?.error_message || pipelineError || 'Xảy ra lỗi không xác định trong pipeline.'}
-          </div>
-        </div>
-      )}
-
-      {/* Real-time Tracking & Progress Panel */}
-      {job && (
-        <div className="card" style={{ background: '#0f172a', border: `1px solid ${job.status === 'failed' ? '#ef4444' : '#3b82f6'}`, borderRadius: '12px', padding: '24px', color: '#fff', marginBottom: '24px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h3 style={{ fontSize: '18px', fontWeight: 'bold', color: job.status === 'failed' ? '#fca5a5' : '#60a5fa', margin: 0 }}>
-              📊 Tiến Trình Xử Lý Pipeline (Job: {job.id || job.job_id})
-            </h3>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                onClick={handleOpenLogs}
-                style={{
-                  padding: '6px 14px',
-                  borderRadius: '6px',
-                  background: '#334155',
-                  color: '#fff',
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontWeight: '600',
-                  fontSize: '13px',
-                }}
-              >
-                📜 Xem Log Chi Tiết
-              </button>
-
-              {['extracting_audio', 'stt', 'translating', 'generating_tts', 'syncing_audio', 'rendering'].includes(job.status) && (
-                <button
-                  onClick={handleCancelJob}
-                  style={{
-                    padding: '6px 14px',
-                    borderRadius: '6px',
-                    background: '#991b1b',
-                    color: '#fff',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontWeight: '600',
-                    fontSize: '13px',
-                  }}
-                >
-                  ❌ Hủy Xử Lý
-                </button>
-              )}
-
-              {(job.status === 'failed' || job.status === 'stalled') && (
-                <button
-                  onClick={handleRetryJob}
-                  style={{
-                    padding: '6px 14px',
-                    borderRadius: '6px',
-                    background: '#d97706',
-                    color: '#fff',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontWeight: '600',
-                    fontSize: '13px',
-                  }}
-                >
-                  🔄 Smart Retry
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Heartbeat Status Badge */}
-          <div style={{ marginBottom: '16px', padding: '10px 14px', background: '#1e293b', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>{getHeartbeatBadge(job)}</div>
-            <div style={{ fontSize: '12px', color: '#94a3b8' }}>
-              Stage: <strong>{job.stage || 'QUEUED'}</strong> | Status: <strong>{(job.status || '').toUpperCase()}</strong>
-            </div>
-          </div>
-
-          {/* Overall Progress Bar */}
-          <div style={{ marginBottom: '16px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '6px' }}>
-              <span>Tiến trình Tổng thể:</span>
-              <span style={{ fontWeight: 'bold', color: job.status === 'failed' ? '#fca5a5' : '#60a5fa' }}>
-                {job.overall_progress_pct}%
-              </span>
-            </div>
-            <div style={{ background: '#1e293b', borderRadius: '8px', height: '14px', width: '100%', overflow: 'hidden' }}>
-              <div
-                style={{
-                  width: `${job.overall_progress_pct}%`,
-                  height: '100%',
-                  background: job.status === 'failed' ? '#ef4444' : 'linear-gradient(90deg, #3b82f6, #8b5cf6)',
-                  transition: 'width 0.3s ease',
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Stage Detail Stats */}
-          <div style={{ background: '#1e293b', borderRadius: '8px', padding: '16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', fontSize: '13px' }}>
-            <div>
-              <span style={{ color: '#94a3b8' }}>Bước hiện tại:</span>
-              <div style={{ fontWeight: 'bold', color: job.status === 'failed' ? '#fca5a5' : '#e2e8f0', marginTop: '2px' }}>
-                {job.current_step}
-              </div>
-            </div>
-
-            <div>
-              <span style={{ color: '#94a3b8' }}>Tiến trình Stage ({job.stage}):</span>
-              <div style={{ fontWeight: 'bold', color: job.status === 'failed' ? '#ef4444' : '#a7f3d0', marginTop: '2px' }}>
-                {job.stage_progress_pct}%
-              </div>
-            </div>
-
-            <div>
-              <span style={{ color: '#94a3b8' }}>FFmpeg Process Status:</span>
-              <div style={{ fontWeight: 'bold', color: job.process?.status === 'RUNNING' ? '#60a5fa' : (job.process?.status === 'COMPLETED' ? '#4ade80' : (job.process?.status === 'FAILED' ? '#ef4444' : '#94a3b8')), marginTop: '2px' }}>
-                {job.process?.status === 'RUNNING' ? `⚡ RUNNING (PID: ${job.process.pid})` : (job.process?.status === 'COMPLETED' ? '✅ COMPLETED' : (job.process?.status || 'IDLE'))}
-              </div>
-            </div>
-
-            {job.ffmpeg_stats && job.status !== 'failed' && (
-              <>
-                <div>
-                  <span style={{ color: '#94a3b8' }}>Đã xử lý (FFmpeg):</span>
-                  <div style={{ fontWeight: 'bold', color: '#facc15', marginTop: '2px' }}>
-                    {formatTime(job.ffmpeg_stats.processed_seconds)} / {formatTime(job.ffmpeg_stats.total_duration)}
-                  </div>
-                </div>
-                <div>
-                  <span style={{ color: '#94a3b8' }}>Tốc độ & FPS:</span>
-                  <div style={{ fontWeight: 'bold', color: '#e2e8f0', marginTop: '2px' }}>
-                    Speed: {job.ffmpeg_stats.speed} | FPS: {job.ffmpeg_stats.fps}
-                  </div>
-                </div>
-              </>
-            )}
-
-            {job.stage === 'GENERATING_TTS' && (
-              <div>
-                <span style={{ color: '#94a3b8' }}>Phân đoạn TTS:</span>
-                <div style={{ fontWeight: 'bold', color: '#c084fc', marginTop: '2px' }}>
-                  {job.completed_segments_count} / {job.total_segments_count} Phân đoạn
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* DEBUG JOB STATE PANEL (Dev Mode Single Source of Truth) */}
-          <details open style={{ marginTop: '20px', padding: '14px 18px', background: '#020617', border: '1px solid #1e293b', borderRadius: '10px', fontSize: '12px', fontFamily: 'monospace', color: '#38bdf8' }}>
-            <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: '#facc15', fontSize: '14px' }}>🐞 DEBUG JOB STATE (Single Source of Truth)</summary>
-            <div style={{ marginTop: '12px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '10px' }}>
-              <div>Job ID: <strong style={{ color: '#fff' }}>{job.id || job.job_id}</strong></div>
-              <div>Backend Status: <strong style={{ color: '#a7f3d0' }}>{job.status}</strong></div>
-              <div>Backend Stage: <strong style={{ color: '#60a5fa' }}>{job.stage}</strong></div>
-              <div>Overall Progress: <strong style={{ color: '#facc15' }}>{job.overall_progress_pct}%</strong></div>
-              <div>Stage Progress: <strong style={{ color: '#facc15' }}>{job.stage_progress_pct}%</strong></div>
-              <div>Heartbeat Active: <strong style={{ color: job.heartbeat?.active ? '#4ade80' : '#f87171' }}>{job.heartbeat?.active ? 'ACTIVE (TRUE)' : 'INACTIVE (FALSE)'}</strong> ({job.heartbeat?.age_seconds ?? 'N/A'}s)</div>
-              <div>FFmpeg Status: <strong style={{ color: job.process?.status === 'COMPLETED' ? '#4ade80' : '#60a5fa' }}>{job.process?.status || 'IDLE'}</strong> (PID: {job.process?.pid || 'N/A'})</div>
-              <div>STT Status: <strong style={{ color: job.stt?.status === 'COMPLETED' ? '#4ade80' : '#60a5fa' }}>{job.stt?.status || 'PENDING'}</strong> ({job.stt?.provider || 'gemini'})</div>
-              <div>Detected Language: <strong style={{ color: '#fbbf24' }}>{job.detected_language || 'Auto'}</strong></div>
-              <div>Translation Status: <strong style={{ color: job.translation?.status === 'COMPLETED' ? '#4ade80' : '#60a5fa' }}>{job.translation?.status || 'PENDING'}</strong></div>
-              <div>Segments Loaded: <strong style={{ color: '#c084fc' }}>{segments.length} / {job.total_segments_count || segments.length}</strong></div>
-              <div>Last Backend Update: <strong style={{ color: '#cbd5e1' }}>{job.updated_at ? new Date(job.updated_at).toLocaleTimeString('vi-VN') : 'N/A'}</strong></div>
-              <div>Last Frontend Poll: <strong style={{ color: '#cbd5e1' }}>{lastPollTime || 'N/A'}</strong></div>
-              <div>API Response Time: <strong style={{ color: '#cbd5e1' }}>{lastApiResponseTime || 'N/A'}</strong></div>
-            </div>
-          </details>
-        </div>
-      )}
+      {/* Collapsible Card: AI Auto Thumbnail Panel */}
+      <CollapsibleCard title="🖼️ Tạo Thumbnail AI Tự Động" icon="🖼️" defaultOpen={false}>
+        <AIThumbnailPanel
+          jobId={job?.id || job?.job_id}
+          assetId={job?.asset_id}
+          initialThumbnailUrl={job?.thumbnail_url}
+        />
+      </CollapsibleCard>
 
       {/* Segment Editor when phase 1 completes */}
       {job && (job.status === 'segment_editing' || job.status === 'completed' || segments.length > 0) && (
@@ -1312,6 +1886,195 @@ export default function VideoTranslator({ initialJobId }) {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+      {/* Modal 1: No Project Selected Modal */}
+      {showNoProjectModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
+          <div style={{ background: '#1e1b4b', border: '1px solid #4338ca', borderRadius: '14px', padding: '28px', maxWidth: '480px', width: '90%', color: '#fff', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)' }}>
+            <h2 style={{ margin: '0 0 12px 0', fontSize: '20px', fontWeight: 'bold', color: '#fbbf24' }}>
+              ⚠️ Chưa chọn dự án
+            </h2>
+            <p style={{ color: '#cbd5e1', fontSize: '14px', lineHeight: '1.5', margin: '0 0 20px 0' }}>
+              Để bắt đầu dịch video và lưu trữ subtitle, audio & thumbnail, vui lòng chọn một dự án có sẵn hoặc tạo dự án mới.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <button
+                onClick={() => {
+                  setShowNoProjectModal(false);
+                  setShowCreateProjectModal(true);
+                }}
+                style={{ background: '#4f46e5', color: '#fff', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+              >
+                ➕ Tạo dự án mới ngay
+              </button>
+
+              {projectsList.length > 0 && (
+                <div style={{ marginTop: '4px' }}>
+                  <label style={{ fontSize: '12px', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Hoặc chọn dự án có sẵn:</label>
+                  <select
+                    style={{ width: '100%', padding: '10px', borderRadius: '6px', background: '#0f1117', color: '#fff', border: '1px solid #4338ca', fontSize: '14px' }}
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        setSelectedProjectId(e.target.value);
+                        setShowNoProjectModal(false);
+                      }
+                    }}
+                    defaultValue=""
+                  >
+                    <option value="" disabled>-- Chọn dự án trong danh sách --</option>
+                    {projectsList.map((p) => (
+                      <option key={p.id} value={p.id}>{p.title} (ID: {p.id})</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <button
+                onClick={() => setShowNoProjectModal(false)}
+                style={{ background: '#374151', color: '#94a3b8', border: 'none', padding: '10px', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', marginTop: '4px' }}
+              >
+                Hủy bỏ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 2: Create Project Modal */}
+      {showCreateProjectModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
+          <div style={{ background: '#1e1b4b', border: '1px solid #4338ca', borderRadius: '14px', padding: '28px', maxWidth: '500px', width: '90%', color: '#fff', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)' }}>
+            <h2 style={{ margin: '0 0 16px 0', fontSize: '20px', fontWeight: 'bold', color: '#818cf8' }}>
+              📁 Tạo Dự Án Mới
+            </h2>
+            <form onSubmit={handleCreateProjectSubmit}>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '13px', color: '#cbd5e1', marginBottom: '6px', fontWeight: '500' }}>
+                  Tên dự án <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ví dụ: Dịch phim hoạt hình Trung Quốc"
+                  value={newProjectTitle}
+                  onChange={(e) => setNewProjectTitle(e.target.value)}
+                  style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', background: '#0f1117', color: '#fff', border: '1px solid #4338ca', fontSize: '14px' }}
+                  required
+                  autoFocus
+                />
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '13px', color: '#cbd5e1', marginBottom: '6px', fontWeight: '500' }}>
+                  Mô tả dự án (Tùy chọn)
+                </label>
+                <textarea
+                  placeholder="Ghi chú thể loại, tone màu hoặc phong cách dịch..."
+                  value={newProjectDescription}
+                  onChange={(e) => setNewProjectDescription(e.target.value)}
+                  style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', background: '#0f1117', color: '#fff', border: '1px solid #4338ca', fontSize: '13px', minHeight: '80px', resize: 'vertical' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowCreateProjectModal(false)}
+                  style={{ background: '#374151', color: '#cbd5e1', border: 'none', padding: '10px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCreatingProject}
+                  style={{ background: '#4f46e5', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
+                >
+                  {isCreatingProject ? <ButtonSpinner text="Đang tạo..." /> : '🚀 Tạo dự án & Bắt đầu'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 3: Pre-flight Check Results Modal */}
+      {showPreflightModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
+          <div style={{ background: '#1e1b4b', border: '1px solid #4338ca', borderRadius: '14px', padding: '28px', maxWidth: '640px', width: '90%', color: '#fff', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold', color: '#818cf8', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                📋 WORKFLOW PRE-FLIGHT CHECK
+              </h2>
+              <button onClick={() => setShowPreflightModal(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '24px', cursor: 'pointer' }}>×</button>
+            </div>
+
+            {isPreflighting ? (
+              <div style={{ padding: '32px 0', textAlign: 'center' }}>
+                <LoadingSpinner size="lg" />
+                <p style={{ marginTop: '16px', color: '#94a3b8', fontSize: '14px' }}>Đang thực hiện kiểm tra tiền điều kiện hệ thống & AI Providers...</p>
+              </div>
+            ) : preflightResult ? (
+              <div>
+                <div style={{ padding: '12px 16px', borderRadius: '8px', background: preflightResult.can_start ? '#065f4633' : '#991b1b33', border: `1px solid ${preflightResult.can_start ? '#059669' : '#dc2626'}`, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontSize: '20px' }}>{preflightResult.can_start ? '✅' : '❌'}</span>
+                  <div>
+                    <div style={{ fontWeight: 'bold', color: preflightResult.can_start ? '#34d399' : '#f87171', fontSize: '15px' }}>
+                      {preflightResult.can_start ? 'READY TO START — Tất cả kiểm tra bắt buộc đã vượt qua' : 'CRITICAL FAILURE — Kiểm tra bắt buộc thất bại'}
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#cbd5e1', marginTop: '2px' }}>
+                      {preflightResult.can_start ? 'Hệ thống sẵn sàng khởi chạy Unified 6-Stage Workflow.' : 'Vui lòng khắc phục các lỗi màu đỏ trước khi tiếp tục.'}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ maxHeight: '300px', overflowY: 'auto', paddingRight: '4px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {preflightResult.checks.map((chk, idx) => (
+                    <div key={idx} style={{ padding: '10px 14px', borderRadius: '6px', background: '#0f1117', border: '1px solid #2a2f3d', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                        <span style={{ fontSize: '16px' }}>{chk.passed ? '✓' : (chk.category === 'optional' ? '⚠️' : '❌')}</span>
+                        <div>
+                          <div style={{ fontWeight: '600', fontSize: '13px', color: chk.passed ? '#e2e8f0' : (chk.category === 'optional' ? '#fbbf24' : '#f87171') }}>
+                            {chk.description}
+                          </div>
+                          {chk.error_message && (
+                            <div style={{ fontSize: '12px', color: chk.category === 'optional' ? '#fcd34d' : '#fca5a5', marginTop: '4px', lineHeight: '1.4' }}>
+                              {chk.error_message}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <span style={{ fontSize: '11px', fontWeight: 'bold', padding: '3px 8px', borderRadius: '4px', background: chk.passed ? '#065f46' : (chk.category === 'optional' ? '#78350f' : '#7f1d1d'), color: chk.passed ? '#a7f3d0' : (chk.category === 'optional' ? '#fef3c7' : '#fecaca'), whiteSpace: 'nowrap' }}>
+                        {chk.passed ? 'PASS' : (chk.category === 'optional' ? 'WARNING' : 'FAILED')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px', paddingTop: '14px', borderTop: '1px solid #334155' }}>
+                  <button onClick={() => setShowPreflightModal(false)} style={{ background: '#374151', color: '#cbd5e1', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}>
+                    Đóng
+                  </button>
+                  {preflightResult.can_start ? (
+                    <button
+                      onClick={executeStartWorkflowAfterPreflight}
+                      disabled={loadingWorkflowAction === 'start'}
+                      style={{ background: 'linear-gradient(90deg, #059669 0%, #10b981 100%)', color: '#fff', border: 'none', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
+                    >
+                      {loadingWorkflowAction === 'start' ? <ButtonSpinner text="Đang khởi chạy..." /> : '🚀 Bắt đầu Workflow ngay'}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => runPreflightCheck()}
+                      style={{ background: '#d97706', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}
+                    >
+                      🔄 Thử lại kiểm tra (Retry Check)
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       )}

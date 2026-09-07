@@ -10,8 +10,10 @@ from pydantic import BaseModel, Field
 class ProjectCreate(BaseModel):
     """Request body for creating a new project."""
     title: str = Field(default="Untitled", max_length=200)
-    script: str = Field(..., min_length=1, description="Raw script text with segments")
-    workflow_mode: str = Field(default="audio_video", pattern="^(audio_only|audio_video)$")
+    description: str | None = Field(None, description="Optional project description")
+    script: str = Field(default="", description="Optional raw script text with segments")
+    workflow_mode: str = Field(default="audio_video", pattern="^(audio_only|audio_video|video_translator)$")
+    settings_json: dict | None = Field(None, description="Project workflow configuration settings")
 
 
 class SegmentSummary(BaseModel):

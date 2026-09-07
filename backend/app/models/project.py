@@ -5,9 +5,9 @@ from __future__ import annotations
 import enum
 from datetime import datetime, timezone
 
-from typing import Optional
+from typing import Optional, Any
 
-from sqlalchemy import String, Text, DateTime, Enum as SAEnum
+from sqlalchemy import String, Text, DateTime, JSON, Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -42,6 +42,7 @@ class Project(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     title: Mapped[str] = mapped_column(String(200), default="Untitled")
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     script_raw: Mapped[str] = mapped_column(Text, default="")
     workflow_mode: Mapped[str] = mapped_column(
         String(20), default=WorkflowMode.AUDIO_VIDEO.value
@@ -54,6 +55,7 @@ class Project(Base):
     voice_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     voice_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     sync_strategy: Mapped[str] = mapped_column(String(30), default="trim_video")
+    settings_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     r2_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     media_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     thumbnail_r2_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)

@@ -23,9 +23,8 @@ logger = get_logger(__name__)
 # ── Default System Configurations Seed Data ─────────────────────────────
 DEFAULT_SYSTEM_SETTINGS = {
     # Storage
-    "storage_provider": "supabase",
-    "supabase_bucket_private": "autotransai-private",
-    "supabase_bucket_public": "autotransai-public",
+    "storage_provider": "local",
+    "storage_root": "./storage",
     # Processing
     "max_concurrency": "2",
     "max_retries": "3",
@@ -108,7 +107,7 @@ DEFAULT_AI_MODELS = [
     # Gemini
     {"id": "gemini-2.5-flash", "provider_id": "gemini", "model_name": "Gemini 2.5 Flash", "capabilities": json.dumps(["STT", "LLM", "TRANSLATION"]), "is_default": True},
     {"id": "gemini-1.5-pro", "provider_id": "gemini", "model_name": "Gemini 1.5 Pro", "capabilities": json.dumps(["LLM", "TRANSLATION"]), "is_default": False},
-    {"id": "gemini-2.0-flash", "provider_id": "gemini", "model_name": "Gemini 2.0 Flash", "capabilities": json.dumps(["STT", "LLM", "TRANSLATION"]), "is_default": False},
+    {"id": "gemini-1.5-flash", "provider_id": "gemini", "model_name": "Gemini 1.5 Flash", "capabilities": json.dumps(["STT", "LLM", "TRANSLATION"]), "is_default": False},
     # OpenAI
     {"id": "gpt-4o", "provider_id": "openai", "model_name": "GPT-4o", "capabilities": json.dumps(["LLM", "TRANSLATION"]), "is_default": True},
     {"id": "gpt-4o-mini", "provider_id": "openai", "model_name": "GPT-4o Mini", "capabilities": json.dumps(["LLM", "TRANSLATION"]), "is_default": False},

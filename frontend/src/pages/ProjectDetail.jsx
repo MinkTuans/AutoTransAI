@@ -1,31 +1,27 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { projectsApi, providersApi } from '../api';
+import { projectsApi, providersApi, videoTranslatorApi } from '../api';
 import { LoadingSpinner, ButtonSpinner, SkeletonLoader } from '../components/LoadingSpinner';
 import AIThumbnailPanel from '../components/AIThumbnailPanel';
+import ProjectGlossaryManager from '../components/ProjectGlossaryManager';
 
-
-export default function ProjectDetail({ projectId, onBack }) {
-
+export default function ProjectDetail({ projectId, onBack, onEditInTranslator }) {
   const [project, setProject] = useState(null);
   const [providers, setProviders] = useState({ audio: [], video: [], llm: [] });
   const [voices, setVoices] = useState([]);
-  const [estimate, setEstimate] = useState(null);
-  const [preflight, setPreflight] = useState(null);
-  const [status, setStatus] = useState(null);
+  const [activeTab, setActiveTab] = useState('overview'); // 'overview', 'settings', 'glossary'
   const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
   const [error, setError] = useState(null);
 
-  // Selected configuration state
-  const [selectedAudioProvider, setSelectedAudioProvider] = useState('edge_tts');
-  const [selectedVideoProvider, setSelectedVideoProvider] = useState('');
-  const [selectedVoice, setSelectedVoice] = useState('');
-  const [selectedVoiceName, setSelectedVoiceName] = useState('');
-  const [syncStrategy, setSyncStrategy] = useState('trim_video');
+  // Editable settings form state
+  const [editSettings, setEditSettings] = useState({});
+  const [savedSnapshot, setSavedSnapshot] = useState({});
+  const [isTabDirty, setIsTabDirty] = useState(false);
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
 
   const pollIntervalRef = useRef(null);
 
-  // Load project details and provider list
   const loadProjectData = async () => {
     try {
       const [projRes, provRes] = await Promise.all([
@@ -36,53 +32,97 @@ export default function ProjectDetail({ projectId, onBack }) {
       if (projRes.success) {
         const p = projRes.data;
         setProject(p);
-        setSelectedAudioProvider(p.audio_provider_id || 'edge_tts');
-        setSelectedVideoProvider(p.video_provider_id || '');
-        setSelectedVoice(p.voice_id || '');
-        setSelectedVoiceName(p.voice_name || '');
-        setSyncStrategy(p.sync_strategy || 'trim_video');
+        const s = p.settings || {};
+        setEditSettings(s);
+        setSavedSnapshot(s);
+        setIsTabDirty(false);
+      } else {
+        setError('Không tìm thấy dữ liệu dự án');
       }
 
       if (provRes.success) {
         setProviders(provRes.data);
-        if (provRes.data.video && provRes.data.video.length > 0) {
-          setSelectedVideoProvider(prev => prev || provRes.data.video[0].id);
-        }
       }
     } catch (err) {
-      setError('Failed to load project details');
+      setError('Lỗi kết nối khi tải chi tiết dự án');
     } finally {
       setLoading(false);
     }
   };
 
-  // Load voices whenever audio provider changes
-  useEffect(() => {
-    if (selectedAudioProvider) {
-      providersApi.listVoices(selectedAudioProvider)
-        .then(res => {
-          if (res.success && res.data.length > 0) {
-            setVoices(res.data);
-            const exists = res.data.some(v => v.id === selectedVoice);
-            if (!selectedVoice || !exists) {
-              setSelectedVoice(res.data[0].id);
-              setSelectedVoiceName(res.data[0].name);
-            }
-          }
-        })
-        .catch(err => console.error('Failed to load voices:', err));
-    }
-  }, [selectedAudioProvider]);
-
   useEffect(() => {
     loadProjectData();
   }, [projectId]);
 
-  // Polling for live status when running
+  // Fetch voices for current audio provider
   useEffect(() => {
-    const isRunning = project && [
-      'generating_audio', 'generating_video', 'syncing', 'merging'
-    ].includes(project.workflow_status);
+    const audioProv = editSettings.audio_provider_id || 'edge_tts';
+    const lang = editSettings.target_language || 'vi';
+    providersApi.listVoices(audioProv, lang)
+      .then(res => {
+        if (res.success && res.data) {
+          setVoices(res.data);
+        }
+      })
+      .catch(() => setVoices([]));
+  }, [editSettings.audio_provider_id, editSettings.target_language]);
+
+  // Check dirty state on settings tab
+  useEffect(() => {
+    if (!savedSnapshot || Object.keys(savedSnapshot).length === 0) {
+      setIsTabDirty(false);
+      return;
+    }
+    const isDiff = JSON.stringify(editSettings) !== JSON.stringify(savedSnapshot);
+    setIsTabDirty(isDiff);
+  }, [editSettings, savedSnapshot]);
+
+  const handleSaveTabSettings = async () => {
+    setSavingSettings(true);
+    setSaveSuccessMsg('');
+    setError(null);
+    try {
+      const res = await projectsApi.saveSettings(projectId, editSettings);
+      if (res.success) {
+        const savedData = res.data || res.settings;
+        setSavedSnapshot(savedData);
+        setEditSettings(savedData);
+        setIsTabDirty(false);
+        setSaveSuccessMsg('✅ Đã lưu thành công cấu hình mới vào Database MySQL!');
+        await loadProjectData();
+        setTimeout(() => setSaveSuccessMsg(''), 4000);
+      }
+    } catch (err) {
+      setError('Không thể lưu cấu hình dự án: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const handleTabLogoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingLogo(true);
+    try {
+      const res = await videoTranslatorApi.uploadWatermarkLogo(file, projectId);
+      if (res.success && res.data) {
+        const relativePath = res.data.relative_path || res.data.image_path;
+        setEditSettings(prev => ({
+          ...prev,
+          watermark_image_path: relativePath,
+          watermark_image_asset_id: res.data.asset_id || prev.watermark_image_asset_id,
+        }));
+      }
+    } catch (err) {
+      alert('Lỗi upload logo: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setIsUploadingLogo(false);
+    }
+  };
+
+  // Polling for live status when workflow status is running
+  useEffect(() => {
+    const isRunning = project && ['running', 'generating_audio', 'generating_video', 'syncing', 'merging'].includes(project.workflow_status);
 
     if (!isRunning) {
       if (pollIntervalRef.current) {
@@ -94,11 +134,7 @@ export default function ProjectDetail({ projectId, onBack }) {
 
     pollIntervalRef.current = setInterval(async () => {
       try {
-        const [statusRes, projRes] = await Promise.all([
-          projectsApi.status(projectId),
-          projectsApi.get(projectId),
-        ]);
-        if (statusRes.success) setStatus(statusRes.data);
+        const projRes = await projectsApi.get(projectId);
         if (projRes.success) setProject(projRes.data);
       } catch (e) {
         console.error('Polling status failed', e);
@@ -113,479 +149,624 @@ export default function ProjectDetail({ projectId, onBack }) {
     };
   }, [project?.workflow_status, projectId]);
 
-
-  // Handle Estimate
-  const handleEstimate = async () => {
-    setActionLoading(true);
-    try {
-      const res = await projectsApi.estimate(projectId);
-      if (res.success) {
-        setEstimate(res.data);
-        await loadProjectData();
-      }
-    } catch (err) {
-      setError('Estimation failed');
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  // Handle Save Configuration & Run Precheck
-  const handlePrecheck = async () => {
-    setActionLoading(true);
-    setError(null);
-    try {
-      const voiceToUse = selectedVoice || (voices.length > 0 ? voices[0].id : '');
-      const voiceNameToUse = selectedVoiceName || (voices.length > 0 ? voices[0].name : '');
-      const videoToUse = selectedVideoProvider || (providers.video && providers.video.length > 0 ? providers.video[0].id : '');
-
-      // Save config first
-      await projectsApi.configure(projectId, {
-        audio_provider_id: selectedAudioProvider,
-        video_provider_id: videoToUse,
-        voice_id: voiceToUse,
-        voice_name: voiceNameToUse,
-        sync_strategy: syncStrategy,
-      });
-
-      setSelectedVoice(voiceToUse);
-      setSelectedVoiceName(voiceNameToUse);
-      setSelectedVideoProvider(videoToUse);
-
-      // Run precheck
-      const res = await projectsApi.precheck(projectId);
-      if (res.success) {
-        setPreflight(res.data);
-        await loadProjectData();
-      }
-    } catch (err) {
-      setError('Precheck failed');
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  // Handle Start Workflow
-  const handleRun = async () => {
-    setActionLoading(true);
-    try {
-      const res = await projectsApi.run(projectId);
-      if (res.success) {
-        loadProjectData();
-      }
-    } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to start workflow');
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  // Handle Resume Workflow
-  const handleResume = async () => {
-    setActionLoading(true);
-    try {
-      const res = await projectsApi.resume(projectId);
-      if (res.success) {
-        loadProjectData();
-      }
-    } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to resume workflow');
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  // Handle Cancel Workflow
-  const handleCancel = async () => {
-    try {
-      await projectsApi.cancel(projectId);
-      loadProjectData();
-    } catch (err) {
-      setError('Failed to cancel workflow');
-    }
-  };
-
   if (loading) {
     return (
-      <div className="card" style={{ padding: '2rem' }}>
-        <LoadingSpinner size="lg" label="Đang tải chi tiết dự án..." sublabel="Đang nạp thông tin kịch bản, âm thanh và trạng thái workflow..." />
+      <div className="card" style={{ padding: '2rem', background: '#0f172a', borderRadius: '12px' }}>
+        <LoadingSpinner size="lg" label="Đang tải chi tiết dự án..." sublabel="Đang nạp thông tin cấu hình, video và glossary..." />
         <div style={{ marginTop: '1.5rem' }}>
-          <SkeletonLoader type="card" rows={2} />
+          <SkeletonLoader type="card" rows={3} />
         </div>
       </div>
     );
   }
 
-  if (!project) return <div className="card">Project not found</div>;
+  if (!project) {
+    return (
+      <div className="card" style={{ padding: '2rem', textAlign: 'center', background: '#0f172a', borderRadius: '12px' }}>
+        <h3 style={{ color: '#f87171', marginBottom: '0.5rem' }}>⚠️ Không tìm thấy dự án</h3>
+        <p style={{ color: '#94a3b8', marginBottom: '1.5rem' }}>
+          {error || 'Dự án với ID này không tồn tại hoặc đã bị xóa.'}
+        </p>
+        <button className="btn btn-secondary" onClick={onBack}>
+          ← Quay lại Dashboard
+        </button>
+      </div>
+    );
+  }
 
-  const isRunning = [
-    'generating_audio', 'generating_video', 'syncing', 'merging'
-  ].includes(project.workflow_status);
+  const pSettings = editSettings;
+  const videos = project.videos || [];
+  const totalVideos = videos.length;
+  const completedVideos = videos.filter(v => v.status === 'completed').length;
+  const runningVideos = videos.filter(v => v.status === 'running' || v.status === 'in_progress').length;
+  const failedVideos = videos.filter(v => v.status === 'failed').length;
+
+  const formatDate = (isoStr) => {
+    if (!isoStr) return 'N/A';
+    try {
+      return new Date(isoStr).toLocaleString('vi-VN');
+    } catch (e) {
+      return isoStr;
+    }
+  };
 
   return (
-    <div>
-      <div className="page-header">
+    <div style={{ padding: '20px 0', maxWidth: '1100px', margin: '0 auto' }}>
+      {/* Header Bar */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
         <div>
           <button
             className="btn btn-secondary"
             onClick={onBack}
-            style={{ marginBottom: '0.5rem', padding: '0.25rem 0.75rem', fontSize: '0.8rem' }}
+            style={{ marginBottom: '10px', padding: '6px 14px', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
           >
-            ← Back to Dashboard
+            ← Quay lại Dashboard
           </button>
-          <h1 className="page-title">{project.title}</h1>
-          <p className="page-subtitle">
-            ID: <code>{project.id}</code> | Mode: {project.workflow_mode === 'audio_video' ? 'Audio + Video' : 'Audio Only'}
+          <h1 style={{ fontSize: '26px', fontWeight: 'bold', color: '#f8fafc', margin: '0 0 6px 0' }}>
+            📁 {project.title}
+          </h1>
+          <p style={{ color: '#94a3b8', fontSize: '13px', margin: 0 }}>
+            ID: <code style={{ background: '#1e293b', padding: '2px 8px', borderRadius: '4px', color: '#818cf8' }}>{project.id}</code>
+            {' | '} Tạo lúc: {formatDate(project.created_at)}
           </p>
         </div>
 
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          {project.workflow_status === 'parsed' && (
-            <button className="btn btn-primary" onClick={handleEstimate} disabled={actionLoading}>
-              Estimate Resources
-            </button>
-          )}
-
-          {project.workflow_status === 'estimated' && (
-            <button className="btn btn-primary" onClick={handlePrecheck} disabled={actionLoading}>
-              Save Config & Run Preflight →
-            </button>
-          )}
-
-          {project.workflow_status === 'prechecked' && (
-            <button className="btn btn-primary" onClick={handleRun} disabled={actionLoading}>
-              ▶️ Start Workflow
-            </button>
-          )}
-
-          {['failed', 'interrupted'].includes(project.workflow_status) && (
-            <button className="btn btn-primary" onClick={handleResume} disabled={actionLoading}>
-              🔄 Resume Workflow
-            </button>
-          )}
-
-          {isRunning && (
-            <button className="btn btn-danger" onClick={handleCancel}>
-              ⏹️ Cancel Workflow
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          {onEditInTranslator && (
+            <button
+              onClick={() => onEditInTranslator(project.id)}
+              style={{
+                background: '#4f46e5',
+                color: '#fff',
+                border: 'none',
+                padding: '10px 18px',
+                borderRadius: '8px',
+                fontWeight: 'bold',
+                cursor: 'pointer',
+                fontSize: '14px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                boxShadow: '0 4px 12px rgba(79, 70, 229, 0.3)',
+              }}
+            >
+              ⚙️ Chỉnh sửa Studio & Dịch Video
             </button>
           )}
         </div>
       </div>
+
+      {saveSuccessMsg && (
+        <div style={{ background: '#064e3b', border: '1px solid #10b981', color: '#6ee7b7', padding: '12px 20px', borderRadius: '8px', marginBottom: '20px', fontWeight: 'bold' }}>
+          {saveSuccessMsg}
+        </div>
+      )}
 
       {error && (
-        <div className="banner banner-danger">
-          <span>❌ {error}</span>
+        <div style={{ background: '#7f1d1d', border: '1px solid #f87171', color: '#fca5a5', padding: '12px 20px', borderRadius: '8px', marginBottom: '20px' }}>
+          ❌ {error}
         </div>
       )}
 
-      {project.error_message && (
-        <div className="banner banner-danger">
-          <strong>Workflow Failure:</strong> {project.error_message}
-        </div>
-      )}
-
-      {/* Progress View when Running or Completed */}
-      {(isRunning || project.workflow_status === 'completed' || status) && (
-        <div className="card">
-          <div className="card-title">
-            <span>Workflow Execution Progress</span>
-            <span className={`badge ${project.workflow_status === 'completed' ? 'badge-success' : 'badge-info'}`}>
-              {project.workflow_status}
-            </span>
-          </div>
-
-          <div className="progress-container">
-            <div className="progress-label">
-              <span>Overall Status</span>
-              <span>{status ? `${status.audio_completed}/${status.total_segments} Segments` : (project.workflow_status === 'completed' ? '100% Completed' : '')}</span>
-            </div>
-            <div className="progress-bar-bg">
-              <div
-                className={`progress-bar-fill ${project.workflow_status === 'completed' ? 'success' : ''}`}
-                style={{
-                  width: `${status ? (status.audio_completed / Math.max(status.total_segments, 1)) * 100 : (project.workflow_status === 'completed' ? 100 : 10)}%`
-                }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Completed Output Preview Card */}
-      {project.workflow_status === 'completed' && (
-        <div className="card" style={{ border: '1px solid var(--success)', backgroundColor: 'rgba(34, 197, 94, 0.05)' }}>
-          <div className="card-title">
-            <span>🎉 Production Completed — Final Output</span>
-            <span className="badge badge-success">READY</span>
-          </div>
-
-          {project.workflow_mode === 'audio_video' ? (
-            <div style={{ textAlign: 'center', margin: '1rem 0' }}>
-              <video
-                controls
-                style={{ maxWidth: '100%', maxHeight: '420px', borderRadius: 'var(--radius)', boxShadow: '0 4px 20px rgba(0,0,0,0.4)', backgroundColor: '#000' }}
-                src={`/media/projects/${project.id}/output/final_video.mp4`}
-              >
-                Your browser does not support the video tag.
-              </video>
-              <div style={{ marginTop: '1.25rem' }}>
-                <a
-                  href={`/media/projects/${project.id}/output/final_video.mp4`}
-                  download={`${project.title.replace(/[^a-z0-9]/gi, '_')}_final.mp4`}
-                  className="btn btn-primary"
-                  style={{ fontSize: '1rem', padding: '0.75rem 1.5rem' }}
-                >
-                  📥 Download Final Video (MP4)
-                </a>
-              </div>
-            </div>
-          ) : (
-            <div style={{ textAlign: 'center', margin: '1rem 0' }}>
-              <p style={{ marginBottom: '1rem', color: 'var(--text-secondary)' }}>Audio files generated for all segments.</p>
-              <a
-                href={`/media/projects/${project.id}/audio/segment_001/segment_001_audio.wav`}
-                download={`${project.title.replace(/[^a-z0-9]/gi, '_')}_segment_001.wav`}
-                className="btn btn-primary"
-              >
-                📥 Download Segment 1 Audio (WAV)
-              </a>
-            </div>
-          )}
-        </div>
-      )}
-
-
-      {/* Provider & Voice Configuration Cards */}
-      <div className="grid-2">
-        {/* Audio Provider Card */}
-        <div className="card">
-          <div className="card-title">
-            <span>🎙️ Audio Provider (TTS)</span>
-            <span className="badge badge-success">Free Tier</span>
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Provider</label>
-            <select
-              className="form-select"
-              value={selectedAudioProvider}
-              onChange={(e) => setSelectedAudioProvider(e.target.value)}
-              disabled={isRunning}
-            >
-              {providers.audio.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} {p.free_tier ? '(Free Tier ✅)' : ''}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Voice Selection</label>
-            <select
-              className="form-select"
-              value={selectedVoice}
-              onChange={(e) => {
-                setSelectedVoice(e.target.value);
-                const v = voices.find(x => x.id === e.target.value);
-                if (v) setSelectedVoiceName(v.name);
-              }}
-              disabled={isRunning || voices.length === 0}
-            >
-              {voices.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.name} ({v.language})
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Video Provider Card */}
-        {project.workflow_mode === 'audio_video' && (
-          <div className="card">
-            <div className="card-title">
-              <span>🎥 Video Provider (Text-to-Video)</span>
-              <span className="badge badge-info">8s Clips</span>
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">Provider</label>
-              <select
-                className="form-select"
-                value={selectedVideoProvider}
-                onChange={(e) => setSelectedVideoProvider(e.target.value)}
-                disabled={isRunning}
-              >
-                <option value="">-- Select Video Provider --</option>
-                {providers.video.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">Audio/Video Sync Strategy</label>
-              <select
-                className="form-select"
-                value={syncStrategy}
-                onChange={(e) => setSyncStrategy(e.target.value)}
-                disabled={isRunning}
-              >
-                <option value="trim_video">Trim Video (Cut video to match audio length)</option>
-                <option value="loop_video">Loop Video (Repeat video to fill audio length)</option>
-                <option value="pad_video">Pad Video (Add black frames at the end)</option>
-              </select>
-            </div>
-          </div>
-        )}
+      {/* Tabs Navigation */}
+      <div style={{ display: 'flex', borderBottom: '1px solid #334155', marginBottom: '24px' }}>
+        <button
+          onClick={() => setActiveTab('overview')}
+          style={{
+            padding: '12px 20px',
+            background: 'none',
+            border: 'none',
+            borderBottom: activeTab === 'overview' ? '3px solid #6366f1' : '3px solid transparent',
+            color: activeTab === 'overview' ? '#818cf8' : '#94a3b8',
+            fontWeight: 'bold',
+            fontSize: '15px',
+            cursor: 'pointer',
+          }}
+        >
+          📊 Tổng quan & Videos ({totalVideos})
+        </button>
+        <button
+          onClick={() => setActiveTab('settings')}
+          style={{
+            padding: '12px 20px',
+            background: 'none',
+            border: 'none',
+            borderBottom: activeTab === 'settings' ? '3px solid #6366f1' : '3px solid transparent',
+            color: activeTab === 'settings' ? '#818cf8' : '#94a3b8',
+            fontWeight: 'bold',
+            fontSize: '15px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
+          ⚙️ Cấu hình Dự án (Project Settings)
+          {isTabDirty && <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#f59e0b' }} />}
+        </button>
+        <button
+          onClick={() => setActiveTab('glossary')}
+          style={{
+            padding: '12px 20px',
+            background: 'none',
+            border: 'none',
+            borderBottom: activeTab === 'glossary' ? '3px solid #6366f1' : '3px solid transparent',
+            color: activeTab === 'glossary' ? '#818cf8' : '#94a3b8',
+            fontWeight: 'bold',
+            fontSize: '15px',
+            cursor: 'pointer',
+          }}
+        >
+          📖 Thuật ngữ & Glossary ({project.glossary_count || 0})
+        </button>
       </div>
 
-      {/* AI Auto Thumbnail Generation Panel */}
-      <AIThumbnailPanel
-        projectId={projectId}
-        initialThumbnailUrl={project.thumbnail_url}
-        onThumbnailUpdated={(newUrl) => {
-          setProject((prev) => (prev ? { ...prev, thumbnail_url: newUrl } : prev));
-        }}
-      />
-
-
-      {/* Resource Estimate Results */}
-      {estimate && (
-        <div className="card">
-          <div className="card-title">
-            <span>📊 Resource Requirement Estimate</span>
-            <span className="badge badge-info">Calculated</span>
+      {/* TAB 1: OVERVIEW & VIDEOS */}
+      {activeTab === 'overview' && (
+        <div>
+          {/* Project Metrics Overview */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+            <div style={{ background: '#1e293b', padding: '16px', borderRadius: '10px', border: '1px solid #334155' }}>
+              <div style={{ fontSize: '12px', color: '#94a3b8' }}>Tổng Video</div>
+              <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f8fafc', marginTop: '4px' }}>{totalVideos}</div>
+            </div>
+            <div style={{ background: '#1e293b', padding: '16px', borderRadius: '10px', border: '1px solid #334155' }}>
+              <div style={{ fontSize: '12px', color: '#94a3b8' }}>Hoàn thành</div>
+              <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#4ade80', marginTop: '4px' }}>{completedVideos}</div>
+            </div>
+            <div style={{ background: '#1e293b', padding: '16px', borderRadius: '10px', border: '1px solid #334155' }}>
+              <div style={{ fontSize: '12px', color: '#94a3b8' }}>Đang chạy</div>
+              <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#60a5fa', marginTop: '4px' }}>{runningVideos}</div>
+            </div>
+            <div style={{ background: '#1e293b', padding: '16px', borderRadius: '10px', border: '1px solid #334155' }}>
+              <div style={{ fontSize: '12px', color: '#94a3b8' }}>Thất bại</div>
+              <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f87171', marginTop: '4px' }}>{failedVideos}</div>
+            </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '1rem', marginTop: '0.5rem' }}>
-            <div>
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Total Segments</div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 'bold' }}>{estimate.total_segments}</div>
+
+          {/* Description */}
+          {project.description && (
+            <div className="card" style={{ background: '#1e293b', padding: '16px 20px', borderRadius: '10px', marginBottom: '24px', border: '1px solid #334155' }}>
+              <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#94a3b8' }}>Mô tả dự án:</h4>
+              <p style={{ margin: 0, color: '#e2e8f0', fontSize: '14px' }}>{project.description}</p>
             </div>
-            <div>
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Total Characters</div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 'bold' }}>{estimate.total_characters}</div>
-            </div>
-            <div>
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Est. Audio Duration</div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: 'var(--success)' }}>~{estimate.estimated_audio_duration_seconds}s</div>
-            </div>
-            {estimate.estimated_video_clips && (
-              <div>
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Est. Video Clips</div>
-                <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: 'var(--accent-light)' }}>{estimate.estimated_video_clips} clips ({estimate.estimated_video_seconds}s)</div>
+          )}
+
+          {/* Video List Table */}
+          <div className="card" style={{ background: '#1e293b', borderRadius: '12px', padding: '20px', border: '1px solid #334155' }}>
+            <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: 'bold', color: '#f8fafc' }}>
+              🎬 Danh sách Video trong Dự án
+            </h3>
+
+            {videos.length === 0 ? (
+              <div style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>
+                Chưa có video nào được xử lý trong dự án này.
+                {onEditInTranslator && (
+                  <div style={{ marginTop: '12px' }}>
+                    <button
+                      onClick={() => onEditInTranslator(project.id)}
+                      className="btn btn-primary"
+                    >
+                      ▶️ Khởi chạy Video đầu tiên
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table className="table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #334155', textTransform: 'uppercase', fontSize: '12px', color: '#94a3b8', textAlign: 'left' }}>
+                      <th style={{ padding: '10px' }}>Video / Job ID</th>
+                      <th style={{ padding: '10px' }}>Trạng thái</th>
+                      <th style={{ padding: '10px' }}>Tiến trình</th>
+                      <th style={{ padding: '10px' }}>Thời gian tạo</th>
+                      <th style={{ padding: '10px' }}>Thao tác</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {videos.map(v => (
+                      <tr key={v.id} style={{ borderBottom: '1px solid #1e293b' }}>
+                        <td style={{ padding: '12px 10px', fontWeight: 'bold', color: '#e2e8f0' }}>
+                          {v.title || v.id}
+                        </td>
+                        <td style={{ padding: '12px 10px' }}>
+                          <span className={`badge ${v.status === 'completed' ? 'badge-success' : (v.status === 'failed' ? 'badge-danger' : 'badge-info')}`}>
+                            {v.status}
+                          </span>
+                        </td>
+                        <td style={{ padding: '12px 10px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <div style={{ flex: 1, height: '6px', background: '#0f172a', borderRadius: '3px', overflow: 'hidden' }}>
+                              <div style={{ width: `${v.overall_progress_pct || 0}%`, height: '100%', background: v.status === 'completed' ? '#10b981' : '#3b82f6' }} />
+                            </div>
+                            <span style={{ fontSize: '12px', color: '#94a3b8' }}>{v.overall_progress_pct || 0}%</span>
+                          </div>
+                        </td>
+                        <td style={{ padding: '12px 10px', fontSize: '13px', color: '#94a3b8' }}>
+                          {formatDate(v.created_at)}
+                        </td>
+                        <td style={{ padding: '12px 10px' }}>
+                          {v.output_url ? (
+                            <a
+                              href={v.output_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="btn btn-secondary"
+                              style={{ padding: '4px 10px', fontSize: '12px' }}
+                            >
+                              📥 Xem Output
+                            </a>
+                          ) : (
+                            <button
+                              onClick={() => onEditInTranslator && onEditInTranslator(project.id)}
+                              className="btn btn-secondary"
+                              style={{ padding: '4px 10px', fontSize: '12px' }}
+                            >
+                              ⚙️ Mở Studio
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* Preflight Checklist Results */}
-      {preflight && (
-        <div className="card">
-          <div className="card-title">
-            <span>📋 Preflight Check Results</span>
-            <span className={`badge ${preflight.passed ? 'badge-success' : 'badge-danger'}`}>
-              {preflight.passed ? '✅ Passed All Checks' : '❌ Checks Failed'}
-            </span>
+      {/* TAB 2: EDITABLE PROJECT SETTINGS */}
+      {activeTab === 'settings' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {/* Header Action Bar */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#1e1b4b', padding: '16px 20px', borderRadius: '10px', border: '1px solid #4338ca', flexWrap: 'wrap', gap: '12px' }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '16px', color: '#fff', fontWeight: 'bold' }}>⚙️ Cấu hình Chi Tiết Dự Án (Chỉnh sửa & Lưu DB)</h3>
+              <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#93c5fd' }}>Thay đổi các tùy chọn dưới đây và nhấn "Lưu cấu hình" để cập nhật chính xác vào dự án.</p>
+            </div>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              {isTabDirty && (
+                <button
+                  onClick={() => setEditSettings(savedSnapshot)}
+                  style={{ background: '#475569', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}
+                >
+                  ↩️ Khôi phục
+                </button>
+              )}
+              <button
+                onClick={handleSaveTabSettings}
+                disabled={savingSettings}
+                style={{ background: '#2563eb', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px', boxShadow: '0 4px 12px rgba(37, 99, 235, 0.4)' }}
+              >
+                {savingSettings ? 'Đang lưu Database...' : '💾 Lưu Cấu hình Dự án'}
+              </button>
+            </div>
           </div>
 
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Check</th>
-                <th>Description</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {preflight.checks.map((c, i) => (
-                <tr key={i}>
-                  <td style={{ fontWeight: '600' }}><code>{c.name}</code></td>
-                  <td>{c.description}</td>
-                  <td>
-                    {c.passed ? (
-                      <span className="badge badge-success">Passed</span>
-                    ) : (
-                      <span className="badge badge-danger">Failed: {c.error_message}</span>
+          {isTabDirty && (
+            <div style={{ background: '#1e3a8a', border: '1px solid #3b82f6', color: '#93c5fd', padding: '12px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 'bold' }}>
+              ⚠️ Bạn có thay đổi chưa lưu trên trang này. Hãy nhấn "Lưu Cấu hình Dự án" để lưu lại.
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
+            {/* 1. Language & Input */}
+            <div className="card" style={{ background: '#1e293b', borderRadius: '10px', padding: '18px', border: '1px solid #334155' }}>
+              <h4 style={{ margin: '0 0 14px 0', fontSize: '15px', color: '#818cf8', fontWeight: 'bold', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>
+                🌐 Ngôn ngữ & Video Input
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Ngôn ngữ đích (Target Language):</label>
+                  <select
+                    value={pSettings.target_language || 'vi'}
+                    onChange={(e) => setEditSettings(prev => ({ ...prev, target_language: e.target.value }))}
+                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                  >
+                    <option value="vi">🇻🇳 Tiếng Việt (Vietnamese)</option>
+                    <option value="en">🇬🇧 Tiếng Anh (English)</option>
+                    <option value="ja">🇯🇵 Tiếng Nhật (Japanese)</option>
+                    <option value="ko">🇰🇷 Tiếng Hàn (Korean)</option>
+                    <option value="zh">🇨🇳 Tiếng Trung (Chinese)</option>
+                    <option value="fr">🇫🇷 Tiếng Pháp (French)</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Ngôn ngữ nguồn (Source Language):</label>
+                  <select
+                    value={pSettings.source_language || 'auto'}
+                    onChange={(e) => setEditSettings(prev => ({ ...prev, source_language: e.target.value }))}
+                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                  >
+                    <option value="auto">✨ Tự động nhận diện (Auto Detect)</option>
+                    <option value="en">English</option>
+                    <option value="zh">Chinese</option>
+                    <option value="ja">Japanese</option>
+                    <option value="ko">Korean</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* 2. AI Providers & Models */}
+            <div className="card" style={{ background: '#1e293b', borderRadius: '10px', padding: '18px', border: '1px solid #334155' }}>
+              <h4 style={{ margin: '0 0 14px 0', fontSize: '15px', color: '#818cf8', fontWeight: 'bold', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>
+                🤖 AI Providers & Models
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>LLM Provider:</label>
+                  <select
+                    value={pSettings.llm_provider_id || 'gemini'}
+                    onChange={(e) => setEditSettings(prev => ({ ...prev, llm_provider_id: e.target.value, stt_provider_id: e.target.value, translation_provider_id: e.target.value }))}
+                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                  >
+                    <option value="gemini">✨ Google Gemini AI Studio</option>
+                    <option value="openai">🤖 OpenAI ChatGPT</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>STT / Translation Model:</label>
+                  <select
+                    value={pSettings.stt_model || 'gemini-2.5-flash'}
+                    onChange={(e) => setEditSettings(prev => ({ ...prev, stt_model: e.target.value, translation_model: e.target.value }))}
+                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                  >
+                    <option value="gemini-2.5-flash">Gemini 2.5 Flash (Nhanh & Tối Ưu)</option>
+                    <option value="gemini-1.5-pro">Gemini 1.5 Pro (Chính Xác Cao)</option>
+                    <option value="gpt-4o-mini">GPT-4o Mini (OpenAI)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* 3. Voice & Dubbing */}
+            <div className="card" style={{ background: '#1e293b', borderRadius: '10px', padding: '18px', border: '1px solid #334155' }}>
+              <h4 style={{ margin: '0 0 14px 0', fontSize: '15px', color: '#818cf8', fontWeight: 'bold', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>
+                🎙️ Voice & Dubbing
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>TTS Provider:</label>
+                  <select
+                    value={pSettings.audio_provider_id || 'edge_tts'}
+                    onChange={(e) => setEditSettings(prev => ({ ...prev, audio_provider_id: e.target.value }))}
+                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                  >
+                    <option value="edge_tts">Edge TTS (Miễn phí)</option>
+                    <option value="elevenlabs">ElevenLabs</option>
+                    <option value="google_tts">Google Cloud TTS</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Giọng đọc (Voice ID):</label>
+                  <select
+                    value={pSettings.voice_id || 'vi-VN-HoaiMyNeural'}
+                    onChange={(e) => setEditSettings(prev => ({ ...prev, voice_id: e.target.value }))}
+                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                  >
+                    {voices.map(v => (
+                      <option key={v.id} value={v.id}>{v.name} ({v.gender})</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Âm thanh gốc:</label>
+                  <select
+                    value={pSettings.original_audio_mode || 'mute'}
+                    onChange={(e) => setEditSettings(prev => ({ ...prev, original_audio_mode: e.target.value }))}
+                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                  >
+                    <option value="mute">Tắt tiếng gốc (Mute)</option>
+                    <option value="duck">Giảm tiếng gốc (Ducking 20%)</option>
+                    <option value="keep">Trộn tiếng gốc full</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* 4. Watermark Configuration */}
+            <div className="card" style={{ background: '#1e293b', borderRadius: '10px', padding: '18px', border: '1px solid #334155' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>
+                <h4 style={{ margin: 0, fontSize: '15px', color: '#818cf8', fontWeight: 'bold' }}>
+                  🏷️ Watermark / Logo Configuration
+                </h4>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px', color: '#e2e8f0', fontWeight: 'bold' }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(pSettings.watermark_enabled)}
+                    onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_enabled: e.target.checked }))}
+                    style={{ accentColor: '#6366f1', width: '16px', height: '16px' }}
+                  />
+                  Bật Watermark
+                </label>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', gap: '16px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: '#cbd5e1', fontSize: '13px' }}>
+                    <input
+                      type="radio"
+                      name="tab_wm_type"
+                      value="image"
+                      checked={(pSettings.watermark_type || 'image') === 'image'}
+                      onChange={() => setEditSettings(prev => ({ ...prev, watermark_type: 'image' }))}
+                      style={{ accentColor: '#6366f1' }}
+                    />
+                    🖼️ Logo Ảnh
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: '#cbd5e1', fontSize: '13px' }}>
+                    <input
+                      type="radio"
+                      name="tab_wm_type"
+                      value="text"
+                      checked={pSettings.watermark_type === 'text'}
+                      onChange={() => setEditSettings(prev => ({ ...prev, watermark_type: 'text' }))}
+                      style={{ accentColor: '#6366f1' }}
+                    />
+                    🔤 Watermark Text
+                  </label>
+                </div>
+
+                {pSettings.watermark_type === 'text' ? (
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Nội dung Text Watermark:</label>
+                    <input
+                      type="text"
+                      value={pSettings.watermark_text || ''}
+                      onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_text: e.target.value }))}
+                      placeholder="© AutoTransAI Studio"
+                      style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                    />
+                  </div>
+                ) : (
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Upload Logo (PNG / WEBP / JPG):</label>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleTabLogoUpload}
+                      disabled={isUploadingLogo}
+                      style={{ background: '#0f172a', padding: '6px', borderRadius: '6px', color: '#fff', border: '1px solid #475569', fontSize: '12px', width: '100%' }}
+                    />
+                    {pSettings.watermark_image_path && (
+                      <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <img
+                          src={`/api/storage/files/${pSettings.watermark_image_path.replace(/\\/g, '/')}`}
+                          alt="Logo Preview"
+                          style={{ maxHeight: '40px', maxWidth: '120px', objectFit: 'contain', background: '#0f172a', padding: '4px', borderRadius: '4px', border: '1px solid #475569' }}
+                        />
+                        <span style={{ color: '#4ade80', fontSize: '12px' }}>✓ Đã chọn logo</span>
+                      </div>
                     )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </div>
+                )}
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Vị trí Watermark:</label>
+                  <select
+                    value={pSettings.watermark_position || 'bottom_right'}
+                    onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_position: e.target.value }))}
+                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                  >
+                    <option value="bottom_right">↘️ Góc Dưới Phải (Bottom Right)</option>
+                    <option value="bottom_left">↙️ Góc Dưới Trái (Bottom Left)</option>
+                    <option value="top_right">↗️ Góc Trên Phải (Top Right)</option>
+                    <option value="top_left">↖️ Góc Trên Trái (Top Left)</option>
+                    <option value="center">⏹️ Chính Giữa (Center)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
+                    Kích thước ({Math.round((pSettings.watermark_scale || 0.20) * 100)}% rộng video):
+                  </label>
+                  <input
+                    type="range"
+                    min="0.10"
+                    max="0.50"
+                    step="0.05"
+                    value={pSettings.watermark_scale || 0.20}
+                    onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_scale: parseFloat(e.target.value) }))}
+                    style={{ width: '100%', accentColor: '#818cf8' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
+                    Độ Trong Suốt ({Math.round((pSettings.watermark_opacity || 0.80) * 100)}%):
+                  </label>
+                  <input
+                    type="range"
+                    min="0.10"
+                    max="1.00"
+                    step="0.05"
+                    value={pSettings.watermark_opacity || 0.80}
+                    onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_opacity: parseFloat(e.target.value) }))}
+                    style={{ width: '100%', accentColor: '#818cf8' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
+                    Khoảng cách mép ({pSettings.watermark_margin || 20}px):
+                  </label>
+                  <input
+                    type="range"
+                    min="10"
+                    max="50"
+                    step="5"
+                    value={pSettings.watermark_margin || 20}
+                    onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_margin: parseInt(e.target.value, 10) }))}
+                    style={{ width: '100%', accentColor: '#818cf8' }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* 5. AI Thumbnail Settings */}
+            <div className="card" style={{ background: '#1e293b', borderRadius: '10px', padding: '18px', border: '1px solid #334155' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>
+                <h4 style={{ margin: 0, fontSize: '15px', color: '#818cf8', fontWeight: 'bold' }}>
+                  🎨 AI Thumbnail Configuration
+                </h4>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px', color: '#e2e8f0', fontWeight: 'bold' }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(pSettings.thumbnail_enabled)}
+                    onChange={(e) => setEditSettings(prev => ({ ...prev, thumbnail_enabled: e.target.checked }))}
+                    style={{ accentColor: '#6366f1', width: '16px', height: '16px' }}
+                  />
+                  Tự động Tạo Thumbnail
+                </label>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Provider / Style:</label>
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <select
+                      value={pSettings.thumbnail_provider || 'pollinations'}
+                      onChange={(e) => setEditSettings(prev => ({ ...prev, thumbnail_provider: e.target.value }))}
+                      style={{ flex: 1, padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                    >
+                      <option value="pollinations">Pollinations AI (Free)</option>
+                    </select>
+                    <select
+                      value={pSettings.thumbnail_style || 'auto'}
+                      onChange={(e) => setEditSettings(prev => ({ ...prev, thumbnail_style: e.target.value }))}
+                      style={{ flex: 1, padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                    >
+                      <option value="auto">Tự động (Auto)</option>
+                      <option value="realistic">Realistic</option>
+                      <option value="anime">Anime / Manga</option>
+                      <option value="cinematic">Cinematic 3D</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Custom Instruction (Tùy chọn):</label>
+                  <textarea
+                    rows="2"
+                    value={pSettings.thumbnail_custom_instruction || ''}
+                    onChange={(e) => setEditSettings(prev => ({ ...prev, thumbnail_custom_instruction: e.target.value }))}
+                    placeholder="Ví dụ: Tập trung vào nhân vật chính với ánh sáng huyền ảo..."
+                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px', resize: 'vertical' }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Segment List */}
-      <div className="card">
-        <div className="card-title">
-          <span>Parsed Script Segments ({project.segments.length})</span>
-        </div>
-
-        <table className="table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Text Preview</th>
-              <th>Chars</th>
-              <th>Audio Status</th>
-              <th>Video Status</th>
-              <th>Duration</th>
-            </tr>
-          </thead>
-          <tbody>
-            {project.segments.map((seg) => (
-              <React.Fragment key={seg.number}>
-                <tr>
-                  <td style={{ fontWeight: '700' }}>{seg.number}</td>
-                  <td style={{ maxWidth: '400px' }}>{seg.text_preview}</td>
-                  <td>{seg.char_count}</td>
-                  <td>
-                    <span className={`badge ${seg.audio_status === 'completed' ? 'badge-success' : (seg.audio_status === 'failed' ? 'badge-danger' : 'badge-neutral')}`}>
-                      {seg.audio_status}
-                    </span>
-                  </td>
-                  <td>
-                    <span
-                      className={`badge ${seg.video_status === 'completed' ? 'badge-success' : (seg.video_status === 'failed' ? 'badge-danger' : 'badge-neutral')}`}
-                      style={{ cursor: seg.video_error_message ? 'pointer' : 'default' }}
-                      title={seg.video_error_message ? "Click to view detailed error" : ""}
-                    >
-                      {seg.video_status} {seg.video_error_message ? '⚠️' : ''}
-                    </span>
-                  </td>
-                  <td>
-                    {seg.audio_duration ? `${seg.audio_duration}s` : '-'}
-                  </td>
-                </tr>
-
-                {/* Expanded Error Card for Failed Segments */}
-                {seg.video_status === 'failed' && (
-                  <tr>
-                    <td colSpan="6" style={{ padding: '0.5rem 1rem', backgroundColor: 'rgba(239, 68, 68, 0.05)', borderBottom: '1px solid var(--danger)' }}>
-                      <div style={{ color: 'var(--danger)', fontSize: '0.85rem' }}>
-                        <strong>FAILED — Segment #{seg.number} Video Generation Error:</strong>
-                        <div style={{ fontFamily: 'monospace', margin: '0.3rem 0', whiteSpace: 'pre-wrap', backgroundColor: 'rgba(0,0,0,0.2)', padding: '0.5rem', borderRadius: '4px' }}>
-                          Provider: {project.video_provider_id || 'Unknown'}
-                          {'\n'}
-                          Error: {seg.video_error_message || 'Video generation failed'}
-                        </div>
-                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                          💡 <em>Tip: You can add additional API keys under Settings for automatic key rotation failover, or switch provider to <strong>Local AI & FFmpeg Generator</strong> for 100% free offline video generation.</em>
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                )}
-              </React.Fragment>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {/* TAB 3: GLOSSARY */}
+      {activeTab === 'glossary' && (
+        <ProjectGlossaryManager projectId={projectId} />
+      )}
     </div>
   );
 }

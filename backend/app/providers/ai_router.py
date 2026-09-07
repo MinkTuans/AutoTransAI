@@ -31,8 +31,52 @@ class AIRouter:
                 "model_id": "gemini-2.5-flash",
                 "fallback_enabled": False,
                 "fallback_provider_id": None,
+                "source": "HARDCODED SAFE DEFAULT",
             }
+        stt_conf["source"] = "DATABASE"
         return stt_conf
+
+    @staticmethod
+    async def resolve_stt_model(db: Optional[AsyncSession] = None, requested_model: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Resolve STT Provider & Model according to Configuration Priority Hierarchy:
+        REQUESTED MODEL -> DATABASE AI FUNCTION CONFIG -> ENVIRONMENT DEFAULT -> HARDCODED SAFE DEFAULT
+        """
+        if requested_model:
+            return {
+                "provider_id": "gemini",
+                "model_id": requested_model,
+                "source": "REQUESTED MODEL",
+            }
+
+        if db:
+            try:
+                conf = await AIRouter.get_stt_config(db)
+                if conf and conf.get("model_id"):
+                    return {
+                        "provider_id": conf.get("primary_provider_id", "gemini"),
+                        "model_id": conf["model_id"],
+                        "source": conf.get("source", "DATABASE"),
+                    }
+            except Exception as e:
+                logger.warning(f"[STT ROUTING] Failed to query DB for STT config: {e}")
+
+        # Fallback to Environment or Hardcoded
+        from app.config import get_settings
+        settings = get_settings()
+        env_model = getattr(settings, "GEMINI_STT_MODEL", None) or getattr(settings, "GEMINI_MODEL", None)
+        if env_model:
+            return {
+                "provider_id": getattr(settings, "DEFAULT_LLM_PROVIDER", "gemini"),
+                "model_id": env_model,
+                "source": "ENVIRONMENT",
+            }
+
+        return {
+            "provider_id": "gemini",
+            "model_id": "gemini-2.5-flash",
+            "source": "HARDCODED SAFE DEFAULT",
+        }
 
     @staticmethod
     async def get_translation_config(db: AsyncSession) -> Dict[str, Any]:

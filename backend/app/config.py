@@ -36,25 +36,25 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # ── Database & Paths ───────────────────────────────────────────────
-    DATABASE_URL: Optional[str] = None
-    SUPABASE_DATABASE_URL: Optional[str] = None
+    # ── Database & Storage Paths ───────────────────────────────────────────────
+    DATABASE_URL: Optional[str] = "mysql+aiomysql://root:210606@127.0.0.1:3306/autotransai"
     DATA_DIR: Path = ROOT_DIR / "data"
+    STORAGE_ROOT: Path = ROOT_DIR / "storage"
+    STORAGE_DRIVER: str = "local"
     DB_FILENAME: str = "workflow.db"
 
     @property
     def DB_URL(self) -> str:
-        url = self.SUPABASE_DATABASE_URL or self.DATABASE_URL
+        url = self.DATABASE_URL
         if not url:
-            raise ValueError(
-                "DATABASE_URL or SUPABASE_DATABASE_URL is missing in .env! "
-                "Supabase PostgreSQL connection URL is required (e.g. postgresql+asyncpg://...)."
-            )
+            return f"sqlite+aiosqlite:///{self.DATA_DIR / self.DB_FILENAME}"
         return url
 
     @property
     def PROJECTS_DIR(self) -> Path:
-        return self.DATA_DIR / "projects"
+        p = self.STORAGE_ROOT / "projects"
+        p.mkdir(parents=True, exist_ok=True)
+        return p
 
     # ── Video ──────────────────────────────────────────────────────────
     VIDEO_TARGET_DURATION: int = 8  # seconds per segment clip
@@ -94,13 +94,6 @@ class Settings(BaseSettings):
     KLING_API_KEY: str = ""
     KLING_API_SECRET: str = ""
     FAL_API_KEY: str = ""
-
-    # ── Supabase Storage ───────────────────────────────────────────────
-    SUPABASE_URL: str = ""
-    SUPABASE_ANON_KEY: str = ""
-    SUPABASE_SERVICE_ROLE_KEY: str = ""
-    SUPABASE_STORAGE_BUCKET_PRIVATE: str = "autotransai-private"
-    SUPABASE_STORAGE_BUCKET_PUBLIC: str = "autotransai-public"
 
     # ── Server ─────────────────────────────────────────────────────────
     HOST: str = "127.0.0.1"

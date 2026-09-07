@@ -25,6 +25,7 @@ from app.models.video_editor import (
 )
 from app.models.workflow_engine import (
     ProjectGlossary,
+    ProjectTerminologyMemory,
     SpeakerVoiceMapping,
     WorkflowExecution,
     WorkflowStageExecution,
@@ -59,6 +60,7 @@ __all__ = [
     "YouTubeChannel",
     "YouTubePublication",
     "ProjectGlossary",
+    "ProjectTerminologyMemory",
     "SpeakerVoiceMapping",
     "WorkflowExecution",
     "WorkflowStageExecution",

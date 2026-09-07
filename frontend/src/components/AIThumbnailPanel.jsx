@@ -211,7 +211,7 @@ export default function AIThumbnailPanel({
                     {progressStep === 1 && '🔍 Đang phân tích nội dung kịch bản & visual hook...'}
                     {progressStep === 2 && '✍️ Đang tạo prompt minh họa visual storytelling...'}
                     {progressStep === 3 && '🎨 AI đang vẽ hình ảnh thumbnail...'}
-                    {progressStep === 4 && '☁️ Đang tải ảnh lên Cloudflare R2 / Supabase Storage...'}
+                    {progressStep === 4 && '📁 Đang lưu ảnh vào Local Disk Storage...'}
                     {progressStep === 5 && '✅ Đã tạo thumbnail thành công!'}
                   </p>
                   <div className="progress w-50 mt-2" style={{ height: '6px' }}>

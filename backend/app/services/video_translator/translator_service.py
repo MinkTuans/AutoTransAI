@@ -387,6 +387,8 @@ async def transcribe_audio_with_whisper(
 async def transcribe_audio_with_gemini(
     audio_path: Path,
     job_id: str = "VT-JOB",
+    model_name: Optional[str] = None,
+    db: Optional[AsyncSession] = None,
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
     Transcribe audio file using Google Gemini API.
@@ -396,6 +398,26 @@ async def transcribe_audio_with_gemini(
         raise ValueError("GEMINI_API_KEY chưa được cấu hình trong .env")
 
     import httpx
+    from app.providers.ai_router import AIRouter
+    from app.providers.llm.gemini_provider import GEMINI_MODEL_CANDIDATES, normalize_gemini_model_name
+
+    # Resolve active STT provider & model via Configuration Priority Hierarchy
+    resolved_info = await AIRouter.resolve_stt_model(db, requested_model=model_name)
+    configured_model = resolved_info["model_id"]
+    model_source = resolved_info["source"]
+    primary_model = normalize_gemini_model_name(configured_model)
+
+    logger.info(f"[STT CONFIG] Provider from database: Google Gemini | Model from database/router: {configured_model} | Source: {model_source}")
+    logger.info(f"[STT ROUTING] Resolved provider: {resolved_info['provider_id']} | Resolved model: {primary_model}")
+    log_job_event(job_id, "STT", f"[STT ROUTING] Active STT Model: {primary_model} (Source: {model_source})")
+
+    # Build model candidates queue prioritizing exact resolved_model
+    model_queue = [primary_model]
+    for cand in GEMINI_MODEL_CANDIDATES:
+        norm_cand = normalize_gemini_model_name(cand)
+        if norm_cand not in model_queue:
+            model_queue.append(norm_cand)
+
     total_duration = await probe_duration_async(audio_path)
     file_size_mb = audio_path.stat().st_size / (1024 * 1024)
 
@@ -452,7 +474,6 @@ async def transcribe_audio_with_gemini(
         else:
             chunks.append((audio_path, 0.0, total_duration))
 
-        from app.providers.llm.gemini_provider import GEMINI_MODEL_CANDIDATES
         all_segments = []
         detected_lang = "English"
 
@@ -502,7 +523,9 @@ async def transcribe_audio_with_gemini(
                 chunk_success = False
                 last_err = ""
 
-                for model in GEMINI_MODEL_CANDIDATES:
+                for model in model_queue:
+                    actual_api_model = f"models/{model}"
+                    logger.info(f"[STT API REQUEST] Actual model: {actual_api_model} | Chunk: {chunk_path.name}")
                     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={settings.GEMINI_API_KEY}"
                     try:
                         res = await client.post(url, json=payload)
@@ -568,7 +591,7 @@ async def transcribe_audio_with_gemini(
 
         validate_no_placeholders(all_segments)
         validated_segments = validate_and_clean_timeline_segments(all_segments, total_duration, job_id=job_id)
-        log_job_event(job_id, "STT", f"Gemini STT completed successfully. Detected: {detected_lang}, Validated Segments: {len(validated_segments)}")
+        log_job_event(job_id, "STT", f"Gemini STT completed successfully using {primary_model}. Detected: {detected_lang}, Validated Segments: {len(validated_segments)}")
         return validated_segments, detected_lang
     finally:
         if temp_dir and temp_dir.exists():
@@ -581,6 +604,8 @@ async def speech_to_text_and_detect_language(
     target_language: str = "vi",
     source_language: str = "auto",
     llm_provider_id: str = "gemini",
+    stt_model_id: Optional[str] = None,
+    db: Optional[AsyncSession] = None,
     on_status_update: Optional[Callable[[str], None]] = None,
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
@@ -605,7 +630,7 @@ async def speech_to_text_and_detect_language(
     if effective_provider == "gemini" or (not settings.OPENAI_API_KEY and settings.GEMINI_API_KEY):
         if settings.GEMINI_API_KEY:
             try:
-                return await transcribe_audio_with_gemini(audio_path, job_id=job_id)
+                return await transcribe_audio_with_gemini(audio_path, job_id=job_id, model_name=stt_model_id, db=db)
             except Exception as e:
                 err_msg = f"Gemini STT failed: {str(e)}"
                 logger.warning(err_msg)
@@ -637,7 +662,7 @@ async def speech_to_text_and_detect_language(
         if settings.ENABLE_OPENAI_FALLBACK and settings.GEMINI_API_KEY:
             try:
                 log_job_event(job_id, "STT", "[Fallback] Attempting Gemini STT fallback...")
-                return await transcribe_audio_with_gemini(audio_path, job_id=job_id)
+                return await transcribe_audio_with_gemini(audio_path, job_id=job_id, model_name=stt_model_id, db=db)
             except Exception as e:
                 err_msg = f"Gemini STT fallback failed: {str(e)}"
                 logger.warning(err_msg)

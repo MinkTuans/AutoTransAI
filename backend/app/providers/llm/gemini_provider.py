@@ -18,10 +18,26 @@ logger = get_logger(__name__)
 settings = get_settings()
 
 GEMINI_MODEL_CANDIDATES = [
-    "gemini-1.5-flash",
+    "gemini-2.5-flash",
     "gemini-1.5-pro",
-    "gemini-2.0-flash",
+    "gemini-1.5-flash",
 ]
+
+
+def normalize_gemini_model_name(model_name: str) -> str:
+    """
+    Normalize Gemini model string.
+    Strips leading 'models/' prefix or handles alias names, returning pure model ID.
+    Example: 'models/gemini-2.5-flash' -> 'gemini-2.5-flash'
+    """
+    if not model_name:
+        return "gemini-2.5-flash"
+    m = str(model_name).strip()
+    if m.startswith("models/"):
+        m = m[len("models/"):]
+    if m == "gemini-2.0-flash":
+        return "gemini-2.5-flash"
+    return m
 
 
 

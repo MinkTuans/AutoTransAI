@@ -687,3 +687,33 @@ textarea:focus {
   background: var(--bg-card);
 }
 
+/* Running Stage & Step Glowing Animations */
+@keyframes stagePulseGlow {
+  0% {
+    box-shadow: 0 0 4px rgba(59, 130, 246, 0.4);
+    border-color: #3b82f6;
+  }
+  50% {
+    box-shadow: 0 0 16px rgba(59, 130, 246, 0.9);
+    border-color: #60a5fa;
+  }
+  100% {
+    box-shadow: 0 0 4px rgba(59, 130, 246, 0.4);
+    border-color: #3b82f6;
+  }
+}
+
+@keyframes spinIcon {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.stage-card-running {
+  animation: stagePulseGlow 1.5s infinite ease-in-out !important;
+}
+
+.spinner-icon {
+  display: inline-block;
+  animation: spinIcon 2s linear infinite;
+}
+
