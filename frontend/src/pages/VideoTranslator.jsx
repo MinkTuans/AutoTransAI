@@ -189,6 +189,18 @@ export default function VideoTranslator({ initialJobId, initialProjectId }) {
     fetchProjectsList();
   }, []);
 
+const parseBool = (val, defaultVal = false) => {
+  if (val === null || val === undefined) return defaultVal;
+  if (typeof val === 'boolean') return val;
+  if (typeof val === 'number') return val !== 0;
+  if (typeof val === 'string') {
+    const clean = val.trim().toLowerCase();
+    if (clean === 'true' || clean === '1' || clean === 'yes' || clean === 'on') return true;
+    if (clean === 'false' || clean === '0' || clean === 'no' || clean === 'off') return false;
+  }
+  return Boolean(val);
+};
+
   const hydrateSettings = (cfg) => {
     setSavedProjectSettings(cfg);
     if (cfg.input_mode) setInputMode(cfg.input_mode);
@@ -202,7 +214,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId }) {
     if (cfg.original_audio_mode) setOriginalAudioMode(cfg.original_audio_mode);
     if (cfg.original_audio_volume !== undefined) setOriginalAudioVolume(cfg.original_audio_volume);
     
-    setWatermarkEnabled(Boolean(cfg.watermark_enabled));
+    setWatermarkEnabled(parseBool(cfg.watermark_enabled, false));
     setWatermarkType(cfg.watermark_type || 'image');
     setWatermarkImagePath(cfg.watermark_image_path || '');
     setWatermarkImageAssetId(cfg.watermark_image_asset_id || null);
@@ -219,7 +231,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId }) {
     setWatermarkMargin(cfg.watermark_margin !== undefined ? cfg.watermark_margin : 20);
     setWatermarkFontSize(cfg.watermark_font_size !== undefined ? cfg.watermark_font_size : 32);
 
-    setThumbnailEnabled(Boolean(cfg.thumbnail_enabled));
+    setThumbnailEnabled(parseBool(cfg.thumbnail_enabled, false));
     setThumbnailProvider(cfg.thumbnail_provider || 'pollinations');
     setThumbnailModel(cfg.thumbnail_model || 'default');
     setThumbnailStyle(cfg.thumbnail_style || 'auto');

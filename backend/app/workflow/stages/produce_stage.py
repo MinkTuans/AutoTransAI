@@ -18,10 +18,10 @@ class ProduceStage:
     STEPS = [
         "generate_subtitles",
         "video_reframing",
-        "add_watermark_logo",
         "add_intro_outro",
         "add_bgm",
         "final_render",
+        "add_watermark_logo",
         "final_video_qc",
     ]
 
@@ -33,14 +33,14 @@ class ProduceStage:
             return await self._generate_subtitles(ctx)
         elif step_name == "video_reframing":
             return await self._video_reframing(ctx)
-        elif step_name == "add_watermark_logo":
-            return await self._add_watermark_logo(ctx)
         elif step_name == "add_intro_outro":
             return await self._add_intro_outro(ctx)
         elif step_name == "add_bgm":
             return await self._add_bgm(ctx)
         elif step_name == "final_render":
             return await self._final_render(ctx)
+        elif step_name == "add_watermark_logo":
+            return await self._add_watermark_logo(ctx)
         elif step_name == "final_video_qc":
             return await self._final_video_qc(ctx)
         else:
@@ -84,8 +84,41 @@ class ProduceStage:
     async def _video_reframing(self, ctx: WorkflowContext) -> dict[str, Any]:
         return {"reframing_applied": False}
 
+    async def _add_intro_outro(self, ctx: WorkflowContext) -> dict[str, Any]:
+        return {"intro_outro_applied": False}
+
+    async def _add_bgm(self, ctx: WorkflowContext) -> dict[str, Any]:
+        return {"bgm_applied": False}
+
+    async def _final_render(self, ctx: WorkflowContext) -> dict[str, Any]:
+        from app.services.video_translator.translator_service import VideoTranslatorService
+        svc = VideoTranslatorService()
+
+        in_video = ctx.video_path or ctx.final_video_path
+        if not in_video:
+            raise FileNotFoundError("PRODUCE_STAGE: Original video_path is missing in WorkflowContext.")
+
+        out_final = str(Path(in_video).parent / "final_dubbed_video.mp4")
+        
+        # Multiplex dubbed audio track with original video using FFmpeg
+        final_path = await svc.mux_video_and_audio(
+            video_path=in_video,
+            audio_path=ctx.dubbed_audio_path,
+            output_path=out_final,
+            subtitles_ass=ctx.subtitle_files.get("ass"),
+        )
+        ctx.final_video_path = final_path
+        return {"final_video_rendered": True, "output_path": final_path}
+
     async def _add_watermark_logo(self, ctx: WorkflowContext) -> dict[str, Any]:
         wm_enabled = getattr(ctx, "watermark_enabled", False)
+        if not wm_enabled and ctx.settings_snapshot:
+            snapshot_wm = ctx.settings_snapshot.get("watermark_enabled")
+            if isinstance(snapshot_wm, str):
+                wm_enabled = snapshot_wm.strip().lower() in ("true", "1", "yes", "on")
+            else:
+                wm_enabled = bool(snapshot_wm)
+
         if not wm_enabled:
             return {"watermark_logo_applied": False, "reason": "Watermark disabled in context"}
 
@@ -94,16 +127,26 @@ class ProduceStage:
         in_video = Path(ctx.final_video_path or ctx.video_path)
         out_video = in_video.parent / "final_watermarked_video.mp4"
 
+        snapshot = ctx.settings_snapshot or {}
+        img_path = ctx.watermark_image_path or snapshot.get("watermark_image_path")
+        wm_type = ctx.watermark_type or snapshot.get("watermark_type", "image")
+        wm_text = ctx.watermark_text or snapshot.get("watermark_text")
+        wm_pos = ctx.watermark_position or snapshot.get("watermark_position", "bottom_right")
+        wm_scale = ctx.watermark_scale if ctx.watermark_scale is not None else snapshot.get("watermark_scale", 0.20)
+        wm_op = ctx.watermark_opacity if ctx.watermark_opacity is not None else snapshot.get("watermark_opacity", 0.80)
+        wm_margin = ctx.watermark_margin if ctx.watermark_margin is not None else snapshot.get("watermark_margin", 20)
+        wm_fontSize = ctx.watermark_font_size if ctx.watermark_font_size is not None else snapshot.get("watermark_font_size", 32)
+
         config = WatermarkConfig(
             enabled=True,
-            type=WatermarkType(getattr(ctx, "watermark_type", "image")),
-            image_path=getattr(ctx, "watermark_image_path", None),
-            text=getattr(ctx, "watermark_text", None),
-            position=WatermarkPosition.normalize(getattr(ctx, "watermark_position", "bottom_right")),
-            scale=getattr(ctx, "watermark_scale", 0.20),
-            opacity=getattr(ctx, "watermark_opacity", 0.80),
-            margin=getattr(ctx, "watermark_margin", 20),
-            font_size=getattr(ctx, "watermark_font_size", 32),
+            type=WatermarkType(wm_type),
+            image_path=img_path,
+            text=wm_text,
+            position=WatermarkPosition.normalize(wm_pos),
+            scale=float(wm_scale),
+            opacity=float(wm_op),
+            margin=int(wm_margin),
+            font_size=int(wm_fontSize),
         )
 
         res_path = await WatermarkService.apply_watermark(
@@ -115,28 +158,6 @@ class ProduceStage:
 
         ctx.final_video_path = str(res_path)
         return {"watermark_logo_applied": True, "output_path": str(res_path)}
-
-
-    async def _add_intro_outro(self, ctx: WorkflowContext) -> dict[str, Any]:
-        return {"intro_outro_applied": False}
-
-    async def _add_bgm(self, ctx: WorkflowContext) -> dict[str, Any]:
-        return {"bgm_applied": False}
-
-    async def _final_render(self, ctx: WorkflowContext) -> dict[str, Any]:
-        from app.services.video_translator.translator_service import VideoTranslatorService
-        svc = VideoTranslatorService()
-
-        out_final = str(Path(ctx.video_path).parent / "final_dubbed_video.mp4") if ctx.video_path else "final_dubbed_video.mp4"
-        
-        # Multiplex dubbed audio track with original video using FFmpeg
-        final_path = await svc.mux_video_and_audio(
-            video_path=ctx.video_path,
-            audio_path=ctx.dubbed_audio_path,
-            output_path=out_final,
-            subtitles_ass=ctx.subtitle_files.get("ass"),
-        )
-        ctx.final_video_path = final_path
 
         # Upload final output to R2 if configured
         if ctx.final_video_path:

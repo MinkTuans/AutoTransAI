@@ -42,10 +42,22 @@ class WorkflowContext:
     dubbed_audio_path: Optional[str] = None
     audio_segments_info: list[dict[str, Any]] = field(default_factory=list)
 
-    # Production & Rendering
+    # Production & Watermark
     subtitle_files: dict[str, str] = field(default_factory=dict)  # srt, ass, vtt paths
     final_video_path: Optional[str] = None
     r2_key: Optional[str] = None
+
+    watermark_enabled: bool = False
+    watermark_type: str = "image"
+    watermark_image_path: Optional[str] = None
+    watermark_image_asset_id: Optional[str] = None
+    watermark_text: Optional[str] = "© AutoTransAI Studio"
+    watermark_position: str = "bottom_right"
+    watermark_scale: float = 0.20
+    watermark_opacity: float = 0.80
+    watermark_margin: int = 20
+    watermark_font_size: int = 32
+    settings_snapshot: dict[str, Any] = field(default_factory=dict)
 
     # QC Reports per stage
     qc_reports: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -77,6 +89,17 @@ class WorkflowContext:
             "subtitle_files": self.subtitle_files,
             "final_video_path": self.final_video_path,
             "r2_key": self.r2_key,
+            "watermark_enabled": self.watermark_enabled,
+            "watermark_type": self.watermark_type,
+            "watermark_image_path": self.watermark_image_path,
+            "watermark_image_asset_id": self.watermark_image_asset_id,
+            "watermark_text": self.watermark_text,
+            "watermark_position": self.watermark_position,
+            "watermark_scale": self.watermark_scale,
+            "watermark_opacity": self.watermark_opacity,
+            "watermark_margin": self.watermark_margin,
+            "watermark_font_size": self.watermark_font_size,
+            "settings_snapshot": self.settings_snapshot,
             "qc_reports": self.qc_reports,
             "seo_metadata": self.seo_metadata,
             "publication_status": self.publication_status,
@@ -102,6 +125,28 @@ class WorkflowContext:
         ctx.subtitle_files = data.get("subtitle_files", {})
         ctx.final_video_path = data.get("final_video_path")
         ctx.r2_key = data.get("r2_key")
+
+        # Hydrate settings snapshot if present
+        ctx.settings_snapshot = data.get("settings_snapshot", {})
+
+        # Hydrate watermark options with fallbacks to settings_snapshot
+        snapshot = ctx.settings_snapshot or {}
+        wm_enabled_raw = data.get("watermark_enabled") if "watermark_enabled" in data else snapshot.get("watermark_enabled")
+        if isinstance(wm_enabled_raw, str):
+            ctx.watermark_enabled = wm_enabled_raw.strip().lower() in ("true", "1", "yes", "on")
+        else:
+            ctx.watermark_enabled = bool(wm_enabled_raw) if wm_enabled_raw is not None else False
+
+        ctx.watermark_type = data.get("watermark_type") or snapshot.get("watermark_type", "image")
+        ctx.watermark_image_path = data.get("watermark_image_path") or snapshot.get("watermark_image_path")
+        ctx.watermark_image_asset_id = data.get("watermark_image_asset_id") or snapshot.get("watermark_image_asset_id")
+        ctx.watermark_text = data.get("watermark_text") or snapshot.get("watermark_text", "© AutoTransAI Studio")
+        ctx.watermark_position = data.get("watermark_position") or snapshot.get("watermark_position", "bottom_right")
+        ctx.watermark_scale = float(data.get("watermark_scale") or snapshot.get("watermark_scale", 0.20))
+        ctx.watermark_opacity = float(data.get("watermark_opacity") or snapshot.get("watermark_opacity", 0.80))
+        ctx.watermark_margin = int(data.get("watermark_margin") or snapshot.get("watermark_margin", 20))
+        ctx.watermark_font_size = int(data.get("watermark_font_size") or snapshot.get("watermark_font_size", 32))
+
         ctx.qc_reports = data.get("qc_reports", {})
         ctx.seo_metadata = data.get("seo_metadata", {})
         ctx.publication_status = data.get("publication_status")

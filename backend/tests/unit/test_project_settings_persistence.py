@@ -48,3 +48,24 @@ def test_normalize_project_settings_invalid_enum_fallback():
     assert normalized["watermark_type"] == "image"
     assert normalized["watermark_scale"] == 1.0
     assert normalized["watermark_opacity"] == 0.05
+
+
+def test_boolean_string_parsing():
+    assert normalize_project_settings({"watermark_enabled": "false"})["watermark_enabled"] is False
+    assert normalize_project_settings({"watermark_enabled": "0"})["watermark_enabled"] is False
+    assert normalize_project_settings({"watermark_enabled": "off"})["watermark_enabled"] is False
+    assert normalize_project_settings({"watermark_enabled": "true"})["watermark_enabled"] is True
+    assert normalize_project_settings({"watermark_enabled": "1"})["watermark_enabled"] is True
+    assert normalize_project_settings({"watermark_enabled": "on"})["watermark_enabled"] is True
+    assert normalize_project_settings({"watermark_enabled": True})["watermark_enabled"] is True
+    assert normalize_project_settings({"watermark_enabled": False})["watermark_enabled"] is False
+
+
+def test_watermark_image_path_resolution():
+    from app.services.video_editor.watermark_service import resolve_watermark_image_path
+    from app.config import get_settings
+    
+    # Non-existent path returns None
+    assert resolve_watermark_image_path("non_existent_logo.png") is None
+    assert resolve_watermark_image_path("") is None
+    assert resolve_watermark_image_path(None) is None

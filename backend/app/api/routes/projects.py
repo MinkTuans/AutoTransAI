@@ -93,6 +93,22 @@ DEFAULT_PROJECT_SETTINGS = {
 }
 
 
+def _parse_bool(val: Any, default: bool = False) -> bool:
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return val != 0
+    if isinstance(val, str):
+        cleaned = val.strip().lower()
+        if cleaned in ("true", "1", "yes", "on"):
+            return True
+        if cleaned in ("false", "0", "no", "off"):
+            return False
+    return bool(val)
+
+
 def normalize_project_settings(raw_settings: Optional[dict]) -> dict:
     """Normalize and validate project settings against system defaults and value constraints."""
     res = copy.deepcopy(DEFAULT_PROJECT_SETTINGS)
@@ -100,6 +116,9 @@ def normalize_project_settings(raw_settings: Optional[dict]) -> dict:
         for k, v in raw_settings.items():
             if v is not None:
                 res[k] = v
+
+    res["watermark_enabled"] = _parse_bool(res.get("watermark_enabled"), False)
+    res["thumbnail_enabled"] = _parse_bool(res.get("thumbnail_enabled"), False)
 
     valid_positions = {"bottom_right", "bottom_left", "top_right", "top_left", "center"}
     pos_str = str(res.get("watermark_position", "bottom_right")).lower()

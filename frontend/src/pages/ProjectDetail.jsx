@@ -4,6 +4,18 @@ import { LoadingSpinner, ButtonSpinner, SkeletonLoader } from '../components/Loa
 import AIThumbnailPanel from '../components/AIThumbnailPanel';
 import ProjectGlossaryManager from '../components/ProjectGlossaryManager';
 
+const parseBool = (val, defaultVal = false) => {
+  if (val === null || val === undefined) return defaultVal;
+  if (typeof val === 'boolean') return val;
+  if (typeof val === 'number') return val !== 0;
+  if (typeof val === 'string') {
+    const clean = val.trim().toLowerCase();
+    if (clean === 'true' || clean === '1' || clean === 'yes' || clean === 'on') return true;
+    if (clean === 'false' || clean === '0' || clean === 'no' || clean === 'off') return false;
+  }
+  return Boolean(val);
+};
+
 export default function ProjectDetail({ projectId, onBack, onEditInTranslator }) {
   const [project, setProject] = useState(null);
   const [providers, setProviders] = useState({ audio: [], video: [], llm: [] });
@@ -576,7 +588,7 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px', color: '#e2e8f0', fontWeight: 'bold' }}>
                   <input
                     type="checkbox"
-                    checked={Boolean(pSettings.watermark_enabled)}
+                    checked={parseBool(pSettings.watermark_enabled)}
                     onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_enabled: e.target.checked }))}
                     style={{ accentColor: '#6366f1', width: '16px', height: '16px' }}
                   />
@@ -715,7 +727,7 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px', color: '#e2e8f0', fontWeight: 'bold' }}>
                   <input
                     type="checkbox"
-                    checked={Boolean(pSettings.thumbnail_enabled)}
+                    checked={parseBool(pSettings.thumbnail_enabled)}
                     onChange={(e) => setEditSettings(prev => ({ ...prev, thumbnail_enabled: e.target.checked }))}
                     style={{ accentColor: '#6366f1', width: '16px', height: '16px' }}
                   />

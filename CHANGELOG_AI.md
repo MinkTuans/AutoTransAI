@@ -1,3 +1,15 @@
+- **Watermark Toggle Fix & Pipeline Execution Upgrade**:
+  - **Boolean String Parsing Fix**:
+    - Created `_parse_bool()` helper in `backend/app/api/routes/projects.py` and `parseBool()` in React frontend (`VideoTranslator.jsx`, `ProjectDetail.jsx`).
+    - Resolved critical truthy bug where string `"false"` evaluated to `True` in Python `bool("false")` and JavaScript `Boolean("false")`, causing watermark switch to remain stuck ON.
+  - **Watermark Image Path Resolution**:
+    - Built `resolve_watermark_image_path()` in `WatermarkService` (`backend/app/services/video_editor/watermark_service.py`) to safely resolve relative asset paths (`projects/{id}/assets/watermarks/logo.png`) against `STORAGE_ROOT` and `DATA_DIR`.
+  - **ProduceStage Step Ordering & Workflow Context Preservation**:
+    - Reordered `ProduceStage.STEPS` in `produce_stage.py` so `final_render` (dubbed video multiplexing) runs before `add_watermark_logo`, ensuring the watermark is overlayed directly onto the dubbed video.
+    - Updated `WorkflowContext` data model and `to_dict()` / `from_dict()` serialization to preserve watermark settings (`watermark_enabled`, `watermark_type`, `watermark_image_path`, `watermark_text`, `watermark_position`, `watermark_scale`, `watermark_opacity`, `watermark_margin`, `watermark_font_size`) across stages.
+  - **Automated Verification**:
+    - Added unit test cases for boolean string parsing and path resolution in `backend/tests/unit/test_project_settings_persistence.py` (120 unit tests 100% passed).
+
 - **Project-Based Settings Persistence & Project Management Upgrade**:
   - **Single Source of Truth & Settings Normalization**:
     - Created `DEFAULT_PROJECT_SETTINGS` and `normalize_project_settings()` helper in `backend/app/api/routes/projects.py`, enforcing system default fallbacks and strict numeric/enum constraints (`watermark_position`, `watermark_scale`, `watermark_opacity`, `watermark_margin`).

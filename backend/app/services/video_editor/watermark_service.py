@@ -47,6 +47,49 @@ class WatermarkPosition(str, enum.Enum):
             return cls.BOTTOM_RIGHT
 
 
+def resolve_watermark_image_path(image_path: Optional[str]) -> Optional[Path]:
+    """
+    Safely resolve a watermark image path whether it is absolute, relative to CWD,
+    relative to STORAGE_ROOT, or relative to DATA_DIR.
+    """
+    if not image_path or not str(image_path).strip():
+        return None
+
+    p = Path(image_path)
+    if p.is_file():
+        return p.resolve()
+
+    from app.config import get_settings
+    settings = get_settings()
+
+    # Check relative to STORAGE_ROOT
+    storage_p = settings.STORAGE_ROOT / image_path
+    if storage_p.is_file():
+        return storage_p.resolve()
+
+    # Check relative to DATA_DIR
+    data_p = settings.DATA_DIR / image_path
+    if data_p.is_file():
+        return data_p.resolve()
+
+    # Strip leading 'storage/' or 'data/' if present in path string
+    clean_path = str(image_path).replace("\\", "/")
+    if clean_path.startswith("storage/"):
+        clean_path = clean_path[len("storage/"):]
+    elif clean_path.startswith("data/"):
+        clean_path = clean_path[len("data/"):]
+
+    storage_p2 = settings.STORAGE_ROOT / clean_path
+    if storage_p2.is_file():
+        return storage_p2.resolve()
+
+    data_p2 = settings.DATA_DIR / clean_path
+    if data_p2.is_file():
+        return data_p2.resolve()
+
+    return None
+
+
 class WatermarkConfig(BaseModel):
     enabled: bool = False
     type: WatermarkType = WatermarkType.IMAGE
@@ -65,11 +108,11 @@ class WatermarkConfig(BaseModel):
         if self.type == WatermarkType.IMAGE:
             if not self.image_path or not str(self.image_path).strip():
                 raise ValueError("WATERMARK_LOGO_NOT_FOUND: Chế độ logo ảnh được bật nhưng đường dẫn logo trống.")
-            p = Path(self.image_path)
-            if not p.is_file():
+            resolved = resolve_watermark_image_path(self.image_path)
+            if not resolved:
                 raise FileNotFoundError(f"WATERMARK_LOGO_NOT_FOUND: File logo không tồn tại: {self.image_path}")
-            if p.suffix.lower() not in [".png", ".jpg", ".jpeg", ".webp"]:
-                raise ValueError(f"INVALID_WATERMARK_IMAGE: Định dạng file logo không hỗ trợ: {p.suffix}")
+            if resolved.suffix.lower() not in [".png", ".jpg", ".jpeg", ".webp"]:
+                raise ValueError(f"INVALID_WATERMARK_IMAGE: Định dạng file logo không hỗ trợ: {resolved.suffix}")
         elif self.type == WatermarkType.TEXT:
             if not self.text or not str(self.text).strip():
                 raise ValueError("INVALID_WATERMARK_TEXT: Chế độ chữ được bật nhưng nội dung watermark trống.")
@@ -219,7 +262,9 @@ class WatermarkService:
             cmd = ["ffmpeg", "-y", "-i", str(input_video_path)]
 
             if config.type == WatermarkType.IMAGE:
-                logo_path = Path(config.image_path)
+                logo_path = resolve_watermark_image_path(config.image_path)
+                if not logo_path:
+                    raise FileNotFoundError(f"WATERMARK_LOGO_NOT_FOUND: File logo không tồn tại: {config.image_path}")
                 cmd.extend(["-i", str(logo_path)])
                 
                 filter_str, out_label = build_image_watermark_filter(
