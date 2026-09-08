@@ -46,7 +46,8 @@ The central engine (`app.workflow.workflow_engine.WorkflowEngine`) orchestrates 
 - Resume Endpoint: `POST /api/video-translator/projects/{project_id}/workflow/resume`
 - Cancel Endpoint: `POST /api/video-translator/projects/{project_id}/workflow/cancel`
 - Retry Stage Endpoint: `POST /api/video-translator/projects/{project_id}/workflow/stage/{stage_name}/retry`
-- Project Settings Endpoints: `GET /api/projects/{project_id}/settings`, `POST /api/projects/{project_id}/settings`, `PUT /api/projects/{project_id}/settings` (enforces single source of truth, `DEFAULT_PROJECT_SETTINGS` fallback, strict `_parse_bool` boolean string normalization for `watermark_enabled` / `thumbnail_enabled`, numeric boundary validation, and emits structured debug logs `[PROJECT SETTINGS LOAD]` and `[PROJECT SETTINGS SAVE]`).
+- Project Settings Endpoints: `GET /api/projects/{project_id}/settings`, `POST /api/projects/{project_id}/settings`, `PUT /api/projects/{project_id}/settings` (enforces single source of truth, `DEFAULT_PROJECT_SETTINGS` fallback, strict `_parse_bool` boolean string normalization for `watermark_enabled` / `thumbnail_enabled` / `auto_confirm_translation`, numeric boundary validation, and emits structured debug logs `[PROJECT SETTINGS LOAD]` and `[PROJECT SETTINGS SAVE]`).
+- Automated Translation Text Confirmation (`auto_confirm_translation`): Enabled by default (`True`). When starting workflow, Phase 1 (Speech-to-Text & Translation) automatically confirms generated text segments upon completion and seamlessly proceeds to Phase 2 (`execute_job_render_pipeline`: TTS dubbing synthesis, time-stretch audio sync, and FFmpeg video rendering) without pausing for manual user confirmation. Users can optionally toggle auto-confirmation off in project settings for manual segment editing before rendering.
 - Watermark Asset Storage & Path Resolution: `POST /api/video-translator/upload-watermark-logo` stores files under `storage/projects/{project_id}/assets/watermarks/`, creates `Asset` DB records (`asset_type="watermark_logo"`), and links `watermark_image_asset_id` directly in project `settings_json`. `WatermarkService.resolve_watermark_image_path` safely resolves relative paths against `STORAGE_ROOT` and `DATA_DIR`.
 - Workflow Context & Stage Execution Order: `WorkflowContext` serializes and preserves `watermark_enabled`, `watermark_type`, `watermark_image_path`, etc., across all stages. In `ProduceStage`, `final_render` (dubbed video multiplexing) executes before `add_watermark_logo` so the watermark overlay pass is burned directly onto the final dubbed video.
 - Project Detail & Management API: `GET /api/projects/{project_id}` returns project metadata, normalized settings, list of associated videos (`videos`), segments array, and glossary stats (`glossary_count`, `terminology_count`).
@@ -54,8 +55,10 @@ The central engine (`app.workflow.workflow_engine.WorkflowEngine`) orchestrates 
 
 ### AI Model Routing & Single Source of Truth Architecture
 - **Configuration Priority Hierarchy**:
-  `REQUESTED MODEL` (explicit override) -> `SETTINGS DATABASE (ai_function_configs / ai_models)` -> `PipelineError` (Structured `AI_MODEL_NOT_FOUND` exception if model is not configured in DB).
-- **Unified Resolution Engine**:
+  `GLOBAL DB ROUTING (ai_function_configs / ai_models)` -> `AIModelResolver` -> `PipelineError` (Structured `AI_MODEL_NOT_FOUND` exception if model is not configured in DB).
+- **Single Source of Truth Enforcement**:
+  - Model selection is managed 100% globally via **AI Function Configuration & Routing** (`Settings Studio & AI Management` -> `AI Function Config` tab).
+  - Individual project settings cards exclusively manage per-project asset preferences (Target Language, Voice ID, Original Audio Mode, Watermarks, Thumbnails). Per-project AI model overrides were completely removed to prevent configuration drift and guarantee strict adherence to the global AI Function Config database routing.
   - `AIModelResolver` (`app.services.model_resolver`) is the sole authoritative single-source-of-truth for resolving AI Models (STT, LLM, TTS, Image, Video) strictly from Database tables (`ai_function_configs` -> `ai_models`).
   - Automatically acquires an async database session if `db` parameter is omitted, querying active DB configuration directly.
   - Zero hardcoded fallback model strings (e.g. `gemini-2.5-flash`) or candidate loops (`GEMINI_MODEL_CANDIDATES` removed) exist in resolution routines.

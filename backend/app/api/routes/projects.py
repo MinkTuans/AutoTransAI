@@ -60,6 +60,7 @@ DEFAULT_PROJECT_SETTINGS = {
     "source_language": "auto",
     "target_language": "vi",
     "auto_detect_language": True,
+    "auto_confirm_translation": True,
     "stt_provider_id": None,
     "stt_model": None,
     "translation_provider_id": None,
@@ -117,6 +118,7 @@ def normalize_project_settings(raw_settings: Optional[dict]) -> dict:
 
     res["watermark_enabled"] = _parse_bool(res.get("watermark_enabled"), False)
     res["thumbnail_enabled"] = _parse_bool(res.get("thumbnail_enabled"), False)
+    res["auto_confirm_translation"] = _parse_bool(res.get("auto_confirm_translation"), True)
 
     valid_positions = {"bottom_right", "bottom_left", "top_right", "top_left", "center"}
     pos_str = str(res.get("watermark_position", "bottom_right")).lower()

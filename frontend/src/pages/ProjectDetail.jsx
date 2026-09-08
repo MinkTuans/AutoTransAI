@@ -503,7 +503,7 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
             </div>
           )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '20px' }}>
             {/* 1. Language & Input */}
             <div className="card" style={{ background: '#1e293b', borderRadius: '10px', padding: '18px', border: '1px solid #334155' }}>
               <h4 style={{ margin: '0 0 14px 0', fontSize: '15px', color: '#818cf8', fontWeight: 'bold', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>
@@ -547,44 +547,6 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
                     <option value="es">🇪🇸 Tiếng Tây Ban Nha (Spanish)</option>
                     <option value="ru">🇷🇺 Tiếng Nga (Russian)</option>
                     <option value="vi">🇻🇳 Tiếng Việt (Vietnamese)</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            {/* 2. AI Providers & Models */}
-            <div className="card" style={{ background: '#1e293b', borderRadius: '10px', padding: '18px', border: '1px solid #334155' }}>
-              <h4 style={{ margin: '0 0 14px 0', fontSize: '15px', color: '#818cf8', fontWeight: 'bold', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>
-                🤖 AI Providers & Models
-              </h4>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>LLM / Script Provider:</label>
-                  <select
-                    value={pSettings.llm_provider_id || 'gemini'}
-                    onChange={(e) => setEditSettings(prev => ({ ...prev, llm_provider_id: e.target.value, stt_provider_id: e.target.value, translation_provider_id: e.target.value }))}
-                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
-                  >
-                    <option value="gemini">✨ Google Gemini AI Studio (Mặc định)</option>
-                    <option value="openai">🤖 OpenAI ChatGPT</option>
-                    <option value="claude">🧠 Anthropic Claude AI</option>
-                    <option value="deepseek">🐳 DeepSeek AI</option>
-                    <option value="ollama">🦙 Local Ollama (Offline)</option>
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>STT / Translation Model:</label>
-                  <select
-                    value={pSettings.stt_model || 'gemini-2.0-flash'}
-                    onChange={(e) => setEditSettings(prev => ({ ...prev, stt_model: e.target.value, translation_model: e.target.value }))}
-                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
-                  >
-                    <option value="gemini-2.0-flash">✨ Gemini 2.0 Flash (Nhanh & Tối Ưu)</option>
-                    <option value="gemini-1.5-pro">💎 Gemini 1.5 Pro (Chính Xác Cao)</option>
-                    <option value="gpt-4o-mini">🤖 GPT-4o Mini (OpenAI)</option>
-                    <option value="gpt-4o">🚀 GPT-4o (OpenAI High Accuracy)</option>
-                    <option value="claude-3-5-sonnet">🧠 Claude 3.5 Sonnet</option>
-                    <option value="deepseek-chat">🐳 DeepSeek V3 / R1</option>
                   </select>
                 </div>
               </div>

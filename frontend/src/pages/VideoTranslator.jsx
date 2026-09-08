@@ -63,6 +63,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   const [voiceId, setVoiceId] = useState('vi-VN-HoaiMyNeural');
   const [originalAudioMode, setOriginalAudioMode] = useState('mute');
   const [originalAudioVolume, setOriginalAudioVolume] = useState(0.20);
+  const [autoConfirmTranslation, setAutoConfirmTranslation] = useState(true);
 
   // Watermark Settings State
   const [watermarkEnabled, setWatermarkEnabled] = useState(false);
@@ -121,6 +122,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     voice_id: voiceId,
     original_audio_mode: originalAudioMode,
     original_audio_volume: originalAudioVolume,
+    auto_confirm_translation: autoConfirmTranslation,
     watermark_enabled: watermarkEnabled,
     watermark_type: watermarkType,
     watermark_image_path: watermarkImagePath,
@@ -250,6 +252,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     if (cfg.voice_id) setVoiceId(cfg.voice_id);
     if (cfg.original_audio_mode) setOriginalAudioMode(cfg.original_audio_mode);
     if (cfg.original_audio_volume !== undefined) setOriginalAudioVolume(cfg.original_audio_volume);
+    setAutoConfirmTranslation(parseBool(cfg.auto_confirm_translation, true));
 
     setWatermarkEnabled(parseBool(cfg.watermark_enabled, false));
     setWatermarkType(cfg.watermark_type || 'image');
@@ -300,7 +303,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     const current = getCurrentSettingsObject();
     const compareKeys = [
       'target_language', 'source_language', 'audio_provider_id', 'llm_provider_id',
-      'stt_model', 'voice_id', 'original_audio_mode', 'original_audio_volume',
+      'stt_model', 'voice_id', 'original_audio_mode', 'original_audio_volume', 'auto_confirm_translation',
       'watermark_enabled', 'watermark_type', 'watermark_image_path', 'watermark_text',
       'watermark_position', 'watermark_scale', 'watermark_opacity', 'watermark_margin',
       'watermark_font_size', 'thumbnail_enabled', 'thumbnail_provider', 'thumbnail_model',
@@ -328,6 +331,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     voiceId,
     originalAudioMode,
     originalAudioVolume,
+    autoConfirmTranslation,
     watermarkEnabled,
     watermarkType,
     watermarkImagePath,
@@ -953,6 +957,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         llm_provider_id: llmProviderId,
         voice_id: voiceId,
         original_audio_mode: originalAudioMode,
+        auto_confirm_translation: autoConfirmTranslation,
         watermark_enabled: watermarkEnabled,
         watermark_type: watermarkType,
         watermark_image_path: watermarkImagePath,
@@ -1657,6 +1662,29 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
               <option value="duck">Giảm âm lượng gốc (Background Ducking 20%)</option>
               <option value="keep">Giữ âm thanh gốc trộn cùng tiếng đọc</option>
             </select>
+          </div>
+        </div>
+
+        {/* Auto-Confirm Translation Section */}
+        <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid #334155' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <span style={{ fontSize: '15px', fontWeight: 'bold', color: '#10b981', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                ⚡ Tự Động Xác Nhận Văn Bản Dịch & Render Lồng Tiếng
+              </span>
+              <p style={{ fontSize: '12px', color: '#94a3b8', margin: '4px 0 0 0' }}>
+                Tự động chuyển từ dịch câu thoại sang tạo giọng TTS & Render video thành phẩm mà không dừng chờ xác nhận thủ công.
+              </p>
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: '#e2e8f0', whiteSpace: 'nowrap' }}>
+              <input
+                type="checkbox"
+                checked={autoConfirmTranslation}
+                onChange={(e) => setAutoConfirmTranslation(e.target.checked)}
+                style={{ width: '18px', height: '18px', accentColor: '#10b981', cursor: 'pointer' }}
+              />
+              Auto-Confirm
+            </label>
           </div>
         </div>
 

@@ -103,6 +103,7 @@ class VideoTranslationJob(Base):
     voice_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     voice_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     original_audio_mode: Mapped[str] = mapped_column(String(20), default=AudioMixMode.MUTE.value)
+    auto_confirm_translation: Mapped[bool] = mapped_column(Boolean, default=True)
     status: Mapped[str] = mapped_column(String(30), default=TranslationJobStatus.CREATED.value)
     stage: Mapped[str] = mapped_column(String(50), default="QUEUED")
     stage_progress_pct: Mapped[float] = mapped_column(Float, default=0.0)
