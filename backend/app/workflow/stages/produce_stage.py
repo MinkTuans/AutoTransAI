@@ -54,10 +54,13 @@ class ProduceStage:
 
         # Execute technical QC via qc_service
         if ctx.final_video_path and Path(ctx.final_video_path).is_file():
-            from app.services.video_editor.qc_service import run_technical_qc
-            tech_report = await run_technical_qc(ctx.final_video_path)
-            if not tech_report.get("passed", True):
-                issues.extend(tech_report.get("errors", []))
+            if Path(ctx.final_video_path).stat().st_size == 0:
+                issues.append("Final rendered video file is empty (0 bytes).")
+            else:
+                from app.services.video_editor.qc_service import run_technical_qc
+                tech_report = await run_technical_qc(ctx.final_video_path)
+                if not tech_report.get("passed", True):
+                    issues.extend(tech_report.get("errors", []))
 
         passed = len(issues) == 0
         return {

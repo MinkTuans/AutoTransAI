@@ -393,6 +393,50 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     }
   };
 
+  // SSE Real-time workflow status updates
+  useEffect(() => {
+    if (!activeProjectId || activeProjectId === 'default_project') return;
+
+    // Initial fetch to get full state
+    fetchWorkflowStatus(activeProjectId);
+
+    let eventSource = null;
+    let retryTimeout = null;
+
+    const connectSSE = () => {
+      const sseUrl = `http://127.0.0.1:8000/api/projects/${activeProjectId}/workflow-stream`;
+      eventSource = new EventSource(sseUrl);
+
+      eventSource.onmessage = (event) => {
+        try {
+          if (event.data === 'ping') return;
+          const payload = JSON.parse(event.data);
+          if (payload && payload.type === 'workflow_update') {
+            // Re-fetch the full status when we get an update ping
+            // In a more robust system, we might stream the exact state, but fetching guarantees correctness
+            fetchWorkflowStatus(activeProjectId);
+          }
+        } catch (err) {
+          console.error("SSE parse error", err);
+        }
+      };
+
+      eventSource.onerror = (err) => {
+        console.error("SSE Connection Error", err);
+        eventSource.close();
+        // Auto reconnect after 5 seconds
+        retryTimeout = setTimeout(connectSSE, 5000);
+      };
+    };
+
+    connectSSE();
+
+    return () => {
+      if (eventSource) eventSource.close();
+      if (retryTimeout) clearTimeout(retryTimeout);
+    };
+  }, [activeProjectId]);
+
   const handleOpenPreflightOrPromptProject = async () => {
     if (!activeProjectId || activeProjectId === 'default_project') {
       setShowNoProjectModal(true);
@@ -498,6 +542,29 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       setIsCreatingProject(false);
     }
   };
+
+  const closeCreateProjectModalSafely = () => {
+    if ((newProjectTitle.trim() || newProjectDescription.trim()) && !isCreatingProject) {
+      if (window.confirm('⚠️ Bạn có dữ liệu tên/mô tả dự án chưa lưu! Bạn có chắc chắn muốn thoát không?')) {
+        setNewProjectTitle('');
+        setNewProjectDescription('');
+        setShowCreateProjectModal(false);
+      }
+    } else {
+      setShowCreateProjectModal(false);
+    }
+  };
+
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (isSettingsDirty || (showCreateProjectModal && newProjectTitle.trim())) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isSettingsDirty, showCreateProjectModal, newProjectTitle]);
 
   const handleStartWorkflow = async () => {
     if (!activeProjectId || activeProjectId === 'default_project') {
@@ -1957,8 +2024,10 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
           </div>
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             <a
-              href={job.output_url || `/media/${job.output_video_path.replace(/^.*[\\\/]data[\\\/]/, '')}`}
+              href={`http://127.0.0.1:8000/api/storage/download?path=${encodeURIComponent(job.output_video_path?.replace(/^.*[\\\/]data[\\\/]/, '') || '')}&filename=video_long_tieng.mp4`}
               download="final_translated_video.mp4"
+              target="_blank"
+              rel="noopener noreferrer"
               style={{
                 display: 'inline-block',
                 padding: '12px 24px',
@@ -2146,7 +2215,10 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
 
       {/* Modal 2: Create Project Modal */}
       {showCreateProjectModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
+        <div
+          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}
+          onClick={(e) => { if (e.target === e.currentTarget) closeCreateProjectModalSafely(); }}
+        >
           <div style={{ background: '#1e1b4b', border: '1px solid #4338ca', borderRadius: '14px', padding: '28px', maxWidth: '500px', width: '90%', color: '#fff', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)' }}>
             <h2 style={{ margin: '0 0 16px 0', fontSize: '20px', fontWeight: 'bold', color: '#818cf8' }}>
               📁 Tạo Dự Án Mới
@@ -2182,7 +2254,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
                 <button
                   type="button"
-                  onClick={() => setShowCreateProjectModal(false)}
+                  onClick={closeCreateProjectModalSafely}
                   style={{ background: '#374151', color: '#cbd5e1', border: 'none', padding: '10px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}
                 >
                   Hủy

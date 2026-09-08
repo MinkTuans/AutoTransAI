@@ -134,6 +134,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 from app.api.routes import projects, providers, system, video_translator, storage, apps, video_editor, thumbnail, settings as settings_router
 
+from app.api.routers import youtube
+
 # Mount API routes
 app.include_router(projects.router)
 app.include_router(providers.router)
@@ -144,6 +146,7 @@ app.include_router(apps.router)
 app.include_router(video_editor.router)
 app.include_router(thumbnail.router)
 app.include_router(settings_router.router)
+app.include_router(youtube.router, prefix="/api")
 
 
 

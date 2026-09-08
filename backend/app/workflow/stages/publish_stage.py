@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from app.workflow.workflow_context import WorkflowContext
@@ -61,10 +62,10 @@ class PublishStage:
         }
 
     async def _generate_seo(self, ctx: WorkflowContext) -> dict[str, Any]:
-        from app.services.video_editor.youtube_service import generate_youtube_seo
-        seo = await generate_youtube_seo(
-            transcript=ctx.raw_transcript or "",
-            language=ctx.target_language,
+        from app.services.video_editor.youtube_service import YouTubePublishingService
+        seo = await YouTubePublishingService.generate_youtube_seo_metadata(
+            transcript_text=ctx.raw_transcript or "",
+            target_language=ctx.target_language,
         )
         ctx.seo_metadata = seo
         return seo
@@ -116,13 +117,58 @@ class PublishStage:
             return ctx.publication_record
 
         # Delegate to real YouTube API publish service if configured
-        from app.services.video_editor.youtube_service import publish_to_youtube
-        res = await publish_to_youtube(
-            video_path=ctx.final_video_path,
+        from app.services.video_editor.youtube_service import YouTubePublishingService
+        from app.models.video_editor import YouTubeChannel
+        import sqlalchemy as sa
+        
+        active_channel = None
+        if db is not None:
+            stmt = sa.select(YouTubeChannel).where(YouTubeChannel.is_active == True)
+            result = await db.execute(stmt)
+            active_channel = result.scalars().first()
+        
+        if not active_channel:
+            ctx.publication_status = "PUBLISHING_BLOCKED"
+            ctx.publication_record = {
+                "status": "PUBLISHING_BLOCKED",
+                "reason": "YouTube OAuth credentials are not configured or no active YouTube channel linked.",
+                "simulation": False,
+            }
+            logger.warning("[PublishStage] YouTube publishing blocked: No active channel connected.")
+            return ctx.publication_record
+
+        # Create a DB upload record and start async
+        from app.models.video_editor import YouTubePublication, PublishStatusEnum
+        import uuid
+        import json
+            
+        pub = YouTubePublication(
+            id=str(uuid.uuid4()),
+            job_id=getattr(ctx, "job_id", None),
+            project_id=ctx.project_id,
+            channel_id=active_channel.id,
             title=ctx.seo_metadata.get("title", "Dubbed Video"),
             description=ctx.seo_metadata.get("description", ""),
-            tags=ctx.seo_metadata.get("tags", []),
+            tags_json=json.dumps(ctx.seo_metadata.get("tags", [])),
+            category_id=ctx.seo_metadata.get("category_id", "22"),
+            privacy_status="private",
+            status=PublishStatusEnum.PENDING.value,
+            progress=0
         )
+        db.add(pub)
+        import asyncio
+        asyncio.create_task(
+            YouTubePublishingService.execute_async_upload(
+                publication_id=pub.id,
+                video_path=str(ctx.final_video_path)
+            )
+        )
+        
+        res = {
+            "success": True,
+            "status": "UPLOADING_ASYNC",
+            "publication_id": pub.id
+        }
         ctx.publication_status = res.get("status", "SUCCESS")
         ctx.publication_record = res
         return res

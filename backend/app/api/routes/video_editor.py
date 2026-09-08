@@ -201,25 +201,70 @@ async def generate_youtube_seo_endpoint(
 @router.post("/jobs/{job_id}/publish-youtube", response_model=dict)
 async def publish_youtube_endpoint(
     body: PublishYouTubeRequest,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ):
-    """Publish dubbed video to YouTube via YouTube Data API v3."""
+    """Publish dubbed video to YouTube via YouTube Data API v3 with encrypted OAuth credential enforcement and real-time progress tracking."""
     job_res = await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == body.job_id))
     job = job_res.scalar_one_or_none()
     if not job or not job.output_video_path or not Path(job.output_video_path).exists():
         raise HTTPException(status_code=400, detail="❌ Video thành phẩm chưa ready để upload.")
 
+    # Fetch active YouTube OAuth channel from database
+    channel_res = await session.execute(
+        select(YouTubeChannel).where(YouTubeChannel.is_active == True)
+    )
+    active_channel = channel_res.scalars().first()
+
+    credentials_json = None
+    if active_channel and active_channel.credentials_json:
+        try:
+            from app.core.encryption import decrypt_data
+            credentials_json = decrypt_data(active_channel.credentials_json)
+        except Exception as dec_err:
+            logger.error(f"Failed to decrypt credentials for YouTube channel {active_channel.id}", error=str(dec_err))
+
+    if not credentials_json:
+        raise HTTPException(
+            status_code=400,
+            detail="❌ Chưa kết nối kênh YouTube! Vui lòng truy cập Cài Đặt -> Social Accounts -> bấm Connect Social Account để liên kết tài khoản Google trước khi xuất bản video."
+        )
+
     title = body.title or "Video lồng tiếng AI"
     description = body.description or "Video lồng tiếng AI WorkflowVdAi"
     tags = body.tags or ["AI", "VideoDubbing"]
 
-    pub_res = await YouTubePublishingService.upload_to_youtube(
-        video_path=Path(job.output_video_path),
+    import json
+    from app.models.video_editor import YouTubePublication, PublishStatusEnum
+
+    pub = YouTubePublication(
+        id=str(uuid.uuid4()),
+        job_id=job.id,
+        project_id=job.project_id or "default_project",
+        channel_id=active_channel.id,
         title=title,
         description=description,
-        tags=tags,
+        tags_json=json.dumps(tags),
+        category_id="22",
         privacy_status=body.privacy_status,
-        job_id=body.job_id,
+        status=PublishStatusEnum.PENDING.value,
+        progress=0,
+    )
+    session.add(pub)
+    await session.commit()
+    await session.refresh(pub)
+
+    background_tasks.add_task(
+        YouTubePublishingService.execute_async_upload,
+        publication_id=pub.id,
+        video_path=str(job.output_video_path),
     )
 
-    return {"success": True, "data": pub_res}
+    return {
+        "success": True,
+        "data": {
+            "publication_id": pub.id,
+            "status": "PENDING",
+            "progress": 0,
+        }
+    }

@@ -126,6 +126,7 @@ class WorkflowExecution(Base):
     status: Mapped[str] = mapped_column(String(30), default=WorkflowEngineStatus.NOT_STARTED.value)
     current_stage: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     current_step: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    overall_progress_pct: Mapped[int] = mapped_column(Integer, default=0)
     
     context_data: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -156,6 +157,11 @@ class WorkflowStageExecution(Base):
     
     stage_name: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(30), default=WorkflowStageStatus.PENDING.value)
+    
+    progress_percentage: Mapped[int] = mapped_column(Integer, default=0)
+    current_item: Mapped[int] = mapped_column(Integer, default=0)
+    total_items: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     qc_report: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)

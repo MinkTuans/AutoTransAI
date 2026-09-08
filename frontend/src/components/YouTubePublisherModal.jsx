@@ -1,15 +1,23 @@
-import React, { useState } from 'react';
-import { videoEditorApi } from '../api';
+import React, { useState, useEffect, useRef } from 'react';
+import { videoEditorApi, youtubeApi } from '../api';
 
 export default function YouTubePublisherModal({ jobId, onClose }) {
   const [loadingSeo, setLoadingSeo] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [tags, setTags] = useState('');
   const [privacyStatus, setPrivacyStatus] = useState('private');
   const [statusMsg, setStatusMsg] = useState(null);
   const [publishedUrl, setPublishedUrl] = useState(null);
+  const pollingRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, []);
 
   const handleGenerateSEO = async () => {
     setLoadingSeo(true);
@@ -31,6 +39,7 @@ export default function YouTubePublisherModal({ jobId, onClose }) {
 
   const handlePublish = async () => {
     setPublishing(true);
+    setUploadProgress(0);
     setStatusMsg(null);
     try {
       const tagList = tags.split(',').map((t) => t.trim()).filter(Boolean);
@@ -41,25 +50,65 @@ export default function YouTubePublisherModal({ jobId, onClose }) {
         tags: tagList,
         privacy_status: privacyStatus,
       });
-      if (res.success) {
-        setPublishedUrl(res.data.youtube_url);
-        setStatusMsg('🎉 Đã xuất bản video lên YouTube thành công!');
+
+      if (res.success && res.data) {
+        const uploadId = res.data.publication_id || res.data.id;
+        if (uploadId) {
+          // Poll real-time upload progress from backend DB
+          pollingRef.current = setInterval(async () => {
+            try {
+              const statusRes = await youtubeApi.getUploadStatus(uploadId);
+              if (statusRes) {
+                setUploadProgress(statusRes.progress || 0);
+                if (statusRes.status === 'PUBLISHED') {
+                  clearInterval(pollingRef.current);
+                  setUploadProgress(100);
+                  setPublishedUrl(statusRes.youtube_url);
+                  setStatusMsg('🎉 Đã xuất bản video lên YouTube thành công!');
+                  setPublishing(false);
+                } else if (statusRes.status === 'FAILED') {
+                  clearInterval(pollingRef.current);
+                  setStatusMsg(`❌ Lỗi đăng YouTube: ${statusRes.error_message || 'Thất bại'}`);
+                  setPublishing(false);
+                }
+              }
+            } catch (pollErr) {
+              console.error('Upload status poll error:', pollErr);
+            }
+          }, 800);
+        } else if (res.data.youtube_url) {
+          setUploadProgress(100);
+          setPublishedUrl(res.data.youtube_url);
+          setStatusMsg('🎉 Đã xuất bản video lên YouTube thành công!');
+          setPublishing(false);
+        }
       }
     } catch (err) {
-      setStatusMsg(`❌ Lỗi đăng YouTube: ${err.message}`);
-    } finally {
+      setStatusMsg(`❌ Lỗi đăng YouTube: ${err.response?.data?.detail || err.message}`);
       setPublishing(false);
     }
   };
 
+  const isDirty = title.trim() !== '' || description.trim() !== '' || tags.trim() !== '';
+
+  const handleSafeClose = () => {
+    if (isDirty && !publishedUrl) {
+      if (window.confirm('⚠️ Bạn có dữ liệu đang nhập chưa lưu! Bạn có chắc chắn muốn đóng và xóa nội dung đã nhập không?')) {
+        onClose();
+      }
+    } else {
+      onClose();
+    }
+  };
+
   return (
-    <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) handleSafeClose(); }}>
       <div className="modal-dialog" style={{ maxWidth: '640px' }}>
         <div className="modal-header">
           <h3 style={{ color: '#f43f5e', display: 'flex', alignItems: 'center', gap: '8px' }}>
             🔴 YouTube Auto-Publish & SEO Generator
           </h3>
-          <button type="button" className="modal-close-btn" onClick={onClose}>
+          <button type="button" className="modal-close-btn" onClick={handleSafeClose}>
             &times;
           </button>
         </div>
@@ -153,8 +202,30 @@ export default function YouTubePublisherModal({ jobId, onClose }) {
                 </select>
               </div>
 
+              {publishing && (
+                <div style={{ margin: '1.25rem 0', padding: '1rem', background: '#0f172a', border: '1px solid #3b82f6', borderRadius: '10px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem', fontWeight: 'bold' }}>
+                    <span style={{ color: '#38bdf8', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                      ⏳ {uploadProgress < 100 ? `Đang tải video lên YouTube... (${uploadProgress}%)` : '🎉 Đang hoàn tất xuất bản...'}
+                    </span>
+                    <span style={{ color: '#ef4444', fontFamily: 'monospace', fontSize: '1rem', fontWeight: 'bold' }}>{uploadProgress}%</span>
+                  </div>
+                  <div style={{ width: '100%', height: '12px', background: '#1e293b', borderRadius: '6px', overflow: 'hidden', border: '1px solid #475569' }}>
+                    <div
+                      style={{
+                        width: `${uploadProgress}%`,
+                        height: '100%',
+                        background: 'linear-gradient(90deg, #ef4444, #f43f5e, #dc2626)',
+                        boxShadow: '0 0 10px rgba(239, 68, 68, 0.6)',
+                        transition: 'width 0.4s ease-in-out',
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={onClose}>
+                <button type="button" className="btn btn-secondary" onClick={handleSafeClose} disabled={publishing}>
                   Hủy
                 </button>
                 <button
@@ -164,7 +235,7 @@ export default function YouTubePublisherModal({ jobId, onClose }) {
                   disabled={publishing || !title}
                   style={{ backgroundColor: '#f43f5e' }}
                 >
-                  {publishing ? '⏳ Đang đăng YouTube...' : '🔴 Upload Lên YouTube'}
+                  {publishing ? `⏳ Đang Upload (${uploadProgress}%)...` : '🔴 Upload Lên YouTube'}
                 </button>
               </div>
             </div>

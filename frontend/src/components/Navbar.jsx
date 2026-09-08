@@ -39,13 +39,7 @@ export default function Navbar({ activePage, setActivePage, onNavigate }) {
         >
           📁 Quản lý Dự án
         </button>
-        <button
-          type="button"
-          className={`nav-link ${activePage === 'create' ? 'active' : ''}`}
-          onClick={() => handleNavClick('create')}
-        >
-          + Tạo dự án mới
-        </button>
+
         <button
           type="button"
           className={`nav-link ${activePage === 'settings' ? 'active' : ''}`}

@@ -64,6 +64,9 @@ class TranslateStage:
             txt = (seg.get("translated_text") or seg.get("text") or "").strip()
             if not txt:
                 issues.append(f"Empty translation for segment ID {seg.get('id') or seg.get('index')}")
+                
+            if "start" in seg and "end" in seg and float(seg["end"]) <= float(seg["start"]):
+                issues.append(f"Invalid timeline (end <= start) for segment ID {seg.get('id') or seg.get('index')}")
 
         passed = len(issues) == 0
         return {
@@ -138,6 +141,16 @@ class TranslateStage:
         )
 
         ctx.translated_segments = translated
+        
+        if ctx.progress_callback:
+            await ctx.progress_callback(
+                self.STAGE_NAME,
+                50, # 50% through translate stage
+                len(ctx.translated_segments),
+                len(ctx.source_segments),
+                "Translation completed, validating..."
+            )
+            
         return {"translated_count": len(ctx.translated_segments)}
 
     async def _validate_segment_ids(self, ctx: WorkflowContext) -> dict[str, Any]:

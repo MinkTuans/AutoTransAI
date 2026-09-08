@@ -1,3 +1,45 @@
+- **Fix `project_id` Invalid Keyword Argument for `YouTubePublication` (2026-09-08)**:
+  - **ORM Model Schema Fix**: Added `project_id` column (`Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)`) to `YouTubePublication` model in [video_editor.py](file:///c:/Hack/AutoTransAI/backend/app/models/video_editor.py#L132-L140).
+  - **Automated Schema Auto-Migration**: Allowed `_sync_schema_sync` in `database.py` to auto-issue `ALTER TABLE youtube_publications ADD COLUMN project_id` on app startup across SQLite and MySQL.
+  - **Router & Pipeline Integration**: Passed both `job_id` and `project_id` when instantiating `YouTubePublication` in [video_editor.py](file:///c:/Hack/AutoTransAI/backend/app/api/routes/video_editor.py#L240-L250), [publish_stage.py](file:///c:/Hack/AutoTransAI/backend/app/workflow/stages/publish_stage.py#L134-L145), and [youtube.py](file:///c:/Hack/AutoTransAI/backend/app/api/routers/youtube.py#L207-L218).
+
+- **PKCE Code Verifier Persistence for Google OAuth (2026-09-08)**:
+  - **PKCE State Tracking**: Added `_oauth_verifiers` dictionary mapping `state` to `flow.code_verifier` in [youtube.py](file:///c:/Hack/AutoTransAI/backend/app/api/routers/youtube.py#L65-L105).
+  - **Fixed `(invalid_grant) Missing code verifier` Exception**: Preserved the generated PKCE verifier across initial authorization URL generation (`get_auth_url`) and callback token exchange (`oauth_callback`), ensuring 100% successful Google OAuth token exchange.
+
+- **Allow Local HTTP Transport for OAuth Callback (2026-09-08)**:
+  - **Insecure Transport Fix**: Set `os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'` at module load time in [youtube.py](file:///c:/Hack/AutoTransAI/backend/app/api/routers/youtube.py#L1-L15).
+  - **Fixed `(insecure_transport) OAuth 2 MUST utilize https` Error**: Allowed local development callbacks (`http://localhost:8000/...` & `http://127.0.0.1:8000/...`) to execute token exchange without requiring HTTPS certificates on localhost.
+
+- **Pydantic Settings Model Fix for YouTube OAuth (2026-09-08)**:
+  - **Added Missing Fields**: Added `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, and `ENCRYPTION_KEY` fields to the `Settings` class in [app/config.py](file:///c:/Hack/AutoTransAI/backend/app/config.py#L95-L100).
+  - **Fixed `AttributeError`**: Resolved `AttributeError: 'Settings' object has no attribute 'YOUTUBE_CLIENT_ID'` exception when calling `GET /api/youtube/auth-url`.
+  - **Dynamic Config Loading**: Updated `_get_client_config()` in [youtube.py](file:///c:/Hack/AutoTransAI/backend/app/api/routers/youtube.py#L37-L50) to dynamically query `get_settings()`, returning valid Google OAuth 2.0 URLs.
+
+- **Real-Time YouTube Upload Progress Bar & Polling Integration (2026-09-08)**:
+  - **Backend Chunk Progress Updates**: Enhanced `YouTubePublishingService.execute_async_upload()` in [youtube_service.py](file:///c:/Hack/AutoTransAI/backend/app/services/video_editor/youtube_service.py#L225-L255) to track chunk upload progress via `status.progress()`, writing real-time upload percentage (`0%` -> `100%`) directly into `pub.progress` in database.
+  - **Async Task Trigger & Polling Endpoint**: Updated `publish_youtube_endpoint` in [video_editor.py](file:///c:/Hack/AutoTransAI/backend/app/api/routes/video_editor.py#L201-L245) to create a `YouTubePublication` record and launch background upload tasks. Added `getUploadStatus` in [api.js](file:///c:/Hack/AutoTransAI/frontend/src/api.js) targeting `GET /api/youtube/upload/{id}/status`.
+  - **Animated UI Progress Bar**: Designed animated glowing progress bar component in [YouTubePublisherModal.jsx](file:///c:/Hack/AutoTransAI/frontend/src/components/YouTubePublisherModal.jsx#L205-L225) with dynamic width fill (`0-100%`), percent text readout (`⏳ Đang tải video lên YouTube... 45%`), and auto-transition to success view upon 100% completion.
+
+- **YouTube Real OAuth Upload Endpoint Integration (2026-09-08)**:
+  - **Eliminated Fake Mock Link Fallback**: Updated `publish_youtube_endpoint` in [video_editor.py](file:///c:/Hack/AutoTransAI/backend/app/api/routes/video_editor.py#L201-L245) to query the active connected `YouTubeChannel` from Database and decrypt its `credentials_json` using `decrypt_data(...)`.
+  - **Real Resumable YouTube API Upload**: Connected decrypted Google OAuth tokens to `YouTubePublishingService.upload_to_youtube(...)` to perform authentic resumable video uploads via `googleapiclient.discovery.build("youtube", "v3", credentials=creds)` returning authentic YouTube video URLs (`https://www.youtube.com/watch?v=REAL_ID`).
+  - **Missing OAuth Connection Guard**: If no active YouTube channel is linked in DB, `publish_youtube_endpoint` returns a clear HTTP 400 error message instructing the user to navigate to Settings -> Social Accounts to connect their Google YouTube account first.
+  - **Social Accounts UI & API Integration**: Added `youtubeApi` client methods in [api.js](file:///c:/Hack/AutoTransAI/frontend/src/api.js) and updated [Settings.jsx](file:///c:/Hack/AutoTransAI/frontend/src/pages/Settings.jsx) with a direct `🔴 Kết Nối YouTube (Google OAuth 2.0)` button triggering the Google OAuth consent flow (`GET /api/youtube/auth-url`).
+
+- **Unsaved Data Protection & Modal Exit Confirmation (2026-09-08)**:
+  - **YouTube Publisher Modal Safe Close**: Added `handleSafeClose` in [YouTubePublisherModal.jsx](file:///c:/Hack/AutoTransAI/frontend/src/components/YouTubePublisherModal.jsx) to intercept backdrop clicks, header close ("&times;"), and "Hủy" button events, showing a confirmation prompt (`window.confirm`) whenever unsaved title, description, or tags exist.
+  - **Create Project Modal Exit Protection**: Added `closeCreateProjectModalSafely` in [VideoTranslator.jsx](file:///c:/Hack/AutoTransAI/frontend/src/pages/VideoTranslator.jsx) to guard project title and description inputs against accidental backdrop or cancel clicks.
+  - **Settings Modals Exit Guard**: Added safe close handlers (`closeAddKeyModalSafely`, `closeAddProviderModalSafely`, `closeAddModelModalSafely`, `closeAddSocialModalSafely`) in [Settings.jsx](file:///c:/Hack/AutoTransAI/frontend/src/pages/Settings.jsx) for API keys, custom providers, models, and social accounts modals.
+  - **Browser Tab Unload Guard**: Integrated `beforeunload` event listeners across [VideoTranslator.jsx](file:///c:/Hack/AutoTransAI/frontend/src/pages/VideoTranslator.jsx) and [Settings.jsx](file:///c:/Hack/AutoTransAI/frontend/src/pages/Settings.jsx) to alert users if they attempt to refresh or navigate away while mid-entry.
+
+- **YouTube OAuth 2.0 & Async Resumable Upload Pipeline (2026-09-08)**:
+  - **Encrypted OAuth Credentials**: Integrated `cryptography.fernet` to securely encrypt and decrypt Google OAuth refresh tokens within the `YouTubeChannel` database model, eliminating hardcoded API keys.
+  - **YouTube Resumable Upload Background Tasks**: Developed `execute_async_upload` within `YouTubePublishingService` to support chunked, resumable uploads directly to YouTube Data API v3 while running in an `asyncio.to_thread` background task.
+  - **Database Progress Tracking**: Expanded `YouTubePublication` ORM model to track real-time upload progress percentage (`progress` column) and states (`pending`, `uploading`, `success`, `failed`). Created an Alembic migration (`20260908_youtube_progress`) for the schema change.
+  - **OAuth & Upload APIs**: Created new REST API router (`/api/youtube`) to manage the Google Auth Flow (`/auth-url`, `/oauth-callback`), channel list, account disconnection, and asynchronous upload triggering and polling (`/upload`, `/upload/{id}/status`).
+  - **Publish Stage Integration**: Integrated the new async upload workflow seamlessly into the `publish_stage.py` pipeline step, handling Google credential decryption and automatic auto-refresh logic natively via `google-auth-oauthlib` and `google-api-python-client`.
+
 - **Persistent Studio State, Isolated Settings Snapshot, Checkpoint System, & Resume Workflow (2026-09-07)**:
   - **Per-Job Isolated Studio State & Settings Snapshot**: Added `settings_snapshot_json`, `studio_state_json`, `last_checkpoint_stage`, and `last_checkpoint_at` columns to `VideoTranslationJob` ORM model ([video_translator.py](file:///c:/Hack/AutoTransAI/backend/app/models/video_translator.py)). When a job is created, its exact AI provider, model, voice, watermark, and audio mix configuration is saved in `settings_snapshot_json`, isolating existing jobs from global settings modifications.
   - **Dedicated Studio State & Checkpoint API Endpoints**: Implemented `GET /api/video-translator/jobs/{job_id}/studio-state`, `PATCH /api/video-translator/jobs/{job_id}/studio-state`, `POST /api/video-translator/jobs/{job_id}/checkpoint`, `POST /api/video-translator/jobs/{job_id}/resume`, and `POST /api/video-translator/jobs/{job_id}/apply-settings` in [video_translator.py](file:///c:/Hack/AutoTransAI/backend/app/api/routes/video_translator.py).

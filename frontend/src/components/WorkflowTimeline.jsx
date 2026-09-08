@@ -229,6 +229,18 @@ export default function WorkflowTimeline({
           Status: {getStatusBadge(selectedStageData.status)} | Retry Count: {selectedStageData.retry_count || 0}
         </p>
 
+        {selectedStageData.status === 'running' && (
+          <div style={{ marginBottom: '12px', background: '#1E293B', padding: '10px', borderRadius: '6px', border: '1px solid #3B82F6' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '6px', color: '#60A5FA' }}>
+              <span>{selectedStageData.message || 'Đang xử lý...'}</span>
+              <span>{selectedStageData.progress_percentage || 0}% {selectedStageData.total_items > 0 ? `(${selectedStageData.current_item}/${selectedStageData.total_items})` : ''}</span>
+            </div>
+            <div style={{ width: '100%', height: '6px', background: '#334155', borderRadius: '3px', overflow: 'hidden' }}>
+              <div style={{ width: `${selectedStageData.progress_percentage || 0}%`, height: '100%', background: '#3B82F6', transition: 'width 0.3s' }}></div>
+            </div>
+          </div>
+        )}
+
         {selectedStageData.error && (
           <div style={{ background: '#7F1D1D', color: '#FCA5A5', padding: '10px', borderRadius: '6px', fontSize: '13px', marginBottom: '12px' }}>
             ⚠️ Error: {selectedStageData.error}
@@ -286,6 +298,38 @@ export default function WorkflowTimeline({
           </div>
         )}
       </div>
+
+      {/* Final Outputs Section */}
+      {statusData.status === 'completed' && statusData.context && (
+        <div style={{ marginTop: '24px', background: '#064E3B', padding: '20px', borderRadius: '8px', border: '1px solid #10B981' }}>
+          <h4 style={{ margin: '0 0 16px 0', fontSize: '16px', color: '#34D399' }}>🎉 Quá trình hoàn tất! Kết quả:</h4>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+            {statusData.context.final_video_path && (
+              <div style={{ background: '#022C22', padding: '12px', borderRadius: '8px' }}>
+                <strong style={{ display: 'block', marginBottom: '8px', color: '#A7F3D0' }}>🎬 Video Lồng Tiếng:</strong>
+                <a 
+                  href={`/api/storage/download?path=${encodeURIComponent(statusData.context.final_video_path)}&filename=final_dubbed_video.mp4`}
+                  target="_blank" 
+                  rel="noreferrer"
+                  style={{ display: 'inline-block', padding: '8px 16px', background: '#10B981', color: '#fff', textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold', fontSize: '13px' }}
+                >
+                  ⬇️ Tải Video Về Máy
+                </a>
+              </div>
+            )}
+            {statusData.context.thumbnail_url && (
+              <div style={{ background: '#022C22', padding: '12px', borderRadius: '8px' }}>
+                <strong style={{ display: 'block', marginBottom: '8px', color: '#A7F3D0' }}>🖼️ Thumbnail:</strong>
+                <img 
+                  src={statusData.context.thumbnail_url} 
+                  alt="Video Thumbnail" 
+                  style={{ width: '100%', maxWidth: '200px', borderRadius: '6px', border: '1px solid #059669' }} 
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

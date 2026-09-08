@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { providersApi, settingsApi, systemApi } from '../api';
+import { providersApi, settingsApi, systemApi, youtubeApi } from '../api';
 import { LoadingSpinner, ButtonSpinner, LoadingOverlay, SkeletonLoader } from '../components/LoadingSpinner';
 
 
@@ -133,12 +133,60 @@ export default function Settings() {
       .catch(err => console.error('Failed fetching AI models:', err));
   };
 
-  const fetchSocialAccounts = () => {
-    return settingsApi.getSocialAccounts()
-      .then(res => {
-        if (res.success) setSocialAccounts(res.data);
-      })
-      .catch(err => console.error('Failed fetching social accounts:', err));
+  const fetchSocialAccounts = async () => {
+    try {
+      const [settingsRes, ytAccounts] = await Promise.allSettled([
+        settingsApi.getSocialAccounts(),
+        youtubeApi.listAccounts(),
+      ]);
+
+      let accounts = [];
+      if (settingsRes.status === 'fulfilled' && settingsRes.value?.success) {
+        accounts = [...(settingsRes.value.data || [])];
+      }
+      if (ytAccounts.status === 'fulfilled' && Array.isArray(ytAccounts.value)) {
+        const ytList = ytAccounts.value.map(acc => ({
+          id: acc.id,
+          platform: 'youtube',
+          account_name: acc.channel_name,
+          channel_id: acc.channel_id,
+          status: 'CONNECTED (OAuth 2.0)',
+          priority: 1,
+          is_oauth: true,
+        }));
+        accounts = [...ytList, ...accounts.filter(a => a.platform !== 'youtube')];
+      }
+      setSocialAccounts(accounts);
+    } catch (err) {
+      console.error('Failed fetching social accounts:', err);
+    }
+  };
+
+  const handleConnectYouTubeOAuth = async () => {
+    try {
+      const res = await youtubeApi.getAuthUrl();
+      if (res && res.auth_url) {
+        window.location.href = res.auth_url;
+      } else {
+        alert('❌ Không thể khởi tạo kết nối Google OAuth. Vui lòng kiểm tra lại YOUTUBE_CLIENT_ID trong file .env');
+      }
+    } catch (err) {
+      alert('❌ Lỗi kết nối Google OAuth: ' + (err.response?.data?.detail || err.message));
+    }
+  };
+
+  const handleDeleteSocialAccount = async (accId, isOAuth) => {
+    if (!window.confirm('Bạn có chắc chắn muốn ngắt kết nối kênh này?')) return;
+    try {
+      if (isOAuth) {
+        await youtubeApi.disconnectAccount(accId);
+      } else {
+        await settingsApi.deleteSocialAccount(accId);
+      }
+      await fetchSocialAccounts();
+    } catch (err) {
+      alert('❌ Lỗi ngắt kết nối kênh: ' + (err.response?.data?.detail || err.message));
+    }
   };
 
   const fetchSystemSettings = () => {
@@ -403,16 +451,6 @@ export default function Settings() {
     }
   };
 
-  const handleDeleteSocialAccount = async (id) => {
-    if (!window.confirm('Are you sure you want to remove this account?')) return;
-    try {
-      await settingsApi.deleteSocialAccount(id);
-      fetchSocialAccounts();
-    } catch (err) {
-      setMessage({ type: 'danger', text: 'Failed removing social account' });
-    }
-  };
-
   const renderStatusBadge = (k) => {
     switch (k.status) {
       case 'active':
@@ -429,6 +467,52 @@ export default function Settings() {
         return <span className="badge badge-neutral">● Disabled</span>;
       default:
         return <span className="badge badge-neutral">{k.status}</span>;
+    }
+  };
+
+  const closeAddKeyModalSafely = () => {
+    if (newKeyInput.trim()) {
+      if (window.confirm('⚠️ Bạn có API Key đang nhập chưa lưu! Bạn có chắc chắn muốn đóng và thoát không?')) {
+        setNewKeyInput('');
+        setModalError(null);
+        setShowAddKeyModal(false);
+      }
+    } else {
+      setModalError(null);
+      setShowAddKeyModal(false);
+    }
+  };
+
+  const closeAddProviderModalSafely = () => {
+    const isDirty = customProviderData.id || customProviderData.name || customProviderData.base_url || customProviderData.api_key;
+    if (isDirty) {
+      if (window.confirm('⚠️ Bạn có thông tin Custom Provider đang nhập chưa lưu! Bạn có chắc chắn muốn đóng và thoát không?')) {
+        setShowAddProviderModal(false);
+      }
+    } else {
+      setShowAddProviderModal(false);
+    }
+  };
+
+  const closeAddModelModalSafely = () => {
+    const isDirty = newModelData.id || newModelData.model_name;
+    if (isDirty) {
+      if (window.confirm('⚠️ Bạn có thông tin Custom Model đang nhập chưa lưu! Bạn có chắc chắn muốn đóng và thoát không?')) {
+        setShowAddModelModal(false);
+      }
+    } else {
+      setShowAddModelModal(false);
+    }
+  };
+
+  const closeAddSocialModalSafely = () => {
+    const isDirty = newSocialData.account_name.trim() || newSocialData.channel_id.trim();
+    if (isDirty) {
+      if (window.confirm('⚠️ Bạn có thông tin kênh mạng xã hội đang nhập chưa lưu! Bạn có chắc chắn muốn đóng và thoát không?')) {
+        setShowAddSocialModal(false);
+      }
+    } else {
+      setShowAddSocialModal(false);
     }
   };
 
@@ -873,14 +957,24 @@ export default function Settings() {
                 Manage connected YouTube, TikTok, Facebook & Instagram publishing channels.
               </p>
             </div>
-            <button className="btn btn-primary" style={{ fontSize: '0.8rem' }} onClick={() => setShowAddSocialModal(true)}>
-              + Connect Social Account
-            </button>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button
+                className="btn btn-primary"
+                style={{ fontSize: '0.8rem', background: 'linear-gradient(135deg, #ef4444, #dc2626)' }}
+                onClick={handleConnectYouTubeOAuth}
+                title="Đăng nhập Google OAuth 2.0 để tự động kết nối kênh YouTube"
+              >
+                🔴 Kết Nối YouTube (Google OAuth 2.0)
+              </button>
+              <button className="btn btn-secondary" style={{ fontSize: '0.8rem' }} onClick={() => setShowAddSocialModal(true)}>
+                + Thêm Kênh Khác
+              </button>
+            </div>
           </div>
           <div className="card-body">
             {socialAccounts.length === 0 ? (
               <div style={{ color: '#94a3b8', fontStyle: 'italic' }}>
-                No social account connected yet. Click "+ Connect Social Account" above.
+                Chưa có tài khoản nào được kết nối. Hãy ấn "🔴 Kết Nối YouTube (Google OAuth 2.0)" ở trên.
               </div>
             ) : (
               <table className="table" style={{ width: '100%', fontSize: '0.85rem' }}>
@@ -903,7 +997,7 @@ export default function Settings() {
                       <td><span className="badge badge-success">● {acc.status}</span></td>
                       <td><span className="badge badge-info">P{acc.priority}</span></td>
                       <td style={{ textAlign: 'right' }}>
-                        <button className="btn btn-danger" style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }} onClick={() => handleDeleteSocialAccount(acc.id)}>
+                        <button className="btn btn-danger" style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }} onClick={() => handleDeleteSocialAccount(acc.id, acc.is_oauth)}>
                           Remove
                         </button>
                       </td>
@@ -1092,11 +1186,11 @@ export default function Settings() {
 
       {/* MODAL: ADD API KEY */}
       {showAddKeyModal && (
-        <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) { setShowAddKeyModal(false); setModalError(null); } }}>
+        <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) closeAddKeyModalSafely(); }}>
           <div className="modal-dialog">
             <div className="modal-header">
               <h3>Add API Key to Pool — {selectedProviderForKeys.toUpperCase()}</h3>
-              <button type="button" className="modal-close-btn" onClick={() => { setShowAddKeyModal(false); setModalError(null); }}>&times;</button>
+              <button type="button" className="modal-close-btn" onClick={closeAddKeyModalSafely}>&times;</button>
             </div>
             <div className="modal-body">
               {modalError && (
@@ -1128,7 +1222,7 @@ export default function Settings() {
                   />
                 </div>
                 <div className="modal-footer">
-                  <button type="button" className="btn btn-secondary" onClick={() => { setShowAddKeyModal(false); setModalError(null); }}>Cancel</button>
+                  <button type="button" className="btn btn-secondary" onClick={closeAddKeyModalSafely}>Cancel</button>
                   <button type="button" className="btn btn-primary" disabled={saving} onClick={handleAddKey}>
                     {saving ? <><ButtonSpinner /> Đang lưu...</> : 'Save Key'}
                   </button>
@@ -1141,11 +1235,11 @@ export default function Settings() {
 
       {/* MODAL: ADD CUSTOM PROVIDER */}
       {showAddProviderModal && (
-        <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setShowAddProviderModal(false); }}>
+        <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) closeAddProviderModalSafely(); }}>
           <div className="modal-dialog">
             <div className="modal-header">
               <h3>Add Custom Provider</h3>
-              <button type="button" className="modal-close-btn" onClick={() => setShowAddProviderModal(false)}>&times;</button>
+              <button type="button" className="modal-close-btn" onClick={closeAddProviderModalSafely}>&times;</button>
             </div>
             <div className="modal-body">
               <form onSubmit={handleAddCustomProvider}>
@@ -1192,7 +1286,7 @@ export default function Settings() {
                   />
                 </div>
                 <div className="modal-footer">
-                  <button type="button" className="btn btn-secondary" onClick={() => setShowAddProviderModal(false)}>Cancel</button>
+                  <button type="button" className="btn btn-secondary" onClick={closeAddProviderModalSafely}>Cancel</button>
                   <button type="submit" className="btn btn-primary" disabled={saving}>
                     {saving ? <><ButtonSpinner /> Đang thêm...</> : 'Add Provider'}
                   </button>
@@ -1205,11 +1299,11 @@ export default function Settings() {
 
       {/* MODAL: ADD CUSTOM MODEL */}
       {showAddModelModal && (
-        <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setShowAddModelModal(false); }}>
+        <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) closeAddModelModalSafely(); }}>
           <div className="modal-dialog">
             <div className="modal-header">
               <h3>Add Custom Model</h3>
-              <button type="button" className="modal-close-btn" onClick={() => setShowAddModelModal(false)}>&times;</button>
+              <button type="button" className="modal-close-btn" onClick={closeAddModelModalSafely}>&times;</button>
             </div>
             <div className="modal-body">
               <form onSubmit={handleAddCustomModel}>
@@ -1249,7 +1343,7 @@ export default function Settings() {
                   />
                 </div>
                 <div className="modal-footer">
-                  <button type="button" className="btn btn-secondary" onClick={() => setShowAddModelModal(false)}>Cancel</button>
+                  <button type="button" className="btn btn-secondary" onClick={closeAddModelModalSafely}>Cancel</button>
                   <button type="submit" className="btn btn-primary" disabled={saving}>
                     {saving ? <><ButtonSpinner /> Đang thêm...</> : 'Add Model'}
                   </button>
@@ -1355,11 +1449,11 @@ export default function Settings() {
 
       {/* MODAL: ADD SOCIAL ACCOUNT */}
       {showAddSocialModal && (
-        <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setShowAddSocialModal(false); }}>
+        <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) closeAddSocialModalSafely(); }}>
           <div className="modal-dialog">
             <div className="modal-header">
               <h3>Connect Social Account</h3>
-              <button type="button" className="modal-close-btn" onClick={() => setShowAddSocialModal(false)}>&times;</button>
+              <button type="button" className="modal-close-btn" onClick={closeAddSocialModalSafely}>&times;</button>
             </div>
             <div className="modal-body">
               <form onSubmit={handleAddSocialAccount}>
@@ -1376,6 +1470,21 @@ export default function Settings() {
                     <option value="instagram">Instagram</option>
                   </select>
                 </div>
+                {newSocialData.platform === 'youtube' && (
+                  <div style={{ marginBottom: '1.25rem', padding: '1rem', background: '#1e1b4b', border: '1px solid #6366f1', borderRadius: '8px', textAlign: 'center' }}>
+                    <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.85rem', color: '#c7d2fe' }}>
+                      🔑 Để tải video lên YouTube tự động, hãy đăng nhập và cấp quyền trực tiếp qua Google OAuth 2.0:
+                    </p>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={handleConnectYouTubeOAuth}
+                      style={{ background: 'linear-gradient(135deg, #ef4444, #dc2626)', width: '100%', fontWeight: 'bold' }}
+                    >
+                      🔴 Đăng Nhập Google OAuth 2.0 (YouTube)
+                    </button>
+                  </div>
+                )}
                 <div className="form-group">
                   <label className="form-label">Account / Channel Name</label>
                   <input
@@ -1398,7 +1507,7 @@ export default function Settings() {
                   />
                 </div>
                 <div className="modal-footer">
-                  <button type="button" className="btn btn-secondary" onClick={() => setShowAddSocialModal(false)}>Cancel</button>
+                  <button type="button" className="btn btn-secondary" onClick={closeAddSocialModalSafely}>Cancel</button>
                   <button type="submit" className="btn btn-primary" disabled={saving}>Connect</button>
                 </div>
               </form>

@@ -13,6 +13,9 @@ class WorkflowContext:
     project_id: str
     job_id: Optional[str] = None
     workflow_id: Optional[str] = None
+    
+    # Progress callback for unified SSE
+    progress_callback: Optional[Any] = None
 
     # Source asset info
     video_path: Optional[str] = None

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Navbar from './components/Navbar';
 import Dashboard from './pages/Dashboard';
-import CreateProject from './pages/CreateProject';
+
 import ProjectDetail from './pages/ProjectDetail';
 import Settings from './pages/Settings';
 import VideoTranslator from './pages/VideoTranslator';
@@ -123,9 +123,7 @@ export default function App() {
           />
         )}
 
-        {activePage === 'create' && (
-          <CreateProject onProjectCreated={handleProjectCreated} />
-        )}
+
 
         {activePage === 'detail' && (
           selectedProjectId ? (

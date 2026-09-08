@@ -95,6 +95,12 @@ class Settings(BaseSettings):
     KLING_API_SECRET: str = ""
     FAL_API_KEY: str = ""
 
+    # ── YouTube OAuth & Security ───────────────────────────────────────
+    YOUTUBE_CLIENT_ID: str = ""
+    YOUTUBE_CLIENT_SECRET: str = ""
+    ENCRYPTION_KEY: str = ""
+    YOUTUBE_REDIRECT_URI: str = "http://127.0.0.1:8000/api/youtube/oauth-callback"
+
     # ── Server ─────────────────────────────────────────────────────────
     HOST: str = "127.0.0.1"
     PORT: int = 8000

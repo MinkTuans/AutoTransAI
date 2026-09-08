@@ -155,5 +155,13 @@ export const thumbnailApi = {
   delete: (id) => api.delete(`/thumbnails/${id}`).then(res => res.data),
 };
 
+export const youtubeApi = {
+  getAuthUrl: () => api.get('/youtube/auth-url').then(res => res.data),
+  listAccounts: () => api.get('/youtube/accounts').then(res => res.data),
+  disconnectAccount: (id) => api.delete(`/youtube/accounts/${id}`).then(res => res.data),
+  getUploadStatus: (uploadId) => api.get(`/youtube/upload/${uploadId}/status`).then(res => res.data),
+};
+
+
 
 

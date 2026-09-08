@@ -134,6 +134,7 @@ class YouTubePublication(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     job_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    project_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     channel_id: Mapped[str] = mapped_column(String(36), ForeignKey("youtube_channels.id", ondelete="CASCADE"))
     
     title: Mapped[str] = mapped_column(String(100))
@@ -148,6 +149,7 @@ class YouTubePublication(Base):
     youtube_video_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     youtube_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default=PublishStatusEnum.PENDING.value)
+    progress: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     
     created_at: Mapped[datetime] = mapped_column(

@@ -24,6 +24,9 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFi
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette.sse import EventSourceResponse
+import asyncio
+from app.workflow.event_broker import workflow_events
 
 from app.config import get_settings
 from app.core import get_logger
@@ -1849,6 +1852,10 @@ async def get_workflow_status_api(project_id: str, session: AsyncSession = Depen
                 "error": match.error,
                 "qc_report": match.qc_report,
                 "retry_count": match.retry_count,
+                "progress_percentage": match.progress_percentage,
+                "current_item": match.current_item,
+                "total_items": match.total_items,
+                "message": match.message,
                 "steps": [
                     {
                         "name": step.step_name,
@@ -1879,6 +1886,40 @@ async def get_workflow_status_api(project_id: str, session: AsyncSession = Depen
             "context": wf_exec.context_data,
         },
     }
+
+
+@router.get("/projects/{project_id}/workflow-stream")
+async def workflow_stream_api(project_id: str, request: Request, session: AsyncSession = Depends(get_session)):
+    """SSE endpoint for real-time unified workflow status updates."""
+    await _validate_project_exists(project_id, session)
+
+    async def event_generator():
+        # Subscribe to workflow events
+        queue = workflow_events.subscribe(project_id)
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                
+                try:
+                    # Wait for an event with a timeout to send keep-alives
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    yield {
+                        "event": "update",
+                        "data": json.dumps(event)
+                    }
+                except asyncio.TimeoutError:
+                    # Send a keep-alive ping to prevent connection drop
+                    yield {
+                        "event": "ping",
+                        "data": "ping"
+                    }
+        except asyncio.CancelledError:
+            pass
+        finally:
+            workflow_events.unsubscribe(project_id, queue)
+
+    return EventSourceResponse(event_generator())
 
 
 @router.post("/projects/{project_id}/workflow/preflight", response_model=dict)

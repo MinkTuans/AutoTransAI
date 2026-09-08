@@ -33,6 +33,12 @@ class WorkflowEngine:
     def __init__(self, registry: Optional[WorkflowRegistry] = None) -> None:
         self.registry = registry or WorkflowRegistry()
         self._active_tasks: dict[str, asyncio.Task] = {}
+        from app.workflow.event_broker import workflow_events
+        self.events = workflow_events
+
+    async def emit_progress(self, project_id: str):
+        """Emit a generic status update to force clients to re-fetch status or push full state."""
+        await self.events.publish(project_id, {"type": "workflow_update"})
 
     async def start_workflow(
         self,
@@ -239,6 +245,18 @@ class WorkflowEngine:
             ctx_dict = wf_exec.context_data or {"project_id": project_id}
             ctx = WorkflowContext.from_dict(ctx_dict)
             ctx.workflow_id = execution_id
+            
+            # Progress callback for stages to use
+            async def progress_cb(stage_name: str, pct: int, current: int, total: int, msg: str):
+                st_exec = await self._get_or_create_stage_exec(db, execution_id, stage_name)
+                st_exec.progress_percentage = pct
+                st_exec.current_item = current
+                st_exec.total_items = total
+                st_exec.message = msg
+                await db.commit()
+                await self.emit_progress(project_id)
+            
+            ctx.progress_callback = progress_cb
 
             # Determine starting stage index
             current_stage_name = wf_exec.current_stage or stages[0]
@@ -259,7 +277,13 @@ class WorkflowEngine:
                     stage_exec = await self._get_or_create_stage_exec(db, execution_id, stage_name)
                     stage_exec.status = WorkflowStageStatus.RUNNING.value
                     stage_exec.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                    
+                    # Update overall progress
+                    current_idx = stages.index(stage_name)
+                    wf_exec.overall_progress_pct = int((current_idx / len(stages)) * 100)
+                    
                     await db.commit()
+                    await self.emit_progress(project_id)
 
                     stage_inst = self.registry.get_stage(stage_name)
                     steps = getattr(stage_inst, "STEPS", [])
@@ -279,6 +303,7 @@ class WorkflowEngine:
                         step_exec.status = WorkflowStepStatus.RUNNING.value
                         step_exec.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
                         await db.commit()
+                        await self.emit_progress(project_id)
 
                         # Step retry loop
                         max_retries = 3
@@ -291,6 +316,7 @@ class WorkflowEngine:
                                 step_exec.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
                                 step_success = True
                                 await db.commit()
+                                await self.emit_progress(project_id)
                                 break
                             except Exception as ex:
                                 logger.error(f"[WorkflowEngine] Step {step_name} failed (attempt {attempt+1}): {str(ex)}")
@@ -313,6 +339,7 @@ class WorkflowEngine:
                             wf_exec.status = WorkflowEngineStatus.FAILED.value
                             wf_exec.error_message = step_exec.error
                             await db.commit()
+                            await self.emit_progress(project_id)
                             break
 
                     if stage_failed:
@@ -325,8 +352,10 @@ class WorkflowEngine:
                     if qc_report.get("passed"):
                         stage_exec.status = WorkflowStageStatus.PASSED.value
                         stage_exec.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                        stage_exec.progress_percentage = 100
                         wf_exec.context_data = ctx.to_dict()
                         await db.commit()
+                        await self.emit_progress(project_id)
                     else:
                         logger.warning(f"[WorkflowEngine] Stage {stage_name} QC failed. Issues: {qc_report.get('issues')}")
                         stage_exec.status = WorkflowStageStatus.NEEDS_REVIEW.value
@@ -337,8 +366,10 @@ class WorkflowEngine:
                 # Check if all stages passed
                 if not stage_failed and wf_exec.status == WorkflowEngineStatus.RUNNING.value:
                     wf_exec.status = WorkflowEngineStatus.COMPLETED.value
+                    wf_exec.overall_progress_pct = 100
                     wf_exec.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
                     await db.commit()
+                    await self.emit_progress(project_id)
             except asyncio.CancelledError:
                 logger.info(f"[WorkflowEngine] Workflow loop cancelled cleanly for project {project_id}")
                 await db.refresh(wf_exec)

@@ -160,6 +160,7 @@ class YouTubePublishingService:
             except Exception as yt_err:
                 logger.error("YouTube API upload exception", error=str(yt_err), job_id=job_id)
                 log_job_event(job_id, "PUBLISHING", f"[YOUTUBE-API] ⚠️ Upload failed: {str(yt_err)}")
+                raise yt_err
 
         # Simulated upload for development / staging when credentials not set
         mock_id = f"yt_{job_id.replace('-', '_').lower()}"
@@ -171,3 +172,83 @@ class YouTubePublishingService:
             "youtube_url": mock_url,
             "status": "PUBLISHED",
         }
+
+    @classmethod
+    async def execute_async_upload(cls, publication_id: str, video_path: str) -> None:
+        """Executes upload in background, updates database model progress."""
+        from app.database import async_session_factory
+        from app.models.video_editor import YouTubePublication, YouTubeChannel, PublishStatusEnum
+        from app.core.encryption import decrypt_data
+        
+        async with async_session_factory() as db:
+            import sqlalchemy as sa
+            stmt = sa.select(YouTubePublication, YouTubeChannel).join(
+                YouTubeChannel, YouTubePublication.channel_id == YouTubeChannel.id
+            ).where(YouTubePublication.id == publication_id)
+            result = await db.execute(stmt)
+            row = result.first()
+            if not row:
+                return
+                
+            pub, channel = row
+            
+            pub.status = PublishStatusEnum.UPLOADING.value
+            await db.commit()
+            
+            try:
+                # Decrypt credentials
+                raw_creds_json = decrypt_data(channel.credentials_json)
+                creds_data = json.loads(raw_creds_json)
+                
+                from google.oauth2.credentials import Credentials
+                from googleapiclient.discovery import build
+                from googleapiclient.http import MediaFileUpload
+                
+                # Natively handles refresh tokens
+                creds = Credentials.from_authorized_user_info(creds_data)
+                youtube = build("youtube", "v3", credentials=creds)
+                
+                tags = json.loads(pub.tags_json) if pub.tags_json else []
+                body = {
+                    "snippet": {
+                        "title": pub.title[:100],
+                        "description": pub.description,
+                        "tags": tags,
+                        "categoryId": pub.category_id,
+                    },
+                    "status": {
+                        "privacyStatus": pub.privacy_status,
+                        "selfDeclaredMadeForKids": False,
+                    },
+                }
+
+                # Resumable upload chunking loop for real-time progress updates
+                media = MediaFileUpload(video_path, chunksize=256*1024, resumable=True)
+                
+                def _do_create_request():
+                    return youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+                
+                request = await asyncio.to_thread(_do_create_request)
+                
+                def _step_upload(req):
+                    return req.next_chunk()
+                
+                response = None
+                while response is None:
+                    status, response = await asyncio.to_thread(_step_upload, request)
+                    if status:
+                        pct = int(status.progress() * 100)
+                        pub.progress = min(pct, 99)
+                        await db.commit()
+                
+                pub.youtube_video_id = response.get("id")
+                pub.youtube_url = f"https://www.youtube.com/watch?v={pub.youtube_video_id}"
+                pub.status = PublishStatusEnum.PUBLISHED.value
+                pub.progress = 100
+                await db.commit()
+                
+            except Exception as e:
+                logger.error("Async YouTube Upload failed", error=str(e), publication_id=publication_id)
+                pub.status = PublishStatusEnum.FAILED.value
+                pub.error_message = str(e)
+                await db.commit()

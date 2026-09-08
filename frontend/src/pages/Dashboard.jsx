@@ -154,9 +154,7 @@ export default function Dashboard({ onSelectProject, onCreateNew }) {
               🗑️ Delete Selected ({selectedIds.length})
             </button>
           )}
-          <button className="btn btn-primary" onClick={onCreateNew}>
-            + Create New Project
-          </button>
+
         </div>
       </div>
 
@@ -206,9 +204,7 @@ export default function Dashboard({ onSelectProject, onCreateNew }) {
             <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
               No projects in database. Start by creating a project or translating a video!
             </p>
-            <button className="btn btn-primary" onClick={onCreateNew}>
-              Create First Project
-            </button>
+
           </div>
         ) : (
           <>

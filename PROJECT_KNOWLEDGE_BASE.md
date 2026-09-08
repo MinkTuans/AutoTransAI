@@ -11,7 +11,7 @@ The central engine (`app.workflow.workflow_engine.WorkflowEngine`) orchestrates 
 3. **TRANSLATE**: Project glossary loading, entity extraction, cross-batch context translation into target language (e.g., Vietnamese), segment ID drop validation and recovery, translation QC.
 4. **DUB**: Speaker-voice mapping, TTS synthesis (Edge-TTS, Google Cloud TTS, ElevenLabs), duration analysis, atempo time stretching, sample-accurate 44.1kHz stereo PCM timeline assembly, audio normalization, dubbing QC.
 5. **PRODUCE**: Subtitle generation (ASS/SRT/VTT), reframing, watermark/logo embedding, final FFmpeg video rendering & multiplexing, technical QC.
-6. **PUBLISH**: YouTube SEO metadata generation, thumbnail selection, user review gate, YouTube publication via OAuth / upload service.
+6. **PUBLISH**: YouTube SEO metadata generation (Gemini API), thumbnail selection, user review gate. Supports true Google OAuth 2.0 connection, encrypted token storage (via `cryptography.fernet`), and async background resumable uploads via `YouTubePublishingService` tracking progress dynamically directly into `youtube_publications` database table (supporting both `job_id` and `project_id` relationship tracking).
 
 ### Database & File Storage Architecture (100% Local & Self-Contained)
 - **Database Layer (Laragon MySQL)**:
