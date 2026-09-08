@@ -8,6 +8,7 @@ monitoring real-time FFmpeg process stats & heartbeats, reviewing logs, cancel, 
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import os
 import shutil
@@ -30,8 +31,8 @@ from app.services.storage_service import storage_service
 from app.core.job_logger import log_job_event, get_job_logs
 from app.database import get_session, async_session_factory
 from app.core.security_url import SSRFValidationError
-from app.models.project import Project
 from app.models.asset import Asset
+from app.models.project import Project, WorkflowStatus
 from app.models.video_translator import (
     VideoAsset,
     VideoTranslationJob,
@@ -93,6 +94,22 @@ def is_job_cancelled(job_id: str) -> bool:
     return False
 
 
+def _parse_bool(val: Any, default: bool = False) -> bool:
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return val != 0
+    if isinstance(val, str):
+        cleaned = val.strip().lower()
+        if cleaned in ("true", "1", "yes", "on"):
+            return True
+        if cleaned in ("false", "0", "no", "off"):
+            return False
+    return bool(val)
+
+
 async def _emit_job_progress(job_id: str, data: dict):
     if job_id in _job_sse_queues:
         try:
@@ -129,7 +146,6 @@ class CreateJobRequest(BaseModel):
     watermark_font_size: int = 32
 
 
-
 class SegmentUpdateItem(BaseModel):
     id: int
     translated_text: str
@@ -137,6 +153,27 @@ class SegmentUpdateItem(BaseModel):
 
 class UpdateSegmentsRequest(BaseModel):
     segments: List[SegmentUpdateItem]
+
+
+class UpdateStudioStateRequest(BaseModel):
+    active_step: Optional[str] = None
+    active_tab: Optional[str] = None
+    selected_segment_id: Optional[int] = None
+    extra_state: Optional[Dict[str, Any]] = None
+
+
+class SaveCheckpointRequest(BaseModel):
+    checkpoint_stage: str
+    studio_state: Optional[Dict[str, Any]] = None
+
+
+_active_job_locks: Dict[str, asyncio.Lock] = {}
+
+
+def get_job_lock(job_id: str) -> asyncio.Lock:
+    if job_id not in _active_job_locks:
+        _active_job_locks[job_id] = asyncio.Lock()
+    return _active_job_locks[job_id]
 
 
 # ── Endpoints ────────────────────────────────────────────────────────
@@ -362,7 +399,67 @@ async def create_translation_job(
         await session.flush()
         project_id = proj.id
 
+    proj_settings = proj.settings_json or {} if (proj and proj.settings_json) else {}
+    wm_enabled = body.watermark_enabled if body.watermark_enabled else _parse_bool(proj_settings.get("watermark_enabled"), False)
+    wm_type = body.watermark_type if body.watermark_type != "image" else proj_settings.get("watermark_type", "image")
+    wm_img_path = body.watermark_image_path or proj_settings.get("watermark_image_path")
+    wm_text = body.watermark_text or proj_settings.get("watermark_text")
+    wm_pos = body.watermark_position if body.watermark_position != "bottom_right" else proj_settings.get("watermark_position", "bottom_right")
+    wm_scale = body.watermark_scale if body.watermark_scale != 0.20 else proj_settings.get("watermark_scale", 0.20)
+    wm_opacity = body.watermark_opacity if body.watermark_opacity != 0.80 else proj_settings.get("watermark_opacity", 0.80)
+    wm_margin = body.watermark_margin if body.watermark_margin != 20 else proj_settings.get("watermark_margin", 20)
+    wm_font_size = body.watermark_font_size if body.watermark_font_size != 32 else proj_settings.get("watermark_font_size", 32)
+
     job_id = f"VT-{str(uuid.uuid4())[:6].upper()}"
+
+    settings_snapshot = {
+        "stt": {
+            "provider": body.llm_provider_id or proj_settings.get("stt_provider_id", "gemini"),
+            "model": proj_settings.get("stt_model", "gemini-2.0-flash"),
+        },
+        "translation": {
+            "provider": body.llm_provider_id or proj_settings.get("translation_provider_id", "gemini"),
+            "model": proj_settings.get("translation_model", "gemini-2.0-flash"),
+        },
+        "tts": {
+            "provider": body.audio_provider_id or proj_settings.get("audio_provider_id", "edge_tts"),
+            "voice_id": body.voice_id or proj_settings.get("voice_id", "vi-VN-HoaiMyNeural"),
+        },
+        "language": {
+            "source_language": body.source_language or proj_settings.get("source_language", "auto"),
+            "target_language": body.target_language or proj_settings.get("target_language", "vi"),
+        },
+        "audio_mix": {
+            "original_audio_mode": body.original_audio_mode or proj_settings.get("original_audio_mode", "mute"),
+            "original_audio_volume": proj_settings.get("original_audio_volume", 0.20),
+        },
+        "watermark": {
+            "enabled": wm_enabled,
+            "type": wm_type,
+            "image_path": wm_img_path,
+            "text": wm_text,
+            "position": wm_pos,
+            "scale": wm_scale,
+            "opacity": wm_opacity,
+            "margin": wm_margin,
+            "font_size": wm_font_size,
+        },
+        "video": {
+            "aspect_ratio": proj_settings.get("target_aspect_ratio", "16:9"),
+            "enable_burned_subtitles": _parse_bool(proj_settings.get("enable_burned_subtitles"), True),
+            "enable_bgm_ducking": _parse_bool(proj_settings.get("enable_bgm_ducking"), True),
+            "bgm_volume_db": proj_settings.get("bgm_volume_db", -18.0),
+        }
+    }
+
+    initial_studio_state = {
+        "active_step": "input",
+        "active_tab": "overview",
+        "selected_segment_id": None,
+    }
+
+    now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+
     job = VideoTranslationJob(
         id=job_id,
         project_id=project_id,
@@ -378,16 +475,20 @@ async def create_translation_job(
         stage_progress_pct=0.0,
         overall_progress_pct=0.0,
         current_step="Khởi tạo job",
-        watermark_enabled=body.watermark_enabled,
-        watermark_type=body.watermark_type,
-        watermark_image_path=body.watermark_image_path,
-        watermark_text=body.watermark_text,
-        watermark_position=body.watermark_position,
-        watermark_scale=body.watermark_scale,
-        watermark_opacity=body.watermark_opacity,
-        watermark_margin=body.watermark_margin,
-        watermark_font_size=body.watermark_font_size,
-        last_heartbeat=datetime.now(timezone.utc).replace(tzinfo=None),
+        watermark_enabled=wm_enabled,
+        watermark_type=wm_type,
+        watermark_image_path=wm_img_path,
+        watermark_text=wm_text,
+        watermark_position=wm_pos,
+        watermark_scale=wm_scale,
+        watermark_opacity=wm_opacity,
+        watermark_margin=wm_margin,
+        watermark_font_size=wm_font_size,
+        settings_snapshot_json=json.dumps(settings_snapshot),
+        studio_state_json=json.dumps(initial_studio_state),
+        last_checkpoint_stage="CREATED",
+        last_checkpoint_at=now_dt,
+        last_heartbeat=now_dt,
     )
 
     session.add(job)
@@ -418,173 +519,192 @@ async def start_translation_pipeline(
         raise HTTPException(status_code=404, detail="❌ Translation Job không tồn tại.")
 
     async def run_pipeline():
-        start_job_heartbeat(job_id)
-        current_stage = "EXTRACTING_AUDIO"
-        try:
-            async with async_session_factory() as bg_session:
-                job_res = await bg_session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))
-                b_job = job_res.scalar_one_or_none()
-                if not b_job:
-                    return
+        lock = get_job_lock(job_id)
+        if lock.locked():
+            logger.warning(f"Job {job_id} pipeline already running in another task.")
+            return
 
-                asset_res = await bg_session.execute(select(VideoAsset).where(VideoAsset.id == b_job.asset_id))
-                b_asset = asset_res.scalar_one_or_none()
-                if not b_asset:
-                    return
+        async with lock:
+            start_job_heartbeat(job_id)
+            current_stage = "EXTRACTING_AUDIO"
+            try:
+                async with async_session_factory() as bg_session:
+                    job_res = await bg_session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))
+                    b_job = job_res.scalar_one_or_none()
+                    if not b_job:
+                        return
 
-                job_dir = settings.DATA_DIR / "translator" / "jobs" / job_id
-                job_dir.mkdir(parents=True, exist_ok=True)
+                    asset_res = await bg_session.execute(select(VideoAsset).where(VideoAsset.id == b_job.asset_id))
+                    b_asset = asset_res.scalar_one_or_none()
+                    if not b_asset:
+                        return
 
-                # 1. Extract Audio
-                current_stage = "EXTRACTING_AUDIO"
-                b_job.status = TranslationJobStatus.EXTRACTING_AUDIO.value
-                b_job.stage = "EXTRACTING_AUDIO"
-                b_job.current_step = "Trích xuất audio từ video"
-                b_job.stage_progress_pct = 0.0
-                b_job.overall_progress_pct = calculate_overall_progress("EXTRACTING_AUDIO", 0.0)
-                await bg_session.commit()
+                    job_dir = settings.DATA_DIR / "translator" / "jobs" / job_id
+                    job_dir.mkdir(parents=True, exist_ok=True)
 
-                extracted_audio_path = job_dir / "extracted_audio.wav"
+                    # 1. Extract Audio
+                    current_stage = "EXTRACTING_AUDIO"
+                    b_job.status = TranslationJobStatus.EXTRACTING_AUDIO.value
+                    b_job.stage = "EXTRACTING_AUDIO"
+                    b_job.current_step = "Trích xuất audio từ video"
+                    b_job.stage_progress_pct = 0.0
+                    b_job.overall_progress_pct = calculate_overall_progress("EXTRACTING_AUDIO", 0.0)
+                    await bg_session.commit()
 
-                def on_extract_progress(stats: dict):
-                    pct = stats.get("progress_pct", 0.0)
-                    pid = stats.get("pid")
-                    asyncio.create_task(_update_ffmpeg_stats(job_id, "EXTRACTING_AUDIO", pct, pid, stats))
+                    extracted_audio_path = job_dir / "extracted_audio.wav"
 
-                def on_extract_pid(pid: int):
-                    asyncio.create_task(_update_pid(job_id, pid))
+                    def on_extract_progress(stats: dict):
+                        pct = stats.get("progress_pct", 0.0)
+                        pid = stats.get("pid")
+                        asyncio.create_task(_update_ffmpeg_stats(job_id, "EXTRACTING_AUDIO", pct, pid, stats))
 
-                local_asset_path = Path(b_asset.file_path)
-                if not local_asset_path.exists() and getattr(b_asset, "r2_key", None):
-                    log_job_event(job_id, "DOWNLOADING", f"Local asset missing at {local_asset_path}. Downloading from R2 ({b_asset.r2_key})...")
-                    local_asset_path.parent.mkdir(parents=True, exist_ok=True)
+                    def on_extract_pid(pid: int):
+                        asyncio.create_task(_update_pid(job_id, pid))
+
+                    local_asset_path = Path(b_asset.file_path)
+                    if not local_asset_path.exists() and getattr(b_asset, "r2_key", None):
+                        log_job_event(job_id, "DOWNLOADING", f"Local asset missing at {local_asset_path}. Downloading from R2 ({b_asset.r2_key})...")
+                        local_asset_path.parent.mkdir(parents=True, exist_ok=True)
+                        try:
+                            await storage_service.download_file(b_asset.r2_key, local_asset_path)
+                        except Exception as download_err:
+                            logger.warning("R2 asset download failed", error=str(download_err), job_id=job_id)
+
                     try:
-                        await storage_service.download_file(b_asset.r2_key, local_asset_path)
-                    except Exception as download_err:
-                        logger.warning("R2 asset download failed", error=str(download_err), job_id=job_id)
+                        await extract_audio_from_video(
+                            local_asset_path,
+                            extracted_audio_path,
+                            job_id=job_id,
+                            on_progress=on_extract_progress,
+                            on_pid=on_extract_pid,
+                        )
+                    except ValueError as ve:
+                        b_job.status = TranslationJobStatus.FAILED.value
+                        b_job.stage = "FAILED"
+                        b_job.error_message = f"❌ {str(ve)}"
+                        b_job.pid = None
+                        await bg_session.commit()
+                        log_job_event(job_id, "FAILED", f"Audio Extraction Error: {str(ve)}")
+                        return
 
-                try:
-                    await extract_audio_from_video(
-                        local_asset_path,
+                    now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+                    b_job.last_checkpoint_stage = "EXTRACTING_AUDIO_DONE"
+                    b_job.last_checkpoint_at = now_dt
+                    await bg_session.commit()
+
+                    # 2. STT & Language Detection
+                    current_stage = "STT"
+                    b_job.status = TranslationJobStatus.STT.value
+                    b_job.stage = "STT"
+                    b_job.pid = None
+                    b_job.current_step = "Nhận diện giọng nói (Speech-to-Text)"
+                    b_job.stage_progress_pct = 50.0
+                    b_job.overall_progress_pct = calculate_overall_progress("STT", 50.0)
+                    await bg_session.commit()
+
+                    segments_raw, detected_lang = await speech_to_text_and_detect_language(
                         extracted_audio_path,
                         job_id=job_id,
-                        on_progress=on_extract_progress,
-                        on_pid=on_extract_pid,
+                        target_language=b_job.target_language,
+                        source_language=b_job.source_language,
+                        llm_provider_id=b_job.llm_provider_id or "gemini",
                     )
-                except ValueError as ve:
-                    b_job.status = TranslationJobStatus.FAILED.value
-                    b_job.stage = "FAILED"
-                    b_job.error_message = f"❌ {str(ve)}"
-                    b_job.pid = None
+
+                    now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+                    b_job.last_checkpoint_stage = "STT_DONE"
+                    b_job.last_checkpoint_at = now_dt
+
+                    current_stage = "TRANSLATING"
+                    b_job.detected_language = detected_lang
+                    b_job.status = TranslationJobStatus.TRANSLATED.value
+                    b_job.stage = "TRANSLATING"
+                    b_job.current_step = "Đang dịch bản thoại"
+                    b_job.stage_progress_pct = 50.0
+                    b_job.overall_progress_pct = calculate_overall_progress("TRANSLATING", 50.0)
                     await bg_session.commit()
-                    log_job_event(job_id, "FAILED", f"Audio Extraction Error: {str(ve)}")
-                    return
 
-                # 2. STT & Language Detection
-                current_stage = "STT"
-                b_job.status = TranslationJobStatus.STT.value
-                b_job.stage = "STT"
-                b_job.pid = None
-                b_job.current_step = "Nhận diện giọng nói (Speech-to-Text)"
-                b_job.stage_progress_pct = 50.0
-                b_job.overall_progress_pct = calculate_overall_progress("STT", 50.0)
-                await bg_session.commit()
-
-
-                segments_raw, detected_lang = await speech_to_text_and_detect_language(
-                    extracted_audio_path,
-                    job_id=job_id,
-                    target_language=b_job.target_language,
-                    source_language=b_job.source_language,
-                    llm_provider_id=b_job.llm_provider_id or "gemini",
-                )
-
-                current_stage = "TRANSLATING"
-                b_job.detected_language = detected_lang
-                b_job.status = TranslationJobStatus.TRANSLATED.value
-                b_job.stage = "TRANSLATING"
-                b_job.current_step = "Đang dịch bản thoại"
-                b_job.stage_progress_pct = 50.0
-                b_job.overall_progress_pct = calculate_overall_progress("TRANSLATING", 50.0)
-                await bg_session.commit()
-
-                # 3. Translate
-                translated_segs = await translate_transcript_segments(
-                    segments_raw,
-                    source_language=detected_lang,
-                    target_language=b_job.target_language,
-                    job_id=job_id,
-                    llm_provider_id=b_job.llm_provider_id or "gemini",
-                )
-
-                # Clear previous segments if any
-                await bg_session.execute(
-                    delete(VideoTranslationSegment)
-                    .where(VideoTranslationSegment.job_id == job_id)
-                    .execution_options(synchronize_session=False)
-                )
-                bg_session.expire(b_job, ["segments"])
-
-                for seg in translated_segs:
-                    db_seg = VideoTranslationSegment(
+                    # 3. Translate
+                    translated_segs = await translate_transcript_segments(
+                        segments_raw,
+                        source_language=detected_lang,
+                        target_language=b_job.target_language,
                         job_id=job_id,
-                        segment_number=seg["number"],
-                        start_time=seg["start_time"],
-                        end_time=seg["end_time"],
-                        original_text=seg["text"],
-                        translated_text=seg.get("translated_text", seg["text"]),
-                        status="translated",
+                        llm_provider_id=b_job.llm_provider_id or "gemini",
+                        db=bg_session,
                     )
-                    bg_session.add(db_seg)
 
-                b_job.status = TranslationJobStatus.SEGMENT_EDITING.value
-                b_job.stage = "SEGMENT_EDITING"
-                b_job.current_step = "Chờ xem lại & chỉnh sửa bản dịch"
-                b_job.stage_progress_pct = 100.0
-                b_job.overall_progress_pct = 60.0
-                b_job.total_segments_count = len(translated_segs)
-                b_job.completed_segments_count = 0
-                b_job.pid = None
-                await bg_session.commit()
-                
-                snapshot_str = (
-                    f"Phase 1 completed. Awaiting user segment confirmation.\n"
-                    f"[STATE SNAPSHOT] Job: {job_id} | status={b_job.status} | stage={b_job.stage} | "
-                    f"progress={b_job.overall_progress_pct}% | heartbeat=INACTIVE | segments={len(translated_segs)}"
-                )
-                log_job_event(job_id, "SEGMENT_EDITING", snapshot_str)
-
-        except Exception as e:
-            tb_str = traceback.format_exc()
-            err_name = type(e).__name__
-            err_msg = str(e) or repr(e)
-            full_err_log = f"Error: {err_name}: {err_msg}\nStage: {current_stage}\nStack:\n{tb_str}"
-
-            db_err_detail = f"{err_name}: {err_msg}"
-            if isinstance(e, FFmpegExecutionError):
-                full_err_log += f"\nFFmpeg Exit Code: {e.exit_code}\nFFmpeg Stderr: {e.stderr_text}\nCommand: {' '.join(e.cmd)}"
-                if e.stderr_text:
-                    db_err_detail += f" | Stderr: {e.stderr_text[:500]}"
-
-            logger.exception("Translation pipeline failed", job_id=job_id)
-            log_job_event(job_id, "FAILED", f"Unhandled pipeline exception:\n{full_err_log}")
-
-            async with async_session_factory() as bg_session:
-                await bg_session.execute(
-                    update(VideoTranslationJob)
-                    .where(VideoTranslationJob.id == job_id)
-                    .values(
-                        status=TranslationJobStatus.FAILED.value,
-                        stage="FAILED",
-                        current_step=f"Lỗi tại stage {current_stage}: {err_name}",
-                        error_message=db_err_detail[:1000],
-                        pid=None,
-                        updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                    # Clear previous segments if any
+                    await bg_session.execute(
+                        delete(VideoTranslationSegment)
+                        .where(VideoTranslationSegment.job_id == job_id)
+                        .execution_options(synchronize_session=False)
                     )
-                )
-                await bg_session.commit()
-        finally:
-            stop_job_heartbeat(job_id)
+                    bg_session.expire(b_job, ["segments"])
+
+                    for seg in translated_segs:
+                        db_seg = VideoTranslationSegment(
+                            job_id=job_id,
+                            segment_number=seg["number"],
+                            start_time=seg["start_time"],
+                            end_time=seg["end_time"],
+                            original_text=seg["text"],
+                            translated_text=seg.get("translated_text", seg["text"]),
+                            status="translated",
+                        )
+                        bg_session.add(db_seg)
+
+                    now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+                    b_job.status = TranslationJobStatus.SEGMENT_EDITING.value
+                    b_job.stage = "SEGMENT_EDITING"
+                    b_job.current_step = "Chờ xem lại & chỉnh sửa bản dịch"
+                    b_job.stage_progress_pct = 100.0
+                    b_job.overall_progress_pct = 60.0
+                    b_job.total_segments_count = len(translated_segs)
+                    b_job.completed_segments_count = 0
+                    b_job.pid = None
+                    b_job.last_checkpoint_stage = "TRANSLATION_DONE"
+                    b_job.last_checkpoint_at = now_dt
+                    b_job.studio_state_json = json.dumps({"active_step": "segment_editing", "active_tab": "editor"})
+                    await bg_session.commit()
+                    
+                    snapshot_str = (
+                        f"Phase 1 completed. Awaiting user segment confirmation.\n"
+                        f"[STATE SNAPSHOT] Job: {job_id} | status={b_job.status} | stage={b_job.stage} | "
+                        f"progress={b_job.overall_progress_pct}% | heartbeat=INACTIVE | segments={len(translated_segs)}"
+                    )
+                    log_job_event(job_id, "SEGMENT_EDITING", snapshot_str)
+
+            except Exception as e:
+                tb_str = traceback.format_exc()
+                err_name = type(e).__name__
+                err_msg = str(e) or repr(e)
+                full_err_log = f"Error: {err_name}: {err_msg}\nStage: {current_stage}\nStack:\n{tb_str}"
+
+                db_err_detail = f"{err_name}: {err_msg}"
+                if isinstance(e, FFmpegExecutionError):
+                    full_err_log += f"\nFFmpeg Exit Code: {e.exit_code}\nFFmpeg Stderr: {e.stderr_text}\nCommand: {' '.join(e.cmd)}"
+                    if e.stderr_text:
+                        db_err_detail += f" | Stderr: {e.stderr_text[:500]}"
+
+                logger.exception("Translation pipeline failed", job_id=job_id)
+                log_job_event(job_id, "FAILED", f"Unhandled pipeline exception:\n{full_err_log}")
+
+                async with async_session_factory() as bg_session:
+                    await bg_session.execute(
+                        update(VideoTranslationJob)
+                        .where(VideoTranslationJob.id == job_id)
+                        .values(
+                            status=TranslationJobStatus.FAILED.value,
+                            stage="FAILED",
+                            current_step=f"Lỗi tại stage {current_stage}: {err_name}",
+                            error_message=db_err_detail[:1000],
+                            pid=None,
+                            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                        )
+                    )
+                    await bg_session.commit()
+            finally:
+                stop_job_heartbeat(job_id)
 
     background_tasks.add_task(run_pipeline)
     return {"success": True, "data": {"started": True, "job_id": job_id}}
@@ -806,6 +926,322 @@ async def get_translation_job(
 
 
 
+
+@router.get("/jobs/{job_id}/studio-state", response_model=dict)
+async def get_job_studio_state_api(
+    job_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Get persistent studio workflow state, isolated settings snapshot, segments, and stage checkpoints."""
+    res = await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))
+    job = res.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="❌ Job không tồn tại.")
+
+    seg_res = await session.execute(
+        select(VideoTranslationSegment)
+        .where(VideoTranslationSegment.job_id == job_id)
+        .order_by(VideoTranslationSegment.segment_number)
+    )
+    segments = seg_res.scalars().all()
+
+    asset_res = await session.execute(select(VideoAsset).where(VideoAsset.id == job.asset_id))
+    asset = asset_res.scalar_one_or_none()
+
+    # Parse settings_snapshot_json
+    settings_snapshot = {}
+    if job.settings_snapshot_json:
+        try:
+            settings_snapshot = json.loads(job.settings_snapshot_json)
+        except Exception:
+            pass
+
+    if not settings_snapshot:
+        settings_snapshot = {
+            "stt": {"provider": job.llm_provider_id or "gemini", "model": "gemini-2.0-flash"},
+            "translation": {"provider": job.llm_provider_id or "gemini", "model": "gemini-2.0-flash"},
+            "tts": {"provider": job.audio_provider_id or "edge_tts", "voice_id": job.voice_id or "vi-VN-HoaiMyNeural"},
+            "language": {"source_language": job.source_language or "auto", "target_language": job.target_language or "vi"},
+            "audio_mix": {"original_audio_mode": job.original_audio_mode or "mute", "original_audio_volume": 0.20},
+            "watermark": {
+                "enabled": job.watermark_enabled,
+                "type": job.watermark_type or "image",
+                "image_path": job.watermark_image_path,
+                "text": job.watermark_text,
+                "position": job.watermark_position or "bottom_right",
+                "scale": job.watermark_scale or 0.20,
+                "opacity": job.watermark_opacity or 0.80,
+                "margin": job.watermark_margin or 20,
+                "font_size": job.watermark_font_size or 32,
+            },
+            "video": {"aspect_ratio": "16:9", "enable_burned_subtitles": True, "enable_bgm_ducking": True, "bgm_volume_db": -18.0},
+        }
+
+    # Parse studio_state_json
+    studio_state = {}
+    if job.studio_state_json:
+        try:
+            studio_state = json.loads(job.studio_state_json)
+        except Exception:
+            pass
+
+    # Infer default step if active_step not set
+    if not studio_state.get("active_step"):
+        if job.status == TranslationJobStatus.COMPLETED.value:
+            inferred_step = "completed"
+        elif job.status in [TranslationJobStatus.SEGMENT_EDITING.value, "segment_editing"]:
+            inferred_step = "segment_editing"
+        elif job.status in [TranslationJobStatus.GENERATING_TTS.value, TranslationJobStatus.SYNCING_AUDIO.value]:
+            inferred_step = "tts"
+        elif job.status == TranslationJobStatus.RENDERING.value:
+            inferred_step = "rendering"
+        elif job.status == TranslationJobStatus.FAILED.value:
+            inferred_step = "error"
+        else:
+            inferred_step = "pipeline"
+        studio_state["active_step"] = inferred_step
+
+    segments_payload = [
+        {
+            "id": s.id,
+            "number": s.segment_number,
+            "start_time": s.start_time,
+            "end_time": s.end_time,
+            "original_text": s.original_text,
+            "translated_text": s.translated_text,
+            "tts_audio_path": s.tts_audio_path,
+            "tts_audio_duration": s.tts_audio_duration,
+            "synced_audio_path": s.synced_audio_path,
+            "status": s.status,
+        }
+        for s in segments
+    ]
+
+    return {
+        "success": True,
+        "data": {
+            "job": {
+                "id": job.id,
+                "job_id": job.id,
+                "project_id": job.project_id,
+                "asset_id": job.asset_id,
+                "status": job.status,
+                "stage": job.stage or "QUEUED",
+                "current_step": job.current_step,
+                "stage_progress_pct": job.stage_progress_pct or 0.0,
+                "overall_progress_pct": job.overall_progress_pct or job.progress_pct or 0.0,
+                "error_message": job.error_message,
+                "output_video_path": job.output_video_path,
+                "output_url": job.output_url,
+                "total_segments_count": job.total_segments_count or len(segments),
+                "completed_segments_count": job.completed_segments_count or 0,
+            },
+            "asset": {
+                "id": asset.id if asset else None,
+                "title": asset.title if asset else "",
+                "duration": asset.duration if asset else 0.0,
+                "file_path": asset.file_path if asset else "",
+            },
+            "settings_snapshot": settings_snapshot,
+            "studio_state": studio_state,
+            "last_checkpoint_stage": job.last_checkpoint_stage or job.stage or "CREATED",
+            "last_checkpoint_at": job.last_checkpoint_at.isoformat() if job.last_checkpoint_at else None,
+            "segments": segments_payload,
+        },
+    }
+
+
+@router.patch("/jobs/{job_id}/studio-state", response_model=dict)
+async def update_job_studio_state_api(
+    job_id: str,
+    body: UpdateStudioStateRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """Save/update Studio UI state for a specific video translation job."""
+    res = await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))
+    job = res.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="❌ Job không tồn tại.")
+
+    current_state = {}
+    if job.studio_state_json:
+        try:
+            current_state = json.loads(job.studio_state_json)
+        except Exception:
+            pass
+
+    if body.active_step is not None:
+        current_state["active_step"] = body.active_step
+    if body.active_tab is not None:
+        current_state["active_tab"] = body.active_tab
+    if body.selected_segment_id is not None:
+        current_state["selected_segment_id"] = body.selected_segment_id
+    if body.extra_state is not None:
+        current_state.update(body.extra_state)
+
+    job.studio_state_json = json.dumps(current_state)
+    job.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    await session.commit()
+
+    return {
+        "success": True,
+        "data": {
+            "job_id": job_id,
+            "studio_state": current_state,
+        },
+    }
+
+
+@router.post("/jobs/{job_id}/checkpoint", response_model=dict)
+async def save_job_checkpoint_api(
+    job_id: str,
+    body: SaveCheckpointRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """Record a checkpoint stage and optional UI state for a job."""
+    res = await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))
+    job = res.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="❌ Job không tồn tại.")
+
+    now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+    job.last_checkpoint_stage = body.checkpoint_stage
+    job.last_checkpoint_at = now_dt
+    job.updated_at = now_dt
+
+    if body.studio_state:
+        current_state = {}
+        if job.studio_state_json:
+            try:
+                current_state = json.loads(job.studio_state_json)
+            except Exception:
+                pass
+        current_state.update(body.studio_state)
+        job.studio_state_json = json.dumps(current_state)
+
+    await session.commit()
+    log_job_event(job_id, "CHECKPOINT", f"Checkpoint saved: {body.checkpoint_stage}")
+
+    return {
+        "success": True,
+        "data": {
+            "job_id": job_id,
+            "checkpoint_stage": job.last_checkpoint_stage,
+            "last_checkpoint_at": job.last_checkpoint_at.isoformat(),
+        },
+    }
+
+
+@router.post("/jobs/{job_id}/resume", response_model=dict)
+async def resume_job_from_checkpoint_api(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+):
+    """Resume video translation job execution from its last saved checkpoint stage."""
+    res = await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))
+    job = res.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="❌ Job không tồn tại.")
+
+    lock = get_job_lock(job_id)
+    if lock.locked():
+        return {
+            "success": True,
+            "message": f"Job {job_id} đã có tiến trình đang chạy.",
+            "data": {"job_id": job_id, "status": job.status, "stage": job.stage},
+        }
+
+    checkpoint = job.last_checkpoint_stage or job.stage or "CREATED"
+    log_job_event(job_id, "RESUME", f"Resuming job {job_id} from checkpoint: {checkpoint} (Current status: {job.status})")
+
+    # Reset failed status if retrying/resuming
+    if job.status == TranslationJobStatus.FAILED.value:
+        job.status = TranslationJobStatus.RUNNING.value
+        job.error_message = None
+        await session.commit()
+
+    if checkpoint in ["TRANSLATION_DONE", "SEGMENT_EDITING_DONE", "SEGMENT_EDITING", "TTS_DONE"]:
+        # Resume directly into Phase 2 (TTS -> Sync -> Render)
+        return await render_final_translated_video(job_id, background_tasks, session)
+    else:
+        # Resume from Phase 1
+        return await start_translation_pipeline(job_id, background_tasks, session)
+
+
+@router.post("/jobs/{job_id}/apply-settings", response_model=dict)
+async def apply_latest_settings_to_job_api(
+    job_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Explicitly copy latest project/global settings into job's isolated settings snapshot."""
+    res = await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))
+    job = res.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="❌ Job không tồn tại.")
+
+    proj_settings = {}
+    if job.project_id:
+        p_res = await session.execute(select(Project).where(Project.id == job.project_id))
+        proj = p_res.scalar_one_or_none()
+        if proj and proj.settings_json:
+            proj_settings = proj.settings_json
+
+    new_snapshot = {
+        "stt": {
+            "provider": proj_settings.get("stt_provider_id", job.llm_provider_id or "gemini"),
+            "model": proj_settings.get("stt_model", "gemini-2.0-flash"),
+        },
+        "translation": {
+            "provider": proj_settings.get("translation_provider_id", job.llm_provider_id or "gemini"),
+            "model": proj_settings.get("translation_model", "gemini-2.0-flash"),
+        },
+        "tts": {
+            "provider": proj_settings.get("audio_provider_id", job.audio_provider_id or "edge_tts"),
+            "voice_id": proj_settings.get("voice_id", job.voice_id or "vi-VN-HoaiMyNeural"),
+        },
+        "language": {
+            "source_language": proj_settings.get("source_language", job.source_language or "auto"),
+            "target_language": proj_settings.get("target_language", job.target_language or "vi"),
+        },
+        "audio_mix": {
+            "original_audio_mode": proj_settings.get("original_audio_mode", job.original_audio_mode or "mute"),
+            "original_audio_volume": proj_settings.get("original_audio_volume", 0.20),
+        },
+        "watermark": {
+            "enabled": _parse_bool(proj_settings.get("watermark_enabled"), job.watermark_enabled),
+            "type": proj_settings.get("watermark_type", job.watermark_type or "image"),
+            "image_path": proj_settings.get("watermark_image_path", job.watermark_image_path),
+            "text": proj_settings.get("watermark_text", job.watermark_text),
+            "position": proj_settings.get("watermark_position", job.watermark_position or "bottom_right"),
+            "scale": proj_settings.get("watermark_scale", job.watermark_scale or 0.20),
+            "opacity": proj_settings.get("watermark_opacity", job.watermark_opacity or 0.80),
+            "margin": proj_settings.get("watermark_margin", job.watermark_margin or 20),
+            "font_size": proj_settings.get("watermark_font_size", job.watermark_font_size or 32),
+        },
+        "video": {
+            "aspect_ratio": proj_settings.get("target_aspect_ratio", "16:9"),
+            "enable_burned_subtitles": _parse_bool(proj_settings.get("enable_burned_subtitles"), True),
+            "enable_bgm_ducking": _parse_bool(proj_settings.get("enable_bgm_ducking"), True),
+            "bgm_volume_db": proj_settings.get("bgm_volume_db", -18.0),
+        }
+    }
+
+    job.settings_snapshot_json = json.dumps(new_snapshot)
+    job.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    await session.commit()
+
+    log_job_event(job_id, "SETTINGS_UPDATE", "Applied latest project settings to job snapshot.")
+
+    return {
+        "success": True,
+        "data": {
+            "job_id": job_id,
+            "settings_snapshot": new_snapshot,
+        },
+    }
+
+
 @router.get("/jobs/{job_id}/logs", response_model=dict)
 async def get_job_logs_api(job_id: str):
     """Fetch job log history."""
@@ -855,9 +1291,15 @@ async def render_final_translated_video(
         raise HTTPException(status_code=404, detail="❌ Job không tồn tại.")
 
     async def run_render():
-        start_job_heartbeat(job_id)
-        current_stage = "GENERATING_TTS"
-        cancel_evt = reset_job_cancellation(job_id)
+        lock = get_job_lock(job_id)
+        if lock.locked():
+            logger.warning(f"Job {job_id} render already running in another task.")
+            return
+
+        async with lock:
+            start_job_heartbeat(job_id)
+            current_stage = "GENERATING_TTS"
+            cancel_evt = reset_job_cancellation(job_id)
 
         try:
             async with async_session_factory() as init_session:
@@ -1184,6 +1626,7 @@ async def render_final_translated_video(
                 logger.warning("Error cleaning intermediate files", error=str(clean_err), job_id=job_id)
 
             async with async_session_factory() as final_session:
+                now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
                 await final_session.execute(
                     update(VideoTranslationJob)
                     .where(VideoTranslationJob.id == job_id)
@@ -1198,7 +1641,10 @@ async def render_final_translated_video(
                         output_url=output_url,
                         is_cleaned=True,
                         pid=None,
-                        updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                        last_checkpoint_stage="RENDER_DONE",
+                        last_checkpoint_at=now_dt,
+                        studio_state_json=json.dumps({"active_step": "completed", "active_tab": "overview"}),
+                        updated_at=now_dt,
                     )
                 )
                 await final_session.commit()
@@ -1446,6 +1892,27 @@ async def preflight_workflow_api(
 
     await _validate_project_exists(project_id, session)
 
+    p_res = await session.execute(select(Project).where(Project.id == project_id))
+    project = p_res.scalar_one_or_none()
+    proj_settings = (project.settings_json or {}) if project else {}
+
+    wm_enabled = payload.watermark_enabled if (payload and payload.watermark_enabled is not None) else _parse_bool(proj_settings.get("watermark_enabled"), False)
+    wm_type = (payload.watermark_type if (payload and payload.watermark_type) else None) or proj_settings.get("watermark_type", "image")
+    wm_img_path = (payload.watermark_image_path if (payload and payload.watermark_image_path) else None) or proj_settings.get("watermark_image_path")
+    wm_text = (payload.watermark_text if (payload and payload.watermark_text) else None) or proj_settings.get("watermark_text")
+
+    # Fallback lookup from Project Asset table if watermark_image_path is missing
+    if not wm_img_path and project_id and project_id != "default_project":
+        asset_res = await session.execute(
+            select(Asset)
+            .where(Asset.project_id == project_id)
+            .where(Asset.asset_type == "watermark_logo")
+            .order_by(Asset.created_at.desc())
+        )
+        wm_asset = asset_res.scalars().first()
+        if wm_asset and wm_asset.file_path:
+            wm_img_path = wm_asset.file_path
+
     res = await run_video_translator_preflight(
         project_id=project_id,
         video_url=payload.video_url if payload else None,
@@ -1455,10 +1922,10 @@ async def preflight_workflow_api(
         audio_provider_id=payload.audio_provider_id if payload and payload.audio_provider_id else "edge_tts",
         voice_id=payload.voice_id if payload else "vi-VN-HoaiMyNeural",
         target_language=payload.target_language if payload and payload.target_language else "vi",
-        watermark_enabled=payload.watermark_enabled if payload else False,
-        watermark_type=payload.watermark_type if payload else "image",
-        watermark_image_path=payload.watermark_image_path if payload else None,
-        watermark_text=payload.watermark_text if payload else None,
+        watermark_enabled=wm_enabled,
+        watermark_type=wm_type,
+        watermark_image_path=wm_img_path,
+        watermark_text=wm_text,
         db=session,
     )
 
@@ -1473,12 +1940,21 @@ async def start_workflow_api(
 ):
     """Start unified 6-stage workflow engine for a project."""
     await _validate_project_exists(project_id, session)
-    ctx_data = payload.dict(exclude_none=True) if payload else {}
 
     # Snapshot Project Settings
     p_res = await session.execute(select(Project).where(Project.id == project_id))
     project = p_res.scalar_one_or_none()
     proj_settings = (project.settings_json or {}) if project else {}
+
+    ctx_data = copy.deepcopy(proj_settings)
+    if payload:
+        payload_dict = payload.dict(exclude_none=True)
+        for k, v in payload_dict.items():
+            if k == "watermark_enabled":
+                ctx_data[k] = v or _parse_bool(proj_settings.get("watermark_enabled"), False)
+            elif v is not None:
+                ctx_data[k] = v
+
     ctx_data["settings_snapshot"] = proj_settings
 
     print(f"[WORKFLOW SETTINGS SNAPSHOT] Project ID: {project_id} | Settings Snapshot Frozen: {list(proj_settings.keys())}")
@@ -1511,10 +1987,44 @@ async def cancel_workflow_api(project_id: str, session: AsyncSession = Depends(g
 
 
 @router.post("/projects/{project_id}/workflow/stage/{stage_name}/retry", response_model=dict)
-async def retry_stage_api(project_id: str, stage_name: str, session: AsyncSession = Depends(get_session)):
+async def retry_stage_api(
+    project_id: str,
+    stage_name: str,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+):
     """Reset and retry a specific stage within the 6-stage workflow."""
     await _validate_project_exists(project_id, session)
     wf_exec = await _global_workflow_engine.retry_stage(project_id, stage_name, session)
+
+    # Automatically restart any associated VideoTranslationJob in FAILED/PAUSED/CREATED state
+    try:
+        stmt = (
+            select(VideoTranslationJob)
+            .where(
+                (VideoTranslationJob.project_id == project_id) | (VideoTranslationJob.id == project_id)
+            )
+            .order_by(VideoTranslationJob.created_at.desc())
+        )
+        res = await session.execute(stmt)
+        job = res.scalars().first()
+        if job and job.status in [
+            TranslationJobStatus.FAILED.value,
+            TranslationJobStatus.PAUSED.value,
+            TranslationJobStatus.CREATED.value,
+        ]:
+            signal_job_cancellation(job.id)
+            job.error_message = None
+            job.status = TranslationJobStatus.CREATED.value
+            job.stage = "QUEUED"
+            job.current_step = f"Smart Retry từ stage {stage_name}..."
+            job.pid = None
+            await session.commit()
+            log_job_event(job.id, "RETRY", f"Smart Retry initiated for stage {stage_name}.")
+            await start_translation_pipeline(job.id, background_tasks, session)
+    except Exception as retry_err:
+        logger.warning(f"Failed to auto-restart job for project {project_id} in retry_stage_api: {retry_err}")
+
     return {"success": True, "data": {"workflow_id": wf_exec.id, "status": wf_exec.status, "current_stage": wf_exec.current_stage}}
 
 

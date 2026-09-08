@@ -10,7 +10,7 @@ def test_default_project_settings_structure():
     assert normalized["watermark_opacity"] == 0.80
     assert normalized["watermark_margin"] == 20
     assert normalized["target_language"] == "vi"
-    assert normalized["stt_model"] == "gemini-2.5-flash"
+    assert normalized["stt_model"] is None
 
 
 def test_normalize_project_settings_custom_values():

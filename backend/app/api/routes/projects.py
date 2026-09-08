@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import flag_modified
 from sse_starlette.sse import EventSourceResponse
 
 from app.database import get_session, async_session_factory
@@ -33,13 +34,10 @@ from app.schemas.project import (
     ProjectResponse,
     ProjectListResponse,
     ProjectStatusResponse,
-    SegmentSummary,
 )
 from app.schemas.estimate import EstimateResponse, ResourceEstimate
 from app.schemas.workflow import PreflightResult
-from app.services.script_parser import parse_script, validate_segments
 from app.services.estimator import estimate_project
-from app.services.preflight import run_preflight
 from app.services.file_manager import (
     ensure_project_structure,
     delete_project_files,
@@ -49,7 +47,7 @@ from app.services.manifest import create_manifest
 from app.usage.quota_manager import validate_quota
 from app.providers.registry import get_registry
 from app.workflow.orchestrator import WorkflowOrchestrator
-from app.workflow.state_machine import is_resumable_state, validate_transition
+from app.workflow.state_machine import is_resumable_state
 from app.core import get_logger
 from app.config import get_settings
 
@@ -62,10 +60,10 @@ DEFAULT_PROJECT_SETTINGS = {
     "source_language": "auto",
     "target_language": "vi",
     "auto_detect_language": True,
-    "stt_provider_id": "gemini",
-    "stt_model": "gemini-2.5-flash",
-    "translation_provider_id": "gemini",
-    "translation_model": "gemini-2.5-flash",
+    "stt_provider_id": None,
+    "stt_model": None,
+    "translation_provider_id": None,
+    "translation_model": None,
     "audio_provider_id": "edge_tts",
     "voice_id": "vi-VN-HoaiMyNeural",
     "voice_name": "Vietnamese - HoaiMy",
@@ -546,6 +544,42 @@ async def get_project(
         ]
 
         title = job.asset.title if (job.asset and job.asset.title) else f"Video Translation {job.id}"
+        
+        # Load real Project settings if project exists
+        real_p_id = job.project_id or job.id
+        real_p_res = await session.execute(select(Project).where(Project.id == real_p_id))
+        real_proj = real_p_res.scalar_one_or_none()
+        if not real_proj:
+            job_settings_dict = {
+                "watermark_enabled": job.watermark_enabled,
+                "watermark_type": job.watermark_type,
+                "watermark_image_path": job.watermark_image_path,
+                "watermark_text": job.watermark_text,
+                "watermark_position": job.watermark_position,
+                "watermark_scale": job.watermark_scale,
+                "watermark_opacity": job.watermark_opacity,
+                "watermark_margin": job.watermark_margin,
+                "watermark_font_size": job.watermark_font_size,
+                "target_language": job.target_language,
+                "source_language": job.source_language,
+                "audio_provider_id": job.audio_provider_id,
+                "llm_provider_id": job.llm_provider_id,
+                "voice_id": job.voice_id,
+                "original_audio_mode": job.original_audio_mode,
+            }
+            real_proj = Project(
+                id=real_p_id,
+                title=title,
+                workflow_mode="video_translator",
+                workflow_status=job.status or "created",
+                settings_json=normalize_project_settings(job_settings_dict),
+            )
+            session.add(real_proj)
+            job.project_id = real_p_id
+            await session.commit()
+
+        normalized_settings = normalize_project_settings(real_proj.settings_json or {})
+
         return {
             "success": True,
             "data": {
@@ -558,7 +592,7 @@ async def get_project(
                 "video_provider_id": None,
                 "voice_id": job.voice_id,
                 "voice_name": None,
-                "settings": normalize_project_settings({}),
+                "settings": normalized_settings,
                 "media_url": job.output_url,
                 "segments": segments_data,
                 "videos": [],
@@ -582,6 +616,47 @@ async def get_project_settings(
         select(Project).where(Project.id == project_id)
     )
     project = result.scalar_one_or_none()
+    
+    # Fallback search in VideoTranslationJob
+    if not project:
+        job_res = await session.execute(
+            select(VideoTranslationJob).where(
+                (VideoTranslationJob.id == project_id) | (VideoTranslationJob.project_id == project_id)
+            )
+        )
+        job = job_res.scalar_one_or_none()
+        if job:
+            real_p_id = job.project_id or job.id
+            p_res = await session.execute(select(Project).where(Project.id == real_p_id))
+            project = p_res.scalar_one_or_none()
+            if not project:
+                # Return job hydrated settings if project model does not exist yet
+                job_settings = {
+                    "watermark_enabled": job.watermark_enabled,
+                    "watermark_type": job.watermark_type,
+                    "watermark_image_path": job.watermark_image_path,
+                    "watermark_text": job.watermark_text,
+                    "watermark_position": job.watermark_position,
+                    "watermark_scale": job.watermark_scale,
+                    "watermark_opacity": job.watermark_opacity,
+                    "watermark_margin": job.watermark_margin,
+                    "watermark_font_size": job.watermark_font_size,
+                    "target_language": job.target_language,
+                    "source_language": job.source_language,
+                    "audio_provider_id": job.audio_provider_id,
+                    "llm_provider_id": job.llm_provider_id,
+                    "voice_id": job.voice_id,
+                    "original_audio_mode": job.original_audio_mode,
+                }
+                settings_dict = normalize_project_settings(job_settings)
+                return {
+                    "success": True,
+                    "project_id": project_id,
+                    "data": settings_dict,
+                    "settings": settings_dict,
+                    "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+                }
+
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -609,15 +684,41 @@ async def save_project_settings(
         select(Project).where(Project.id == project_id)
     )
     project = result.scalar_one_or_none()
+    
+    # Fallback to job search & auto-create project record if missing
+    job_ref = None
+    if not project:
+        job_res = await session.execute(
+            select(VideoTranslationJob).where(
+                (VideoTranslationJob.id == project_id) | (VideoTranslationJob.project_id == project_id)
+            )
+        )
+        job_ref = job_res.scalar_one_or_none()
+        if job_ref:
+            real_p_id = job_ref.project_id or job_ref.id
+            p_res = await session.execute(select(Project).where(Project.id == real_p_id))
+            project = p_res.scalar_one_or_none()
+            if not project:
+                project = Project(
+                    id=real_p_id,
+                    title=f"Project {real_p_id}",
+                    workflow_mode="video_translator",
+                    workflow_status=job_ref.status or "created",
+                    settings_json={},
+                )
+                session.add(project)
+                await session.flush()
+
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
     raw_incoming = body.get("settings", body) if isinstance(body, dict) else {}
-    current_settings = project.settings_json or {}
+    current_settings = copy.deepcopy(project.settings_json or {})
     current_settings.update(raw_incoming)
 
     normalized = normalize_project_settings(current_settings)
-    project.settings_json = normalized
+    project.settings_json = copy.deepcopy(normalized)
+    flag_modified(project, "settings_json")
 
     if "audio_provider_id" in normalized:
         project.audio_provider_id = normalized["audio_provider_id"]
@@ -628,14 +729,34 @@ async def save_project_settings(
     if "voice_name" in normalized:
         project.voice_name = normalized["voice_name"]
 
+    # Sync linked VideoTranslationJob watermark fields if present
+    jobs_sync_res = await session.execute(
+        select(VideoTranslationJob).where(
+            (VideoTranslationJob.id == project.id) | (VideoTranslationJob.project_id == project.id)
+        )
+    )
+    for j in jobs_sync_res.scalars().all():
+        j.project_id = project.id
+        j.watermark_enabled = normalized.get("watermark_enabled", False)
+        j.watermark_type = normalized.get("watermark_type", "image")
+        if normalized.get("watermark_image_path"):
+            j.watermark_image_path = normalized.get("watermark_image_path")
+        if normalized.get("watermark_text"):
+            j.watermark_text = normalized.get("watermark_text")
+        j.watermark_position = normalized.get("watermark_position", "bottom_right")
+        j.watermark_scale = normalized.get("watermark_scale", 0.20)
+        j.watermark_opacity = normalized.get("watermark_opacity", 0.80)
+        j.watermark_margin = normalized.get("watermark_margin", 20)
+        j.watermark_font_size = normalized.get("watermark_font_size", 32)
+
     project.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await session.commit()
 
-    print(f"[PROJECT SETTINGS SAVE] Project ID: {project_id} | Changed Fields: {list(raw_incoming.keys())} | Database Commit: SUCCESS")
+    print(f"[PROJECT SETTINGS SAVE] Project ID: {project.id} | Changed Fields: {list(raw_incoming.keys())} | Database Commit: SUCCESS | Watermark Enabled: {normalized.get('watermark_enabled')}")
 
     return {
         "success": True,
-        "project_id": project_id,
+        "project_id": project.id,
         "data": normalized,
         "settings": normalized,
         "updated_at": project.updated_at.isoformat(),

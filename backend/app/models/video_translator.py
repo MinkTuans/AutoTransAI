@@ -135,6 +135,12 @@ class VideoTranslationJob(Base):
     watermark_margin: Mapped[int] = mapped_column(Integer, default=20)
     watermark_font_size: Mapped[int] = mapped_column(Integer, default=32)
 
+    # Persistent Studio State & Isolated Settings Snapshot & Checkpoints
+    settings_snapshot_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    studio_state_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_checkpoint_stage: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    last_checkpoint_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )

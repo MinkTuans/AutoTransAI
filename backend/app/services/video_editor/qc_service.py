@@ -73,14 +73,22 @@ class AIQCService:
     @staticmethod
     async def audit_content_with_gemini(
         transcript_text: str,
-        job_id: str = "VT-QC"
+        job_id: str = "VT-QC",
+        model_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Audit translated transcript for profanity, content safety, and translation accuracy using Gemini AI Studio."""
         if not settings.GEMINI_API_KEY:
             return {"safety_score": 100.0, "quality_score": 100.0, "issues": []}
 
         import httpx
-        from app.providers.llm.gemini_provider import GEMINI_MODEL_CANDIDATES
+        from app.services.model_resolver import AIModelResolver
+        from app.providers.llm.gemini_provider import strip_gemini_model_prefix
+
+        if not model_name:
+            res_model = await AIModelResolver.resolve_llm_model(None)
+            model_name = res_model.get("model_id")
+
+        target_model = strip_gemini_model_prefix(model_name)
 
         prompt = (
             "Bạn là một chuyên gia Kiểm định Chất lượng Nội dung Video (AI Quality Control Auditor).\n"
@@ -102,22 +110,20 @@ class AIQCService:
             "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json"}
         }
 
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={settings.GEMINI_API_KEY}"
         async with httpx.AsyncClient(timeout=30.0) as client:
-            for model in GEMINI_MODEL_CANDIDATES:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={settings.GEMINI_API_KEY}"
-                try:
-                    res = await client.post(url, json=payload)
-                    if res.status_code == 200:
-                        data = res.json()
-                        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                        if parts:
-                            raw_text = parts[0].get("text", "").strip()
-                            json_str = re.sub(r"^```json\s*", "", raw_text, flags=re.MULTILINE)
-                            json_str = re.sub(r"```$", "", json_str, flags=re.MULTILINE).strip()
-                            return json.loads(json_str)
-                except Exception as ex:
-                    logger.warning("Gemini QC audit exception", error=str(ex), model=model)
-                    continue
+            try:
+                res = await client.post(url, json=payload)
+                if res.status_code == 200:
+                    data = res.json()
+                    parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                    if parts:
+                        raw_text = parts[0].get("text", "").strip()
+                        json_str = re.sub(r"^```json\s*", "", raw_text, flags=re.MULTILINE)
+                        json_str = re.sub(r"```$", "", json_str, flags=re.MULTILINE).strip()
+                        return json.loads(json_str)
+            except Exception as ex:
+                logger.warning("Gemini QC audit exception", error=str(ex), model=target_model)
 
         return {"content_safety_score": 95.0, "translation_quality_score": 95.0, "issues": []}
 

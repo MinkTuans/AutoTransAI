@@ -64,7 +64,8 @@ def test_build_text_watermark_filter():
         opacity=0.75,
         margin_px=30,
     )
-    assert "drawtext=text='© AutoTransAI Studio':fontsize=36:fontcolor=white@0.75" in filter_text
+    assert "drawtext=" in filter_text
+    assert "text='© AutoTransAI Studio':fontsize=36:fontcolor=white@0.75" in filter_text
     assert "x=w-tw-30:y=h-th-30" in filter_text
     assert label == "[wm_outv]"
 

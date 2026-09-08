@@ -16,10 +16,8 @@ export const projectsApi = {
   delete: (id) => api.delete(`/projects/${id}`).then(res => res.data),
   batchDelete: (ids) => api.post('/projects/batch-delete', { ids }).then(res => res.data),
   estimate: (id) => api.post(`/projects/${id}/estimate`).then(res => res.data),
-  configure: (id, config) => api.post(`/projects/${id}/configure`, config).then(res => res.data),
   getSettings: (id) => api.get(`/projects/${id}/settings`).then(res => res.data),
   saveSettings: (id, settings) => api.post(`/projects/${id}/settings`, settings).then(res => res.data),
-  precheck: (id) => api.post(`/projects/${id}/precheck`).then(res => res.data),
   run: (id) => api.post(`/projects/${id}/run`).then(res => res.data),
   resume: (id) => api.post(`/projects/${id}/resume`).then(res => res.data),
   cancel: (id) => api.post(`/projects/${id}/cancel`).then(res => res.data),
@@ -108,6 +106,11 @@ export const videoTranslatorApi = {
   },
   cancelJob: (jobId) => api.post(`/video-translator/jobs/${jobId}/cancel`).then(res => res.data),
   retryJob: (jobId) => api.post(`/video-translator/jobs/${jobId}/retry`).then(res => res.data),
+  getStudioState: (jobId) => api.get(`/video-translator/jobs/${jobId}/studio-state`).then(res => res.data),
+  updateStudioState: (jobId, data) => api.patch(`/video-translator/jobs/${jobId}/studio-state`, data).then(res => res.data),
+  saveCheckpoint: (jobId, data) => api.post(`/video-translator/jobs/${jobId}/checkpoint`, data).then(res => res.data),
+  resumeJobFromCheckpoint: (jobId) => api.post(`/video-translator/jobs/${jobId}/resume`).then(res => res.data),
+  applyJobSettings: (jobId) => api.post(`/video-translator/jobs/${jobId}/apply-settings`).then(res => res.data),
 
   // Unified 6-Stage Workflow Engine APIs
   preflightWorkflow: (projectId, data) => api.post(`/video-translator/projects/${projectId}/workflow/preflight`, data || {}).then(res => res.data),

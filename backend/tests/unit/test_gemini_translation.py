@@ -5,6 +5,7 @@ malformed JSON, MAX_TOKENS finish reason truncation, empty text, and ID mismatch
 """
 
 import json
+from typing import Any, Optional
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -41,7 +42,7 @@ class MockLLM(LLMProvider):
     async def validate_configuration(self) -> bool:
         return True
 
-    async def generate_text(self, prompt: str, system_prompt: str = "") -> str:
+    async def generate_text(self, prompt: str, system_prompt: str = "", model: Optional[str] = None, **kwargs) -> str:
         self.prompts.append(prompt)
         if self.call_count < len(self.responses):
             resp = self.responses[self.call_count]

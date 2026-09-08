@@ -63,9 +63,9 @@ async def test_ai_function_configs_and_eligibility(async_db: AsyncSession):
 
     # Update STT function config
     updated = await SettingsService.update_function_config(
-        async_db, "stt", {"model_id": "gemini-2.5-flash", "fallback_enabled": False}
+        async_db, "stt", {"model_id": "gemini-2.0-flash", "fallback_enabled": False}
     )
-    assert updated["model_id"] == "gemini-2.5-flash"
+    assert updated["model_id"] == "gemini-2.0-flash"
     assert updated["fallback_enabled"] is False
 
 
@@ -75,7 +75,7 @@ async def test_ai_models_and_custom_model(async_db: AsyncSession):
 
     models = await SettingsService.get_models(async_db, provider_id="gemini")
     assert len(models) >= 1
-    assert any(m["id"] == "gemini-2.5-flash" for m in models)
+    assert any(m["id"] == "gemini-2.0-flash" for m in models)
 
     # Add custom model
     new_model = await SettingsService.add_custom_model(
@@ -109,6 +109,15 @@ async def test_ai_models_and_custom_model(async_db: AsyncSession):
     # Verify deleted
     all_gemini = await SettingsService.get_models(async_db, provider_id="gemini")
     assert not any(m["id"] == "custom-gemini-v1" for m in all_gemini)
+
+    # Delete default system model gemini-2.0-flash
+    del_sys_res = await SettingsService.delete_model(async_db, "gemini-2.0-flash")
+    assert del_sys_res is True
+
+    # Re-run ensure_defaults_seeded to verify it does NOT re-insert deleted model
+    await SettingsService.ensure_defaults_seeded(async_db)
+    models_after_seed = await SettingsService.get_models(async_db, provider_id="gemini")
+    assert not any(m["id"] == "gemini-2.0-flash" for m in models_after_seed)
 
 
 

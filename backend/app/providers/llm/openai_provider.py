@@ -1,11 +1,14 @@
 """
 OpenAI ChatGPT LLM Provider implementation.
 
-Calls official OpenAI API (https://api.openai.com/v1/chat/completions)
-with automatic multi-model fallback (gpt-4o-mini -> gpt-4o -> gpt-3.5-turbo).
+Calls official OpenAI API (https://api.openai.com/v1/chat/completions).
+Model selection is handled by AIModelResolver — this provider accepts
+an explicit model parameter and uses it directly.
 """
 
 from __future__ import annotations
+
+from typing import Optional
 
 import httpx
 
@@ -19,12 +22,6 @@ from app.providers.base import (
 
 logger = get_logger(__name__)
 settings = get_settings()
-
-OPENAI_MODEL_CANDIDATES = [
-    "gpt-4o-mini",
-    "gpt-4o",
-    "gpt-3.5-turbo",
-]
 
 
 class OpenAILLMProvider(LLMProvider):
@@ -60,10 +57,29 @@ class OpenAILLMProvider(LLMProvider):
             logger.warning("OpenAI configuration validation failed", error=str(e))
             return False
 
-    async def generate_text(self, prompt: str, system_prompt: str = "") -> str:
+    async def generate_text(self, prompt: str, system_prompt: str = "", model: Optional[str] = None) -> str:
+        """
+        Generate text using OpenAI API.
+
+        Args:
+            prompt: The user prompt text.
+            system_prompt: Optional system prompt.
+            model: Model ID from AIModelResolver. If not provided, raises error.
+        """
+        from app.core.pipeline_errors import classify_http_error, classify_exception, PipelineError
+
         settings = get_settings()
         if not settings.OPENAI_API_KEY:
             raise ValueError("OPENAI_API_KEY chưa được cấu hình trong .env")
+
+        if not model:
+            raise PipelineError(
+                code="AI_CONFIGURATION_ERROR",
+                stage="LLM",
+                message="Không có model nào được chỉ định cho OpenAI LLM. Vui lòng cấu hình model trong Settings.",
+            )
+
+        target_model = model
 
         messages = []
         if system_prompt:
@@ -75,46 +91,42 @@ class OpenAILLMProvider(LLMProvider):
             "Content-Type": "application/json",
         }
 
-        last_error = None
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            for model in OPENAI_MODEL_CANDIDATES:
-                url = "https://api.openai.com/v1/chat/completions"
-                payload = {
-                    "model": model,
-                    "messages": messages,
-                    "temperature": 0.3,
-                }
-                try:
-                    res = await client.post(url, json=payload, headers=headers)
-                    if res.status_code == 200:
-                        data = res.json()
-                        choices = data.get("choices", [])
-                        if choices:
-                            msg = choices[0].get("message", {})
-                            content = msg.get("content", "")
-                            if content:
-                                return content.strip()
-                    elif res.status_code == 429:
-                        res_text = res.text
-                        if "insufficient_quota" in res_text or "no credits remaining" in res_text or "quota" in res_text.lower():
-                            raise RuntimeError(f"OpenAI API Quota Exceeded (HTTP 429): Tài khoản OpenAI hết credit/quota. Vui lòng nạp thêm credit hoặc sử dụng Google Gemini.")
-                        logger.warning(f"OpenAI rate limit reached on '{model}'. Trying next model candidate...")
-                        last_error = f"HTTP 429 Rate Limit: {res_text[:150]}"
-                        continue
-                    elif res.status_code in (404, 500, 502, 503, 504):
-                        logger.warning(f"OpenAI model '{model}' returned HTTP {res.status_code}. Trying next model candidate...")
-                        last_error = f"HTTP {res.status_code}: {res.text[:150]}"
-                        continue
-                    else:
-                        raise RuntimeError(f"OpenAI API error HTTP {res.status_code}: {res.text[:200]}")
-                except RuntimeError:
-                    raise
-                except (httpx.TimeoutException, httpx.RequestError) as req_err:
-                    logger.warning(f"OpenAI request error on '{model}': {str(req_err)}")
-                    last_error = str(req_err)
-                    continue
+        url = "https://api.openai.com/v1/chat/completions"
+        payload = {
+            "model": target_model,
+            "messages": messages,
+            "temperature": 0.3,
+        }
 
-        raise RuntimeError(f"Tất cả các model OpenAI API đều không khả thi hoặc gặp lỗi: {last_error or 'Unknown error'}")
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            try:
+                res = await client.post(url, json=payload, headers=headers)
+                if res.status_code == 200:
+                    data = res.json()
+                    choices = data.get("choices", [])
+                    if choices:
+                        msg = choices[0].get("message", {})
+                        content = msg.get("content", "")
+                        if content:
+                            return content.strip()
+
+                # Non-200 — classify into structured error
+                raise classify_http_error(
+                    status_code=res.status_code,
+                    response_text=res.text[:500],
+                    provider="openai",
+                    model=target_model,
+                    stage="LLM",
+                )
+
+            except PipelineError:
+                raise
+            except RuntimeError:
+                raise
+            except (httpx.TimeoutException, httpx.RequestError) as req_err:
+                raise classify_exception(req_err, provider="openai", model=target_model, stage="LLM")
+
+        raise RuntimeError(f"OpenAI API trả về kết quả rỗng cho model '{target_model}'.")
 
     async def estimate_usage(self, input_text: str) -> list[UsageEstimate]:
         return [

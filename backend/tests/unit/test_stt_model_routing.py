@@ -1,42 +1,37 @@
 """
 Unit tests for AI Model Routing & Gemini STT Model Selection.
-Verifies Single Source of Truth hierarchy, model normalization, and exact API request URLs.
+Verifies Single Source of Truth hierarchy, model string cleaning, and exact API request URLs.
 """
 
 import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from app.providers.llm.gemini_provider import normalize_gemini_model_name, GEMINI_MODEL_CANDIDATES
-from app.providers.ai_router import AIRouter
+from app.providers.llm.gemini_provider import strip_gemini_model_prefix
+from app.services.model_resolver import AIModelResolver
 from app.services.video_translator.translator_service import transcribe_audio_with_gemini
 
 
-def test_normalize_gemini_model_name():
-    """Verify Gemini model string normalization."""
-    assert normalize_gemini_model_name("gemini-2.5-flash") == "gemini-2.5-flash"
-    assert normalize_gemini_model_name("models/gemini-2.5-flash") == "gemini-2.5-flash"
-    # Legacy deprecated model auto-migrated
-    assert normalize_gemini_model_name("gemini-2.0-flash") == "gemini-2.5-flash"
-    assert normalize_gemini_model_name(None) == "gemini-2.5-flash"
+def test_strip_gemini_model_prefix():
+    """Verify Gemini model prefix stripping."""
+    assert strip_gemini_model_prefix("gemini-2.0-flash") == "gemini-2.0-flash"
+    assert strip_gemini_model_prefix("models/gemini-2.0-flash") == "gemini-2.0-flash"
+    assert strip_gemini_model_prefix("models/gemini-3.5-flash-lite") == "gemini-3.5-flash-lite"
+    assert strip_gemini_model_prefix(None) == ""
 
 
 @pytest.mark.asyncio
-async def test_ai_router_resolve_stt_model_hierarchy():
-    """Verify AIRouter resolution hierarchy."""
-    # Requested model override
-    res1 = await AIRouter.resolve_stt_model(requested_model="gemini-2.5-flash")
-    assert res1["model_id"] == "gemini-2.5-flash"
+async def test_ai_model_resolver_stt_hierarchy():
+    """Verify AIModelResolver resolution hierarchy."""
+    # Explicit requested model override
+    res1 = await AIModelResolver.resolve_stt_model(db=None, requested_model="gemini-2.0-flash")
+    assert res1["model_id"] == "gemini-2.0-flash"
     assert res1["source"] == "REQUESTED MODEL"
-
-    # Default fallback
-    res2 = await AIRouter.resolve_stt_model(db=None)
-    assert res2["model_id"] == "gemini-2.5-flash"
 
 
 @pytest.mark.asyncio
 async def test_transcribe_audio_with_gemini_uses_configured_model(tmp_path: Path):
-    """Assert that transcribe_audio_with_gemini sends request using configured gemini-2.5-flash."""
+    """Assert that transcribe_audio_with_gemini sends request using configured gemini-2.0-flash."""
     dummy_audio = tmp_path / "test_audio.wav"
     dummy_audio.write_bytes(b"RIFF" + b"\x00" * 100)
 
@@ -71,12 +66,10 @@ async def test_transcribe_audio_with_gemini_uses_configured_model(tmp_path: Path
         segments, lang = await transcribe_audio_with_gemini(
             dummy_audio,
             job_id="VT-ROUTING-TEST",
-            model_name="gemini-2.5-flash",
+            model_name="gemini-2.0-flash",
         )
 
         assert len(segments) == 1
         assert segments[0]["text"] == "Hello world"
         assert len(captured_urls) > 0
-        # Verify actual API request model URL contains gemini-2.5-flash and DOES NOT contain gemini-2.0-flash
-        assert "gemini-2.5-flash" in captured_urls[0]
-        assert "gemini-2.0-flash" not in captured_urls[0]
+        assert "gemini-2.0-flash" in captured_urls[0]

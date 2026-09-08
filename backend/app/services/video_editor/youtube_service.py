@@ -27,6 +27,7 @@ class YouTubePublishingService:
         transcript_text: str,
         target_language: str = "vi",
         job_id: str = "VT-YT",
+        model_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Generate SEO-optimized YouTube Title, Description, Hashtags, Tags, and Category ID using Gemini AI Studio.
@@ -40,7 +41,14 @@ class YouTubePublishingService:
             }
 
         import httpx
-        from app.providers.llm.gemini_provider import GEMINI_MODEL_CANDIDATES
+        from app.services.model_resolver import AIModelResolver
+        from app.providers.llm.gemini_provider import strip_gemini_model_prefix
+
+        if not model_name:
+            res_model = await AIModelResolver.resolve_llm_model(None)
+            model_name = res_model.get("model_id")
+
+        target_model = strip_gemini_model_prefix(model_name)
 
         prompt = (
             "Bạn là một chuyên gia SEO YouTube hàng đầu.\n"
@@ -65,22 +73,20 @@ class YouTubePublishingService:
             "generationConfig": {"temperature": 0.3, "responseMimeType": "application/json"}
         }
 
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={settings.GEMINI_API_KEY}"
         async with httpx.AsyncClient(timeout=30.0) as client:
-            for model in GEMINI_MODEL_CANDIDATES:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={settings.GEMINI_API_KEY}"
-                try:
-                    res = await client.post(url, json=payload)
-                    if res.status_code == 200:
-                        data = res.json()
-                        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                        if parts:
-                            raw_text = parts[0].get("text", "").strip()
-                            json_str = re.sub(r"^```json\s*", "", raw_text, flags=re.MULTILINE)
-                            json_str = re.sub(r"```$", "", json_str, flags=re.MULTILINE).strip()
-                            return json.loads(json_str)
-                except Exception as ex:
-                    logger.warning("Gemini YouTube SEO generation exception", error=str(ex), model=model)
-                    continue
+            try:
+                res = await client.post(url, json=payload)
+                if res.status_code == 200:
+                    data = res.json()
+                    parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                    if parts:
+                        raw_text = parts[0].get("text", "").strip()
+                        json_str = re.sub(r"^```json\s*", "", raw_text, flags=re.MULTILINE)
+                        json_str = re.sub(r"```$", "", json_str, flags=re.MULTILINE).strip()
+                        return json.loads(json_str)
+            except Exception as ex:
+                logger.warning("Gemini YouTube SEO generation exception", error=str(ex), model=target_model)
 
         return {
             "title": "Video lồng tiếng AI tự động",

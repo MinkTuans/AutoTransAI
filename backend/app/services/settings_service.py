@@ -61,7 +61,7 @@ DEFAULT_AI_FUNCTIONS = [
         "function_name": "Speech To Text",
         "capability": "STT",
         "primary_provider_id": "gemini",
-        "model_id": "gemini-2.5-flash",
+        "model_id": "gemini-1.5-flash",
         "fallback_enabled": False,
         "fallback_provider_id": None,
     },
@@ -70,7 +70,7 @@ DEFAULT_AI_FUNCTIONS = [
         "function_name": "Text Translation & Glossaries",
         "capability": "TRANSLATION",
         "primary_provider_id": "gemini",
-        "model_id": "gemini-2.5-flash",
+        "model_id": "gemini-1.5-flash",
         "fallback_enabled": False,
         "fallback_provider_id": None,
     },
@@ -105,9 +105,9 @@ DEFAULT_AI_FUNCTIONS = [
 
 DEFAULT_AI_MODELS = [
     # Gemini
-    {"id": "gemini-2.5-flash", "provider_id": "gemini", "model_name": "Gemini 2.5 Flash", "capabilities": json.dumps(["STT", "LLM", "TRANSLATION"]), "is_default": True},
+    {"id": "gemini-1.5-flash", "provider_id": "gemini", "model_name": "Gemini 1.5 Flash", "capabilities": json.dumps(["STT", "LLM", "TRANSLATION"]), "is_default": True},
     {"id": "gemini-1.5-pro", "provider_id": "gemini", "model_name": "Gemini 1.5 Pro", "capabilities": json.dumps(["LLM", "TRANSLATION"]), "is_default": False},
-    {"id": "gemini-1.5-flash", "provider_id": "gemini", "model_name": "Gemini 1.5 Flash", "capabilities": json.dumps(["STT", "LLM", "TRANSLATION"]), "is_default": False},
+    {"id": "gemini-2.0-flash", "provider_id": "gemini", "model_name": "Gemini 2.0 Flash", "capabilities": json.dumps(["STT", "LLM", "TRANSLATION"]), "is_default": False},
     # OpenAI
     {"id": "gpt-4o", "provider_id": "openai", "model_name": "GPT-4o", "capabilities": json.dumps(["LLM", "TRANSLATION"]), "is_default": True},
     {"id": "gpt-4o-mini", "provider_id": "openai", "model_name": "GPT-4o Mini", "capabilities": json.dumps(["LLM", "TRANSLATION"]), "is_default": False},
@@ -131,13 +131,13 @@ class SettingsService:
 
     @staticmethod
     async def ensure_defaults_seeded(db: AsyncSession) -> None:
-        """Seed default system settings, AI functions, and AI models if DB is empty."""
+        """Seed default system settings, AI functions, and AI models ONLY if DB is empty."""
         try:
-            # Check if DB is already seeded using a single fast query
-            stmt_check = select(SystemSetting.key).limit(1)
+            # Check if AI models catalog is already initialized
+            stmt_check = select(AIModel.id).limit(1)
             res_check = await db.execute(stmt_check)
             if res_check.scalar_one_or_none():
-                return
+                return  # Database already initialized — respect user modifications and deletions!
 
             # Seed system settings
             for key, val in DEFAULT_SYSTEM_SETTINGS.items():
@@ -162,7 +162,7 @@ class SettingsService:
                     db.add(AIModel(**m))
 
             await db.commit()
-            logger.info("Settings defaults successfully seeded")
+            logger.info("Settings defaults successfully seeded on initial setup")
         except Exception as e:
             await db.rollback()
             logger.error("Failed seeding settings defaults", error=str(e))
@@ -343,7 +343,21 @@ class SettingsService:
             raise ValueError(f"Model ID '{m_id}' already exists")
 
         caps = model_data.get("capabilities", ["LLM"])
-        caps_str = json.dumps(caps) if isinstance(caps, list) else caps
+        if isinstance(caps, str):
+            try:
+                caps = json.loads(caps)
+            except Exception:
+                caps = [caps]
+        if not isinstance(caps, list):
+            caps = [str(caps)]
+
+        # Automatically include STT and TRANSLATION for Gemini and OpenAI multimodal LLMs
+        if model_data.get("provider_id") in ("gemini", "openai"):
+            for required_cap in ("STT", "LLM", "TRANSLATION"):
+                if required_cap not in caps:
+                    caps.append(required_cap)
+
+        caps_str = json.dumps(caps)
 
         new_m = AIModel(
             id=m_id,
@@ -410,15 +424,50 @@ class SettingsService:
 
     @staticmethod
     async def delete_model(db: AsyncSession, model_id: str) -> bool:
-        """Delete an AI model definition by ID."""
+        """Delete an AI model definition by ID and reassign or clear function config references."""
         stmt = select(AIModel).where(AIModel.id == model_id)
         res = await db.execute(stmt)
         m = res.scalar_one_or_none()
-        if m:
-            await db.delete(m)
-            await db.commit()
-            return True
-        return False
+        if not m:
+            return False
+
+        # Find any AI function config referencing this model
+        stmt_fn = select(AIFunctionConfig).where(AIFunctionConfig.model_id == model_id)
+        res_fn = await db.execute(stmt_fn)
+        affected_configs = res_fn.scalars().all()
+
+        if affected_configs:
+            # Query all remaining enabled models
+            stmt_all = select(AIModel).where(AIModel.id != model_id, AIModel.enabled == True)
+            res_all = await db.execute(stmt_all)
+            remaining_models = res_all.scalars().all()
+
+            for fn in affected_configs:
+                target_cap = fn.capability
+                # Find an alternate model matching fn capability
+                alt_model = None
+                for rm in remaining_models:
+                    caps = []
+                    try:
+                        caps = json.loads(rm.capabilities) if rm.capabilities else []
+                    except Exception:
+                        caps = [rm.capabilities]
+                    if target_cap in caps or ("LLM" in caps and target_cap in ("TRANSLATION", "STT")):
+                        alt_model = rm
+                        break
+
+                if alt_model:
+                    fn.model_id = alt_model.id
+                    fn.primary_provider_id = alt_model.provider_id
+                else:
+                    raise ValueError(
+                        f"Không thể xóa model '{model_id}' vì nó đang được sử dụng làm model duy nhất cho chức năng '{fn.function_name}'. "
+                        f"Vui lòng cấu hình model khác cho chức năng này trước khi xóa."
+                    )
+
+        await db.delete(m)
+        await db.commit()
+        return True
 
 
     # ── Social Accounts Manager ───────────────────────────────────────

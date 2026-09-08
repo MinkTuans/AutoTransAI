@@ -1,8 +1,13 @@
 """
-Google Gemini LLM Provider implementation
+Google Gemini LLM Provider implementation.
+
+Model selection is handled by AIModelResolver — this provider accepts
+an explicit model parameter and uses it directly without modification.
 """
 
 from __future__ import annotations
+
+from typing import Optional
 
 import httpx
 
@@ -17,29 +22,20 @@ from app.providers.base import (
 logger = get_logger(__name__)
 settings = get_settings()
 
-GEMINI_MODEL_CANDIDATES = [
-    "gemini-2.5-flash",
-    "gemini-1.5-pro",
-    "gemini-1.5-flash",
-]
 
-
-def normalize_gemini_model_name(model_name: str) -> str:
+def strip_gemini_model_prefix(model_name: Optional[str]) -> str:
     """
-    Normalize Gemini model string.
-    Strips leading 'models/' prefix or handles alias names, returning pure model ID.
+    Strip 'models/' prefix from Gemini model name.
+    ONLY removes prefix — does NOT modify the actual model identifier.
+
     Example: 'models/gemini-2.5-flash' -> 'gemini-2.5-flash'
     """
     if not model_name:
-        return "gemini-2.5-flash"
+        return ""
     m = str(model_name).strip()
     if m.startswith("models/"):
         m = m[len("models/"):]
-    if m == "gemini-2.0-flash":
-        return "gemini-2.5-flash"
     return m
-
-
 
 
 class GeminiLLMProvider(LLMProvider):
@@ -73,9 +69,37 @@ class GeminiLLMProvider(LLMProvider):
             logger.warning("Gemini validation failed", error=str(e))
             return False
 
-    async def generate_text(self, prompt: str, system_prompt: str = "") -> str:
+    async def generate_text(self, prompt: str, system_prompt: str = "", model: Optional[str] = None) -> str:
+        """
+        Generate text using Gemini API.
+
+        Args:
+            prompt: The user prompt text.
+            system_prompt: Optional system prompt.
+            model: Model ID from AIModelResolver. If not provided, uses the first available model.
+        """
+        from app.core.pipeline_errors import classify_http_error, PipelineError
+
         if not settings.GEMINI_API_KEY:
             raise ValueError("GEMINI_API_KEY not set in .env")
+
+        # Use explicitly provided model or attempt fallback resolution via AIModelResolver
+        if not model:
+            from app.services.model_resolver import AIModelResolver
+            try:
+                res_info = await AIModelResolver.resolve_model(capability="TRANSLATION", stage="LLM")
+                model = res_info.model_id
+            except Exception as res_err:
+                logger.warning(f"Fallback resolution for Gemini LLM model failed: {res_err}")
+
+        if not model:
+            raise PipelineError(
+                code="AI_CONFIGURATION_ERROR",
+                stage="LLM",
+                message="Không có model nào được chỉ định cho Gemini LLM. Vui lòng cấu hình model trong Settings.",
+            )
+
+        target_model = strip_gemini_model_prefix(model)
 
         full_text = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
         payload = {
@@ -91,56 +115,61 @@ class GeminiLLMProvider(LLMProvider):
             }
         }
 
-        last_error = None
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            for model in GEMINI_MODEL_CANDIDATES:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={settings.GEMINI_API_KEY}"
-                try:
-                    res = await client.post(url, json=payload)
-                    if res.status_code == 200:
-                        data = res.json()
-                        candidates = data.get("candidates", [])
-                        if candidates:
-                            cand = candidates[0]
-                            finish_reason = cand.get("finishReason") or cand.get("finish_reason")
-                            parts = cand.get("content", {}).get("parts", [])
-                            if parts:
-                                text_content = parts[0].get("text", "").strip()
-                                if finish_reason == "MAX_TOKENS":
-                                    logger.warning(f"Gemini model '{model}' output truncated (finishReason=MAX_TOKENS).")
-                                    # If JSON response is obviously truncated, raise error to trigger sub-batching/retry
-                                    if not (text_content.endswith("]") or text_content.endswith("}")):
-                                        raise RuntimeError(f"Gemini API output truncated due to MAX_TOKENS limit on model '{model}'.")
-                                return text_content
-                    elif res.status_code in (400, 404, 503, 429):
-                        # Retry without responseMimeType if 400 bad request occurs (for legacy compatibility)
-                        if res.status_code == 400 and "responseMimeType" in payload.get("generationConfig", {}):
-                            payload_fallback = dict(payload)
-                            payload_fallback["generationConfig"] = {
-                                "temperature": 0.2,
-                                "maxOutputTokens": 8192,
-                            }
-                            fb_res = await client.post(url, json=payload_fallback)
-                            if fb_res.status_code == 200:
-                                fb_data = fb_res.json()
-                                candidates = fb_data.get("candidates", [])
-                                if candidates:
-                                    parts = candidates[0].get("content", {}).get("parts", [])
-                                    if parts:
-                                        return parts[0].get("text", "").strip()
-                        logger.warning(f"Gemini model '{model}' returned HTTP {res.status_code}. Trying next fallback model...")
-                        last_error = f"HTTP {res.status_code}: {res.text[:150]}"
-                        continue
-                    else:
-                        raise RuntimeError(f"Gemini API error HTTP {res.status_code}: {res.text[:200]}")
-                except RuntimeError:
-                    raise
-                except (httpx.TimeoutException, httpx.RequestError) as req_err:
-                    logger.warning(f"Gemini request error on '{model}': {str(req_err)}")
-                    last_error = str(req_err)
-                    continue
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={settings.GEMINI_API_KEY}"
 
-        raise RuntimeError(f"Tất cả các model Gemini API đều không khả thi hoặc gặp lỗi: {last_error or 'Unknown error'}")
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            try:
+                res = await client.post(url, json=payload)
+                if res.status_code == 200:
+                    data = res.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        cand = candidates[0]
+                        finish_reason = cand.get("finishReason") or cand.get("finish_reason")
+                        parts = cand.get("content", {}).get("parts", [])
+                        if parts:
+                            text_content = parts[0].get("text", "").strip()
+                            if finish_reason == "MAX_TOKENS":
+                                logger.warning(f"Gemini model '{target_model}' output truncated (finishReason=MAX_TOKENS).")
+                                # If JSON response is obviously truncated, raise error to trigger sub-batching/retry
+                                if not (text_content.endswith("]") or text_content.endswith("}")):
+                                    raise RuntimeError(f"Gemini API output truncated due to MAX_TOKENS limit on model '{target_model}'.")
+                            return text_content
+
+                elif res.status_code == 400 and "responseMimeType" in payload.get("generationConfig", {}):
+                    # Retry without responseMimeType for legacy compatibility
+                    payload_fallback = dict(payload)
+                    payload_fallback["generationConfig"] = {
+                        "temperature": 0.2,
+                        "maxOutputTokens": 8192,
+                    }
+                    fb_res = await client.post(url, json=payload_fallback)
+                    if fb_res.status_code == 200:
+                        fb_data = fb_res.json()
+                        candidates = fb_data.get("candidates", [])
+                        if candidates:
+                            parts = candidates[0].get("content", {}).get("parts", [])
+                            if parts:
+                                return parts[0].get("text", "").strip()
+
+                # Non-200 error — classify into structured error
+                raise classify_http_error(
+                    status_code=res.status_code,
+                    response_text=res.text[:500],
+                    provider="gemini",
+                    model=target_model,
+                    stage="LLM",
+                )
+
+            except PipelineError:
+                raise
+            except RuntimeError:
+                raise
+            except (httpx.TimeoutException, httpx.RequestError) as req_err:
+                from app.core.pipeline_errors import classify_exception
+                raise classify_exception(req_err, provider="gemini", model=target_model, stage="LLM")
+
+        raise RuntimeError(f"Gemini API trả về kết quả rỗng cho model '{target_model}'.")
 
     async def estimate_usage(self, input_text: str) -> list[UsageEstimate]:
         return [

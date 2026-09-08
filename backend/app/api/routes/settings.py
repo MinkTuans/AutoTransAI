@@ -115,10 +115,13 @@ async def delete_model(
     model_id: str, db: AsyncSession = Depends(get_db)
 ):
     """Delete an AI model from catalog."""
-    success = await SettingsService.delete_model(db, model_id)
-    if not success:
-        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
-    return {"success": True, "message": f"Model '{model_id}' deleted successfully"}
+    try:
+        success = await SettingsService.delete_model(db, model_id)
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+        return {"success": True, "message": f"Model '{model_id}' deleted successfully"}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
 
 
 

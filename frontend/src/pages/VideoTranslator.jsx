@@ -5,7 +5,6 @@ import AIQCScorecard from '../components/AIQCScorecard';
 import YouTubePublisherModal from '../components/YouTubePublisherModal';
 import WorkflowTimeline from '../components/WorkflowTimeline';
 import ProjectGlossaryManager from '../components/ProjectGlossaryManager';
-import AIThumbnailPanel from '../components/AIThumbnailPanel';
 import { LoadingSpinner, ButtonSpinner, LoadingOverlay } from '../components/LoadingSpinner';
 
 function CollapsibleCard({ title, icon, defaultOpen = true, children, extraHeaderRight }) {
@@ -43,7 +42,7 @@ function CollapsibleCard({ title, icon, defaultOpen = true, children, extraHeade
 }
 
 
-export default function VideoTranslator({ initialJobId, initialProjectId }) {
+export default function VideoTranslator({ initialJobId, initialProjectId, onProcessingStateChange }) {
   const [showYouTubeModal, setShowYouTubeModal] = useState(false);
   const [inputMode, setInputMode] = useState('url');
   const [videoUrl, setVideoUrl] = useState('');
@@ -59,7 +58,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId }) {
   const [targetLanguage, setTargetLanguage] = useState('vi');
   const [audioProviderId, setAudioProviderId] = useState('edge_tts');
   const [llmProviderId, setLlmProviderId] = useState('gemini');
-  const [sttModel, setSttModel] = useState('gemini-2.5-flash');
+  const [sttModel, setSttModel] = useState('gemini-2.0-flash');
   const [voices, setVoices] = useState([]);
   const [voiceId, setVoiceId] = useState('vi-VN-HoaiMyNeural');
   const [originalAudioMode, setOriginalAudioMode] = useState('mute');
@@ -147,10 +146,25 @@ export default function VideoTranslator({ initialJobId, initialProjectId }) {
     try {
       const res = await videoTranslatorApi.uploadWatermarkLogo(file, selectedProjectId);
       if (res.success && res.data) {
-        setWatermarkImagePath(res.data.image_path);
+        const imgPath = res.data.image_path;
+        setWatermarkImagePath(imgPath);
         if (res.data.asset_id) setWatermarkImageAssetId(res.data.asset_id);
         const urlStr = res.data.url || URL.createObjectURL(file);
         setWatermarkImagePreview(urlStr);
+
+        // Immediately persist to Project Settings DB if a project is selected
+        if (selectedProjectId && selectedProjectId !== 'default_project') {
+          const currentConfig = getCurrentSettingsObject();
+          currentConfig.watermark_image_path = imgPath;
+          currentConfig.watermark_enabled = true;
+          currentConfig.watermark_type = 'image';
+          projectsApi.saveSettings(selectedProjectId, currentConfig).then(saveRes => {
+            if (saveRes.success && saveRes.data) {
+              setSavedProjectSettings(saveRes.data);
+              setIsSettingsDirty(false);
+            }
+          }).catch(() => { });
+        }
       }
     } catch (err) {
       setWatermarkValidationError('Lỗi upload logo: ' + (err.response?.data?.detail || err.message));
@@ -171,6 +185,29 @@ export default function VideoTranslator({ initialJobId, initialProjectId }) {
   const [workflowStatusData, setWorkflowStatusData] = useState(null);
   const [loadingWorkflowAction, setLoadingWorkflowAction] = useState(null);
 
+  // Handle browser tab close/refresh guard & notify parent App of running pipeline
+  useEffect(() => {
+    const isRunning = isProcessing || (workflowStatusData && ['running', 'processing'].includes(workflowStatusData.status));
+
+    if (onProcessingStateChange) {
+      onProcessingStateChange(Boolean(isRunning));
+    }
+
+    if (!isRunning) return;
+
+    const handleBeforeUnload = (e) => {
+      e.preventDefault();
+      const msg = '⚠️ Tiến trình dịch video đang chạy! Nếu bạn đóng hoặc tải lại trang, quá trình theo dõi real-time có thể bị ngắt quãng. Bạn có chắc chắn muốn rời đi?';
+      e.returnValue = msg;
+      return msg;
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [isProcessing, workflowStatusData?.status, onProcessingStateChange]);
+
   const activeProjectId = selectedProjectId || job?.project_id || asset?.project_id || (job?.id && job.id !== 'default_project' ? job.id : null);
 
   // Load Projects List
@@ -189,17 +226,17 @@ export default function VideoTranslator({ initialJobId, initialProjectId }) {
     fetchProjectsList();
   }, []);
 
-const parseBool = (val, defaultVal = false) => {
-  if (val === null || val === undefined) return defaultVal;
-  if (typeof val === 'boolean') return val;
-  if (typeof val === 'number') return val !== 0;
-  if (typeof val === 'string') {
-    const clean = val.trim().toLowerCase();
-    if (clean === 'true' || clean === '1' || clean === 'yes' || clean === 'on') return true;
-    if (clean === 'false' || clean === '0' || clean === 'no' || clean === 'off') return false;
-  }
-  return Boolean(val);
-};
+  const parseBool = (val, defaultVal = false) => {
+    if (val === null || val === undefined) return defaultVal;
+    if (typeof val === 'boolean') return val;
+    if (typeof val === 'number') return val !== 0;
+    if (typeof val === 'string') {
+      const clean = val.trim().toLowerCase();
+      if (clean === 'true' || clean === '1' || clean === 'yes' || clean === 'on') return true;
+      if (clean === 'false' || clean === '0' || clean === 'no' || clean === 'off') return false;
+    }
+    return Boolean(val);
+  };
 
   const hydrateSettings = (cfg) => {
     setSavedProjectSettings(cfg);
@@ -213,7 +250,7 @@ const parseBool = (val, defaultVal = false) => {
     if (cfg.voice_id) setVoiceId(cfg.voice_id);
     if (cfg.original_audio_mode) setOriginalAudioMode(cfg.original_audio_mode);
     if (cfg.original_audio_volume !== undefined) setOriginalAudioVolume(cfg.original_audio_volume);
-    
+
     setWatermarkEnabled(parseBool(cfg.watermark_enabled, false));
     setWatermarkType(cfg.watermark_type || 'image');
     setWatermarkImagePath(cfg.watermark_image_path || '');
@@ -269,7 +306,7 @@ const parseBool = (val, defaultVal = false) => {
       'watermark_font_size', 'thumbnail_enabled', 'thumbnail_provider', 'thumbnail_model',
       'thumbnail_style', 'thumbnail_custom_instruction'
     ];
-    
+
     let isDifferent = false;
     for (const key of compareKeys) {
       const curVal = current[key];
@@ -552,32 +589,90 @@ const parseBool = (val, defaultVal = false) => {
       setLoadingWorkflowAction(null);
     }
   };
+  const handleCancelJob = handleCancelWorkflow;
 
   const handleRetryStage = async (stageName) => {
     if (!validateProjectBeforeAction()) return;
     setLoadingWorkflowAction('retry');
+    setIsProcessing(true);
+    setPipelineError(null);
+
     try {
-      await videoTranslatorApi.retryStage(activeProjectId, stageName);
-      await fetchWorkflowStatus(activeProjectId);
+      if (activeJobId) {
+        await videoTranslatorApi.retryJob(activeJobId);
+      } else if (activeProjectId && activeProjectId !== 'default_project') {
+        await videoTranslatorApi.retryStage(activeProjectId, stageName);
+        await fetchWorkflowStatus(activeProjectId);
+      }
+
+      if (activeJobId) {
+        const res = await videoTranslatorApi.getJob(activeJobId);
+        if (res && res.success && res.data) {
+          setJob({ ...res.data, id: res.data.id || res.data.job_id });
+        }
+      }
     } catch (err) {
-      alert(`Không thể thử lại stage ${stageName}: ` + formatApiError(err, 'Lỗi hệ thống'));
+      setPipelineError(`Không thể thử lại stage ${stageName}: ` + formatApiError(err, 'Lỗi hệ thống'));
+      setIsProcessing(false);
     } finally {
       setLoadingWorkflowAction(null);
     }
   };
 
-  // Initial Job ID effect
+  const autoSaveTimerRef = useRef(null);
+
+  // Initial Job ID & Studio State effect
   useEffect(() => {
     if (initialJobId) {
-      videoTranslatorApi.getJob(initialJobId).then(res => {
+      videoTranslatorApi.getStudioState(initialJobId).then(res => {
         if (res.success && res.data) {
-          setJob(res.data);
-          if (res.data.segments) setSegments(res.data.segments);
-          fetchWorkflowStatus(res.data.project_id || res.data.id);
+          const { job: loadedJob, asset: loadedAsset, settings_snapshot, studio_state, segments: loadedSegs } = res.data;
+          setJob({ ...loadedJob, asset: loadedAsset || loadedJob?.asset });
+          if (loadedSegs) setSegments(loadedSegs);
+          if (settings_snapshot) {
+            if (settings_snapshot.language?.source_language) setSourceLanguage(settings_snapshot.language.source_language);
+            if (settings_snapshot.language?.target_language) setTargetLanguage(settings_snapshot.language.target_language);
+            if (settings_snapshot.tts?.provider) setAudioProviderId(settings_snapshot.tts.provider);
+            if (settings_snapshot.tts?.voice_id) setVoiceId(settings_snapshot.tts.voice_id);
+            if (settings_snapshot.stt?.provider) setLlmProviderId(settings_snapshot.stt.provider);
+            if (settings_snapshot.stt?.model) setSttModel(settings_snapshot.stt.model);
+            if (settings_snapshot.audio_mix?.original_audio_mode) setOriginalAudioMode(settings_snapshot.audio_mix.original_audio_mode);
+            if (settings_snapshot.watermark) {
+              setWatermarkEnabled(settings_snapshot.watermark.enabled ?? false);
+              setWatermarkType(settings_snapshot.watermark.type || 'image');
+              setWatermarkImagePath(settings_snapshot.watermark.image_path || '');
+              setWatermarkText(settings_snapshot.watermark.text || '');
+              setWatermarkPosition(settings_snapshot.watermark.position || 'bottom_right');
+              setWatermarkScale(settings_snapshot.watermark.scale ?? 0.20);
+              setWatermarkOpacity(settings_snapshot.watermark.opacity ?? 0.80);
+              setWatermarkMargin(settings_snapshot.watermark.margin ?? 20);
+              setWatermarkFontSize(settings_snapshot.watermark.font_size ?? 32);
+            }
+          }
+          fetchWorkflowStatus(loadedJob.project_id || loadedJob.id);
         }
-      }).catch(err => console.error('Failed to load initial job:', err));
+      }).catch(err => console.error('Failed to load initial studio state:', err));
     }
   }, [initialJobId]);
+
+  // Debounced Autosave for edited transcript segments
+  useEffect(() => {
+    if (!job?.id || !segments || segments.length === 0) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+
+    autoSaveTimerRef.current = setTimeout(async () => {
+      try {
+        const updateItems = segments.map(s => ({ id: s.id, translated_text: s.translated_text }));
+        await videoTranslatorApi.updateSegments(job.id, updateItems);
+      } catch (e) {
+        console.error('Autosave segments failed:', e);
+      }
+    }, 800);
+
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [segments, job?.id]);
 
 
   // Log Modal state
@@ -863,65 +958,36 @@ const parseBool = (val, defaultVal = false) => {
     }
   };
 
-  const handleCancelJob = async () => {
-    if (!activeJobId) return;
-    try {
-      await videoTranslatorApi.cancelJob(activeJobId);
-      const res = await videoTranslatorApi.getJob(activeJobId);
-      if (res.success) {
-        const normalized = {
-          ...res.data,
-          id: res.data.id || res.data.job_id,
-        };
-        setJob(normalized);
-      }
-    } catch (err) {
-      alert('Không thể hủy job: ' + formatApiError(err, 'Lỗi hệ thống'));
-    }
-  };
-
   const handleRetryJob = async () => {
-    setIsProcessing(true);
     setPipelineError(null);
+    setLoadingWorkflowAction('retry');
+    setIsProcessing(true);
 
-    // If workflow execution is present for active project, delegate smart retry to stage retry from current/failed stage
-    if (activeProjectId && activeProjectId !== 'default_project' && workflowStatusData) {
-      const targetStage = workflowStatusData.current_stage || 'INGEST';
-      setLoadingWorkflowAction('retry');
-      try {
+    const targetStage = workflowStatusData?.current_stage || 'INGEST';
+
+    try {
+      if (activeJobId) {
+        await videoTranslatorApi.retryJob(activeJobId);
+      } else if (activeProjectId && activeProjectId !== 'default_project') {
         await videoTranslatorApi.retryStage(activeProjectId, targetStage);
         await fetchWorkflowStatus(activeProjectId);
-        if (activeJobId) {
-          const res = await videoTranslatorApi.getJob(activeJobId);
-          if (res.success && res.data) {
-            setJob({ ...res.data, id: res.data.id || res.data.job_id });
-          }
-        }
-        return;
-      } catch (err) {
-        setPipelineError(`Không thể Smart Retry workflow từ stage ${targetStage}: ` + formatApiError(err, 'Lỗi hệ thống'));
-      } finally {
-        setLoadingWorkflowAction(null);
-        setIsProcessing(false);
       }
-      return;
-    }
 
-    if (!activeJobId) return;
-    try {
-      await videoTranslatorApi.retryJob(activeJobId);
-      const res = await videoTranslatorApi.getJob(activeJobId);
-      if (res.success && res.data) {
-        const normalized = {
-          ...res.data,
-          id: res.data.id || res.data.job_id,
-        };
-        setJob(normalized);
+      if (activeJobId) {
+        const res = await videoTranslatorApi.getJob(activeJobId);
+        if (res && res.success && res.data) {
+          const normalized = {
+            ...res.data,
+            id: res.data.id || res.data.job_id,
+          };
+          setJob(normalized);
+        }
       }
     } catch (err) {
       setPipelineError('Không thể thử lại job: ' + formatApiError(err, 'Lỗi hệ thống'));
-    } finally {
       setIsProcessing(false);
+    } finally {
+      setLoadingWorkflowAction(null);
     }
   };
 
@@ -1005,13 +1071,13 @@ const parseBool = (val, defaultVal = false) => {
       </p>
 
       {/* Project Selector Bar */}
-      <div style={{ background: '#1e1b4b', border: '1px solid #4338ca', borderRadius: '12px', padding: '16px 24px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span style={{ fontSize: '15px', fontWeight: 'bold', color: '#fff' }}>📁 Dự án hiện tại:</span>
+      <div style={{ background: '#1e1b4b', border: '1px solid #4338ca', borderRadius: '12px', padding: '8px 20px', marginBottom: '24px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: '280px' }}>
+          <span style={{ fontSize: '15px', fontWeight: 'bold', color: '#fff', whiteSpace: 'nowrap' }}>Dự án hiện tại:</span>
           <select
             value={selectedProjectId || ''}
             onChange={(e) => handleProjectSelectAttempt(e.target.value || null)}
-            style={{ minWidth: '280px', padding: '10px 14px', borderRadius: '8px', background: '#0f1117', color: '#fff', border: '1px solid #4338ca', fontSize: '14px', fontWeight: '500' }}
+            style={{ flex: 1, width: '100%', minWidth: '200px', padding: '10px 14px', borderRadius: '8px', background: '#0f1117', color: '#fff', border: '1px solid #4338ca', fontSize: '14px', fontWeight: '500' }}
           >
             <option value="">-- Chưa chọn dự án (Bấm để chọn) --</option>
             {projectsList.map((p) => (
@@ -1023,7 +1089,7 @@ const parseBool = (val, defaultVal = false) => {
         </div>
         <button
           onClick={() => setShowCreateProjectModal(true)}
-          style={{ background: '#4f46e5', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px' }}
+          style={{ background: '#4f46e5', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', whiteSpace: 'nowrap' }}
         >
           ➕ Tạo dự án mới
         </button>
@@ -1100,14 +1166,14 @@ const parseBool = (val, defaultVal = false) => {
           status: job?.status === 'running' || ['extracting_audio', 'stt', 'translating', 'generating_tts', 'syncing_audio', 'rendering'].includes(job?.status)
             ? 'running'
             : job?.status === 'paused'
-            ? 'paused'
-            : job?.status === 'failed'
-            ? 'failed'
-            : job?.status === 'completed'
-            ? 'completed'
-            : job?.status === 'cancelled'
-            ? 'cancelled'
-            : (job?.status || 'not_started'),
+              ? 'paused'
+              : job?.status === 'failed'
+                ? 'failed'
+                : job?.status === 'completed'
+                  ? 'completed'
+                  : job?.status === 'cancelled'
+                    ? 'cancelled'
+                    : (job?.status || 'not_started'),
           current_stage: job?.stage || 'INGEST',
           current_step: job?.current_step || 'Ready',
           overall_progress_pct: job?.overall_progress_pct || 0,
@@ -1144,9 +1210,29 @@ const parseBool = (val, defaultVal = false) => {
               </button>
               <button
                 onClick={handleRetryJob}
-                style={{ padding: '6px 12px', borderRadius: '6px', background: '#d97706', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
+                disabled={loadingWorkflowAction === 'retry'}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  background: loadingWorkflowAction === 'retry' ? '#78350f' : '#d97706',
+                  color: '#fff',
+                  border: 'none',
+                  cursor: loadingWorkflowAction === 'retry' ? 'not-allowed' : 'pointer',
+                  fontWeight: '600',
+                  fontSize: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
               >
-                🔄 Smart Retry
+                {loadingWorkflowAction === 'retry' ? (
+                  <>
+                    <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                    Đang Thử Lại...
+                  </>
+                ) : (
+                  <>🔄 Smart Retry</>
+                )}
               </button>
             </div>
           </div>
@@ -1201,18 +1287,29 @@ const parseBool = (val, defaultVal = false) => {
               {(job.status === 'failed' || job.status === 'stalled') && (
                 <button
                   onClick={handleRetryJob}
+                  disabled={loadingWorkflowAction === 'retry'}
                   style={{
                     padding: '6px 14px',
                     borderRadius: '6px',
-                    background: '#d97706',
+                    background: loadingWorkflowAction === 'retry' ? '#78350f' : '#d97706',
                     color: '#fff',
                     border: 'none',
-                    cursor: 'pointer',
+                    cursor: loadingWorkflowAction === 'retry' ? 'not-allowed' : 'pointer',
                     fontWeight: '600',
                     fontSize: '13px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
                   }}
                 >
-                  🔄 Smart Retry
+                  {loadingWorkflowAction === 'retry' ? (
+                    <>
+                      <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                      Đang Thử Lại...
+                    </>
+                  ) : (
+                    <>🔄 Smart Retry</>
+                  )}
                 </button>
               )}
             </div>
@@ -1513,7 +1610,7 @@ const parseBool = (val, defaultVal = false) => {
             </label>
           </div>
 
-          {watermarkEnabled && (
+          {watermarkEnabled ? (
             <div style={{ background: '#0f172a', borderRadius: '8px', padding: '16px', border: '1px solid #334155' }}>
               <div style={{ display: 'flex', gap: '16px', marginBottom: '16px' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: '#cbd5e1', fontSize: '13px' }}>
@@ -1643,6 +1740,107 @@ const parseBool = (val, defaultVal = false) => {
                 </div>
               )}
             </div>
+          ) : (
+            <div style={{ fontSize: '13px', color: '#94a3b8', fontStyle: 'italic', padding: '12px', background: '#0f172a', borderRadius: '6px', border: '1px solid #334155' }}>
+              🚫 Watermark hiện đang TẮT. Đánh dấu vào ô <strong>"Bật Watermark"</strong> ở trên để mở tùy chỉnh logo hoặc văn bản watermark.
+            </div>
+          )}
+        </div>
+
+        {/* AI Auto Thumbnail Branding Section */}
+        <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid #334155' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+            <span style={{ fontSize: '15px', fontWeight: 'bold', color: '#818cf8', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              🖼️ Tự Động Tạo Thumbnail AI
+            </span>
+            <button
+              type="button"
+              onClick={() => setThumbnailEnabled(!thumbnailEnabled)}
+              style={{
+                width: '46px',
+                height: '24px',
+                borderRadius: '12px',
+                background: thumbnailEnabled ? '#6366f1' : '#475569',
+                border: 'none',
+                position: 'relative',
+                cursor: 'pointer',
+                transition: 'background 0.2s ease',
+                padding: '2px',
+              }}
+            >
+              <div
+                style={{
+                  width: '20px',
+                  height: '20px',
+                  borderRadius: '50%',
+                  background: '#fff',
+                  transform: thumbnailEnabled ? 'translateX(22px)' : 'translateX(0px)',
+                  transition: 'transform 0.2s ease',
+                }}
+              />
+            </button>
+          </div>
+
+          {thumbnailEnabled ? (
+            <div style={{ background: '#0f172a', borderRadius: '8px', padding: '16px', border: '1px solid #334155' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div>
+                  <label className="form-label text-light small fw-bold" style={{ display: 'block', marginBottom: '6px' }}>
+                    🎭 Phong Cách Thumbnail (Style):
+                  </label>
+                  <select
+                    className="form-select form-select-sm bg-dark text-light border-secondary"
+                    value={thumbnailStyle}
+                    onChange={(e) => setThumbnailStyle(e.target.value)}
+                  >
+                    <option value="auto">🤖 Tự động (Phân tích cảm xúc kịch bản)</option>
+                    <option value="cinematic">🎬 Cinematic (Điện ảnh kịch tính)</option>
+                    <option value="youtube_viral">🚀 YouTube Viral (Bắt mắt, biểu cảm mạnh)</option>
+                    <option value="horror">👻 Horror (U tối, bí ẩn, kinh dị)</option>
+                    <option value="anime">🌸 Anime Nhật Bản (Nhiều màu sắc)</option>
+                    <option value="realistic">📸 Realistic (Ảnh chụp 8K chân thực)</option>
+                    <option value="cartoon">🎨 Cartoon 3D (Hoạt hình 3D)</option>
+                    <option value="documentary">📜 Documentary (Phim tài liệu)</option>
+                    <option value="minimal">📐 Minimal (Tối giản, tương phản)</option>
+                    <option value="movie_poster">🍿 Poster Phim Hollywood</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="form-label text-light small fw-bold" style={{ display: 'block', marginBottom: '6px' }}>
+                    ⚙️ AI Image Provider:
+                  </label>
+                  <select
+                    className="form-select form-select-sm bg-dark text-light border-secondary"
+                    value={thumbnailProvider}
+                    onChange={(e) => setThumbnailProvider(e.target.value)}
+                  >
+                    <option value="pollinations">⚡ Pollinations AI (Miễn phí & Nhanh)</option>
+                    <option value="fal">🎨 fal.ai FLUX (Chất lượng cao)</option>
+                    <option value="openai">🤖 OpenAI DALL-E 3</option>
+                    <option value="local_image">🖼️ Local Scenery (Offline)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="form-label text-light small fw-bold" style={{ display: 'block', marginBottom: '6px' }}>
+                    💬 Yêu Cầu Bổ Sung (Custom Instruction):
+                  </label>
+                  <textarea
+                    className="form-textarea form-control form-control-sm bg-dark text-light border-secondary"
+                    rows="3"
+                    placeholder="Ví dụ: Tập trung vào nhân vật chính, tông màu xanh u tối, tương phản cao, góc quay rộng..."
+                    value={thumbnailInstruction}
+                    onChange={(e) => setThumbnailInstruction(e.target.value)}
+                    style={{ resize: 'vertical' }}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ fontSize: '13px', color: '#94a3b8', fontStyle: 'italic', padding: '12px', background: '#0f172a', borderRadius: '6px', border: '1px solid #334155' }}>
+              🖼️ Tạo Thumbnail AI tự động hiện đang TẮT. Gạt thanh trượt đóng mở ở trên để kích hoạt.
+            </div>
           )}
         </div>
 
@@ -1673,15 +1871,6 @@ const parseBool = (val, defaultVal = false) => {
       {/* Collapsible Card: Project Glossary Manager */}
       <CollapsibleCard title="📖 Quản Lý Thuật Ngữ Dự Án (Glossary & Terminology Memory)" icon="📖" defaultOpen={false}>
         <ProjectGlossaryManager projectId={activeProjectId} />
-      </CollapsibleCard>
-
-      {/* Collapsible Card: AI Auto Thumbnail Panel */}
-      <CollapsibleCard title="🖼️ Tạo Thumbnail AI Tự Động" icon="🖼️" defaultOpen={false}>
-        <AIThumbnailPanel
-          jobId={job?.id || job?.job_id}
-          assetId={job?.asset_id}
-          initialThumbnailUrl={job?.thumbnail_url}
-        />
       </CollapsibleCard>
 
       {/* Segment Editor when phase 1 completes */}

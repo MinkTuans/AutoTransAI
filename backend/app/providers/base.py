@@ -218,7 +218,7 @@ class LLMProvider(ABC):
         ...
 
     @abstractmethod
-    async def generate_text(self, prompt: str, system_prompt: str = "") -> str:
+    async def generate_text(self, prompt: str, system_prompt: str = "", model: Optional[str] = None, **kwargs: Any) -> str:
         ...
 
     @abstractmethod

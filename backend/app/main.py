@@ -25,9 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import get_settings
 from app.core import setup_logging, get_logger
 from app.database import init_db
-from app.api.routes import projects, providers, system, video_translator
 from app.providers.registry import get_registry
-from app.providers.audio.edge_tts_provider import EdgeTTSProvider
 
 settings = get_settings()
 

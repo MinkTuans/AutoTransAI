@@ -1,12 +1,20 @@
 import React from 'react';
 import appLogo from '../assets/app-logo.png';
 
-export default function Navbar({ activePage, setActivePage }) {
+export default function Navbar({ activePage, setActivePage, onNavigate }) {
+  const handleNavClick = (page) => {
+    if (onNavigate) {
+      onNavigate(page);
+    } else if (setActivePage) {
+      setActivePage(page);
+    }
+  };
+
   return (
     <nav className="navbar">
       <a
         href="#"
-        onClick={(e) => { e.preventDefault(); setActivePage('translator'); }}
+        onClick={(e) => { e.preventDefault(); handleNavClick('translator'); }}
         className="navbar-brand"
       >
         <img
@@ -20,28 +28,28 @@ export default function Navbar({ activePage, setActivePage }) {
         <button
           type="button"
           className={`nav-link ${activePage === 'translator' ? 'active' : ''}`}
-          onClick={() => setActivePage('translator')}
+          onClick={() => handleNavClick('translator')}
         >
           🌐 Dịch Video (Unified Workflow)
         </button>
         <button
           type="button"
           className={`nav-link ${activePage === 'dashboard' ? 'active' : ''}`}
-          onClick={() => setActivePage('dashboard')}
+          onClick={() => handleNavClick('dashboard')}
         >
           📁 Quản lý Dự án
         </button>
         <button
           type="button"
           className={`nav-link ${activePage === 'create' ? 'active' : ''}`}
-          onClick={() => setActivePage('create')}
+          onClick={() => handleNavClick('create')}
         >
           + Tạo dự án mới
         </button>
         <button
           type="button"
           className={`nav-link ${activePage === 'settings' ? 'active' : ''}`}
-          onClick={() => setActivePage('settings')}
+          onClick={() => handleNavClick('settings')}
         >
           ⚙️ Cài đặt
         </button>

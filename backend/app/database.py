@@ -29,13 +29,8 @@ def _ensure_db_directory() -> None:
 
 
 db_url = settings.DB_URL
-if db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
-elif db_url.startswith("postgresql://") and not db_url.startswith("postgresql+asyncpg://"):
-    db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 is_sqlite = db_url.startswith("sqlite")
-is_postgres = "postgresql" in db_url
 is_mysql = "mysql" in db_url
 
 if is_sqlite:
@@ -46,10 +41,6 @@ engine_kwargs = {"echo": settings.DEBUG}
 
 if is_sqlite:
     connect_args["check_same_thread"] = False
-elif is_postgres:
-    engine_kwargs["pool_pre_ping"] = True
-    connect_args["statement_cache_size"] = 0
-    connect_args["prepared_statement_cache_size"] = 0
 elif is_mysql:
     engine_kwargs["pool_pre_ping"] = True
     engine_kwargs["pool_recycle"] = 3600

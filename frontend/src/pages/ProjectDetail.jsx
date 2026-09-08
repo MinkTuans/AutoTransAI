@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { projectsApi, providersApi, videoTranslatorApi } from '../api';
 import { LoadingSpinner, ButtonSpinner, SkeletonLoader } from '../components/LoadingSpinner';
-import AIThumbnailPanel from '../components/AIThumbnailPanel';
 import ProjectGlossaryManager from '../components/ProjectGlossaryManager';
 
 const parseBool = (val, defaultVal = false) => {
@@ -31,6 +30,27 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
   const [savedSnapshot, setSavedSnapshot] = useState({});
   const [isTabDirty, setIsTabDirty] = useState(false);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+  const [deletingVideoId, setDeletingVideoId] = useState(null);
+
+  const handleDeleteVideo = async (targetVideoId) => {
+    if (!targetVideoId) return;
+    const confirmDelete = window.confirm(`Bạn có chắc chắn muốn xóa video này (ID: ${targetVideoId}) khỏi dự án?\nHành động này sẽ xóa vĩnh viễn dữ liệu và các file liên quan.`);
+    if (!confirmDelete) return;
+
+    setDeletingVideoId(targetVideoId);
+    try {
+      const res = await projectsApi.delete(targetVideoId);
+      if (res.success) {
+        await loadProjectData();
+      } else {
+        alert('Không thể xóa video: ' + (res.message || 'Lỗi không xác định'));
+      }
+    } catch (err) {
+      alert('Lỗi khi xóa video: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setDeletingVideoId(null);
+    }
+  };
 
   const pollIntervalRef = useRef(null);
 
@@ -226,7 +246,7 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
           {onEditInTranslator && (
             <button
-              onClick={() => onEditInTranslator(project.id)}
+              onClick={() => onEditInTranslator(project.id, videos.length > 0 ? (videos[0].id || videos[0].job_id) : null)}
               style={{
                 background: '#4f46e5',
                 color: '#fff',
@@ -399,25 +419,45 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
                           {formatDate(v.created_at)}
                         </td>
                         <td style={{ padding: '12px 10px' }}>
-                          {v.output_url ? (
-                            <a
-                              href={v.output_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="btn btn-secondary"
-                              style={{ padding: '4px 10px', fontSize: '12px' }}
-                            >
-                              📥 Xem Output
-                            </a>
-                          ) : (
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            {v.output_url && (
+                              <a
+                                href={v.output_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="btn btn-secondary"
+                                style={{ padding: '4px 10px', fontSize: '12px' }}
+                              >
+                                📥 Xem Output
+                              </a>
+                            )}
                             <button
-                              onClick={() => onEditInTranslator && onEditInTranslator(project.id)}
-                              className="btn btn-secondary"
+                              onClick={() => onEditInTranslator && onEditInTranslator(project.id, v.id || v.job_id)}
+                              className="btn btn-primary"
                               style={{ padding: '4px 10px', fontSize: '12px' }}
                             >
                               ⚙️ Mở Studio
                             </button>
-                          )}
+
+                            <button
+                              onClick={() => handleDeleteVideo(v.id || v.job_id)}
+                              disabled={deletingVideoId === (v.id || v.job_id)}
+                              title="Xóa Video này khỏi dự án"
+                              style={{
+                                padding: '4px 10px',
+                                fontSize: '12px',
+                                background: '#ef4444',
+                                color: '#ffffff',
+                                border: 'none',
+                                borderRadius: '6px',
+                                cursor: 'pointer',
+                                fontWeight: 'bold',
+                                opacity: deletingVideoId === (v.id || v.job_id) ? 0.6 : 1,
+                              }}
+                            >
+                              {deletingVideoId === (v.id || v.job_id) ? '...' : '🗑️ Xóa'}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -483,6 +523,11 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
                     <option value="ko">🇰🇷 Tiếng Hàn (Korean)</option>
                     <option value="zh">🇨🇳 Tiếng Trung (Chinese)</option>
                     <option value="fr">🇫🇷 Tiếng Pháp (French)</option>
+                    <option value="de">🇩🇪 Tiếng Đức (German)</option>
+                    <option value="es">🇪🇸 Tiếng Tây Ban Nha (Spanish)</option>
+                    <option value="ru">🇷🇺 Tiếng Nga (Russian)</option>
+                    <option value="th">🇹🇭 Tiếng Thái (Thai)</option>
+                    <option value="id">🇮🇩 Tiếng Indonesia (Indonesian)</option>
                   </select>
                 </div>
                 <div>
@@ -493,10 +538,15 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
                     style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
                   >
                     <option value="auto">✨ Tự động nhận diện (Auto Detect)</option>
-                    <option value="en">English</option>
-                    <option value="zh">Chinese</option>
-                    <option value="ja">Japanese</option>
-                    <option value="ko">Korean</option>
+                    <option value="en">🇬🇧 Tiếng Anh (English)</option>
+                    <option value="zh">🇨🇳 Tiếng Trung (Chinese)</option>
+                    <option value="ja">🇯🇵 Tiếng Nhật (Japanese)</option>
+                    <option value="ko">🇰🇷 Tiếng Hàn (Korean)</option>
+                    <option value="fr">🇫🇷 Tiếng Pháp (French)</option>
+                    <option value="de">🇩🇪 Tiếng Đức (German)</option>
+                    <option value="es">🇪🇸 Tiếng Tây Ban Nha (Spanish)</option>
+                    <option value="ru">🇷🇺 Tiếng Nga (Russian)</option>
+                    <option value="vi">🇻🇳 Tiếng Việt (Vietnamese)</option>
                   </select>
                 </div>
               </div>
@@ -509,26 +559,32 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
               </h4>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>LLM Provider:</label>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>LLM / Script Provider:</label>
                   <select
                     value={pSettings.llm_provider_id || 'gemini'}
                     onChange={(e) => setEditSettings(prev => ({ ...prev, llm_provider_id: e.target.value, stt_provider_id: e.target.value, translation_provider_id: e.target.value }))}
                     style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
                   >
-                    <option value="gemini">✨ Google Gemini AI Studio</option>
+                    <option value="gemini">✨ Google Gemini AI Studio (Mặc định)</option>
                     <option value="openai">🤖 OpenAI ChatGPT</option>
+                    <option value="claude">🧠 Anthropic Claude AI</option>
+                    <option value="deepseek">🐳 DeepSeek AI</option>
+                    <option value="ollama">🦙 Local Ollama (Offline)</option>
                   </select>
                 </div>
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>STT / Translation Model:</label>
                   <select
-                    value={pSettings.stt_model || 'gemini-2.5-flash'}
+                    value={pSettings.stt_model || 'gemini-2.0-flash'}
                     onChange={(e) => setEditSettings(prev => ({ ...prev, stt_model: e.target.value, translation_model: e.target.value }))}
                     style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
                   >
-                    <option value="gemini-2.5-flash">Gemini 2.5 Flash (Nhanh & Tối Ưu)</option>
-                    <option value="gemini-1.5-pro">Gemini 1.5 Pro (Chính Xác Cao)</option>
-                    <option value="gpt-4o-mini">GPT-4o Mini (OpenAI)</option>
+                    <option value="gemini-2.0-flash">✨ Gemini 2.0 Flash (Nhanh & Tối Ưu)</option>
+                    <option value="gemini-1.5-pro">💎 Gemini 1.5 Pro (Chính Xác Cao)</option>
+                    <option value="gpt-4o-mini">🤖 GPT-4o Mini (OpenAI)</option>
+                    <option value="gpt-4o">🚀 GPT-4o (OpenAI High Accuracy)</option>
+                    <option value="claude-3-5-sonnet">🧠 Claude 3.5 Sonnet</option>
+                    <option value="deepseek-chat">🐳 DeepSeek V3 / R1</option>
                   </select>
                 </div>
               </div>
@@ -547,9 +603,9 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
                     onChange={(e) => setEditSettings(prev => ({ ...prev, audio_provider_id: e.target.value }))}
                     style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
                   >
-                    <option value="edge_tts">Edge TTS (Miễn phí)</option>
-                    <option value="elevenlabs">ElevenLabs</option>
-                    <option value="google_tts">Google Cloud TTS</option>
+                    <option value="edge_tts">⚡ Edge TTS (Miễn phí / Tốc độ cao)</option>
+                    <option value="elevenlabs">🎙️ ElevenLabs (Chất lượng cao)</option>
+                    <option value="google_tts">🔊 Google Cloud TTS</option>
                   </select>
                 </div>
                 <div>
@@ -565,15 +621,15 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
                   </select>
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Âm thanh gốc:</label>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Âm thanh gốc (Original Audio):</label>
                   <select
                     value={pSettings.original_audio_mode || 'mute'}
                     onChange={(e) => setEditSettings(prev => ({ ...prev, original_audio_mode: e.target.value }))}
                     style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
                   >
-                    <option value="mute">Tắt tiếng gốc (Mute)</option>
-                    <option value="duck">Giảm tiếng gốc (Ducking 20%)</option>
-                    <option value="keep">Trộn tiếng gốc full</option>
+                    <option value="mute">🔇 Tắt hoàn toàn tiếng gốc (Mute)</option>
+                    <option value="duck">🔉 Giảm âm lượng gốc (Background Ducking 20%)</option>
+                    <option value="keep">🔊 Giữ âm thanh gốc trộn cùng tiếng đọc (Full Keep)</option>
                   </select>
                 </div>
               </div>
@@ -585,137 +641,169 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
                 <h4 style={{ margin: 0, fontSize: '15px', color: '#818cf8', fontWeight: 'bold' }}>
                   🏷️ Watermark / Logo Configuration
                 </h4>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px', color: '#e2e8f0', fontWeight: 'bold' }}>
-                  <input
-                    type="checkbox"
-                    checked={parseBool(pSettings.watermark_enabled)}
-                    onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_enabled: e.target.checked }))}
-                    style={{ accentColor: '#6366f1', width: '16px', height: '16px' }}
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={parseBool(pSettings.watermark_enabled)}
+                  title={parseBool(pSettings.watermark_enabled) ? "BẬT Watermark" : "TẮT Watermark"}
+                  onClick={() => setEditSettings(prev => ({ ...prev, watermark_enabled: !parseBool(prev.watermark_enabled) }))}
+                  style={{
+                    width: '46px',
+                    height: '24px',
+                    borderRadius: '12px',
+                    background: parseBool(pSettings.watermark_enabled) ? '#6366f1' : '#475569',
+                    border: 'none',
+                    position: 'relative',
+                    cursor: 'pointer',
+                    transition: 'background 0.2s ease',
+                    padding: 0,
+                    outline: 'none',
+                    boxShadow: parseBool(pSettings.watermark_enabled) ? '0 0 10px rgba(99, 102, 241, 0.6)' : 'none',
+                  }}
+                >
+                  <span
+                    style={{
+                      display: 'block',
+                      width: '18px',
+                      height: '18px',
+                      borderRadius: '50%',
+                      background: '#ffffff',
+                      position: 'absolute',
+                      top: '3px',
+                      left: parseBool(pSettings.watermark_enabled) ? '25px' : '3px',
+                      transition: 'left 0.2s ease',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+                    }}
                   />
-                  Bật Watermark
-                </label>
+                </button>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div style={{ display: 'flex', gap: '16px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: '#cbd5e1', fontSize: '13px' }}>
-                    <input
-                      type="radio"
-                      name="tab_wm_type"
-                      value="image"
-                      checked={(pSettings.watermark_type || 'image') === 'image'}
-                      onChange={() => setEditSettings(prev => ({ ...prev, watermark_type: 'image' }))}
-                      style={{ accentColor: '#6366f1' }}
-                    />
-                    🖼️ Logo Ảnh
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: '#cbd5e1', fontSize: '13px' }}>
-                    <input
-                      type="radio"
-                      name="tab_wm_type"
-                      value="text"
-                      checked={pSettings.watermark_type === 'text'}
-                      onChange={() => setEditSettings(prev => ({ ...prev, watermark_type: 'text' }))}
-                      style={{ accentColor: '#6366f1' }}
-                    />
-                    🔤 Watermark Text
-                  </label>
-                </div>
+              {parseBool(pSettings.watermark_enabled) ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div style={{ display: 'flex', gap: '16px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: '#cbd5e1', fontSize: '13px' }}>
+                      <input
+                        type="radio"
+                        name="tab_wm_type"
+                        value="image"
+                        checked={(pSettings.watermark_type === 'text' ? 'text' : 'image') === 'image'}
+                        onChange={() => setEditSettings(prev => ({ ...prev, watermark_type: 'image' }))}
+                        style={{ accentColor: '#6366f1' }}
+                      />
+                      🖼️ Logo Ảnh
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: '#cbd5e1', fontSize: '13px' }}>
+                      <input
+                        type="radio"
+                        name="tab_wm_type"
+                        value="text"
+                        checked={pSettings.watermark_type === 'text'}
+                        onChange={() => setEditSettings(prev => ({ ...prev, watermark_type: 'text' }))}
+                        style={{ accentColor: '#6366f1' }}
+                      />
+                      🔤 Watermark Text
+                    </label>
+                  </div>
 
-                {pSettings.watermark_type === 'text' ? (
+                  {pSettings.watermark_type === 'text' ? (
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Nội dung Text Watermark:</label>
+                      <input
+                        type="text"
+                        value={pSettings.watermark_text || ''}
+                        onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_text: e.target.value }))}
+                        placeholder="© AutoTransAI Studio"
+                        style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                      />
+                    </div>
+                  ) : (
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Upload Logo (PNG / WEBP / JPG):</label>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleTabLogoUpload}
+                        disabled={isUploadingLogo}
+                        style={{ background: '#0f172a', padding: '6px', borderRadius: '6px', color: '#fff', border: '1px solid #475569', fontSize: '12px', width: '100%' }}
+                      />
+                      {pSettings.watermark_image_path && (
+                        <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <img
+                            src={`/api/storage/files/${pSettings.watermark_image_path.replace(/\\/g, '/')}`}
+                            alt="Logo Preview"
+                            style={{ maxHeight: '40px', maxWidth: '120px', objectFit: 'contain', background: '#0f172a', padding: '4px', borderRadius: '4px', border: '1px solid #475569' }}
+                          />
+                          <span style={{ color: '#4ade80', fontSize: '12px' }}>✓ Đã chọn logo</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <div>
-                    <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Nội dung Text Watermark:</label>
-                    <input
-                      type="text"
-                      value={pSettings.watermark_text || ''}
-                      onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_text: e.target.value }))}
-                      placeholder="© AutoTransAI Studio"
+                    <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Vị trí Watermark:</label>
+                    <select
+                      value={pSettings.watermark_position || 'bottom_right'}
+                      onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_position: e.target.value }))}
                       style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
-                    />
+                    >
+                      <option value="bottom_right">↘️ Góc Dưới Phải (Bottom Right)</option>
+                      <option value="bottom_left">↙️ Góc Dưới Trái (Bottom Left)</option>
+                      <option value="top_right">↗️ Góc Trên Phải (Top Right)</option>
+                      <option value="top_left">↖️ Góc Trên Trái (Top Left)</option>
+                      <option value="center">⏹️ Chính Giữa (Center)</option>
+                    </select>
                   </div>
-                ) : (
+
                   <div>
-                    <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Upload Logo (PNG / WEBP / JPG):</label>
+                    <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
+                      Kích thước ({Math.round((pSettings.watermark_scale || 0.20) * 100)}% rộng video):
+                    </label>
                     <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleTabLogoUpload}
-                      disabled={isUploadingLogo}
-                      style={{ background: '#0f172a', padding: '6px', borderRadius: '6px', color: '#fff', border: '1px solid #475569', fontSize: '12px', width: '100%' }}
+                      type="range"
+                      min="0.10"
+                      max="0.50"
+                      step="0.05"
+                      value={pSettings.watermark_scale || 0.20}
+                      onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_scale: parseFloat(e.target.value) }))}
+                      style={{ width: '100%', accentColor: '#818cf8' }}
                     />
-                    {pSettings.watermark_image_path && (
-                      <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <img
-                          src={`/api/storage/files/${pSettings.watermark_image_path.replace(/\\/g, '/')}`}
-                          alt="Logo Preview"
-                          style={{ maxHeight: '40px', maxWidth: '120px', objectFit: 'contain', background: '#0f172a', padding: '4px', borderRadius: '4px', border: '1px solid #475569' }}
-                        />
-                        <span style={{ color: '#4ade80', fontSize: '12px' }}>✓ Đã chọn logo</span>
-                      </div>
-                    )}
                   </div>
-                )}
 
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Vị trí Watermark:</label>
-                  <select
-                    value={pSettings.watermark_position || 'bottom_right'}
-                    onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_position: e.target.value }))}
-                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
-                  >
-                    <option value="bottom_right">↘️ Góc Dưới Phải (Bottom Right)</option>
-                    <option value="bottom_left">↙️ Góc Dưới Trái (Bottom Left)</option>
-                    <option value="top_right">↗️ Góc Trên Phải (Top Right)</option>
-                    <option value="top_left">↖️ Góc Trên Trái (Top Left)</option>
-                    <option value="center">⏹️ Chính Giữa (Center)</option>
-                  </select>
-                </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
+                      Độ Trong Suốt ({Math.round((pSettings.watermark_opacity || 0.80) * 100)}%):
+                    </label>
+                    <input
+                      type="range"
+                      min="0.10"
+                      max="1.00"
+                      step="0.05"
+                      value={pSettings.watermark_opacity || 0.80}
+                      onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_opacity: parseFloat(e.target.value) }))}
+                      style={{ width: '100%', accentColor: '#818cf8' }}
+                    />
+                  </div>
 
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
-                    Kích thước ({Math.round((pSettings.watermark_scale || 0.20) * 100)}% rộng video):
-                  </label>
-                  <input
-                    type="range"
-                    min="0.10"
-                    max="0.50"
-                    step="0.05"
-                    value={pSettings.watermark_scale || 0.20}
-                    onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_scale: parseFloat(e.target.value) }))}
-                    style={{ width: '100%', accentColor: '#818cf8' }}
-                  />
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
+                      Khoảng cách mép ({pSettings.watermark_margin || 20}px):
+                    </label>
+                    <input
+                      type="range"
+                      min="10"
+                      max="50"
+                      step="5"
+                      value={pSettings.watermark_margin || 20}
+                      onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_margin: parseInt(e.target.value, 10) }))}
+                      style={{ width: '100%', accentColor: '#818cf8' }}
+                    />
+                  </div>
                 </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
-                    Độ Trong Suốt ({Math.round((pSettings.watermark_opacity || 0.80) * 100)}%):
-                  </label>
-                  <input
-                    type="range"
-                    min="0.10"
-                    max="1.00"
-                    step="0.05"
-                    value={pSettings.watermark_opacity || 0.80}
-                    onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_opacity: parseFloat(e.target.value) }))}
-                    style={{ width: '100%', accentColor: '#818cf8' }}
-                  />
+              ) : (
+                <div style={{ fontSize: '13px', color: '#94a3b8', fontStyle: 'italic', padding: '12px', background: '#0f172a', borderRadius: '6px', border: '1px solid #334155' }}>
+                  🚫 Watermark hiện đang TẮT cho dự án này. Gạt thanh trượt đóng mở ở trên để kích hoạt tùy chỉnh logo hoặc văn bản watermark.
                 </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
-                    Khoảng cách mép ({pSettings.watermark_margin || 20}px):
-                  </label>
-                  <input
-                    type="range"
-                    min="10"
-                    max="50"
-                    step="5"
-                    value={pSettings.watermark_margin || 20}
-                    onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_margin: parseInt(e.target.value, 10) }))}
-                    style={{ width: '100%', accentColor: '#818cf8' }}
-                  />
-                </div>
-              </div>
+              )}
             </div>
 
             {/* 5. AI Thumbnail Settings */}
@@ -724,52 +812,102 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
                 <h4 style={{ margin: 0, fontSize: '15px', color: '#818cf8', fontWeight: 'bold' }}>
                   🎨 AI Thumbnail Configuration
                 </h4>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px', color: '#e2e8f0', fontWeight: 'bold' }}>
-                  <input
-                    type="checkbox"
-                    checked={parseBool(pSettings.thumbnail_enabled)}
-                    onChange={(e) => setEditSettings(prev => ({ ...prev, thumbnail_enabled: e.target.checked }))}
-                    style={{ accentColor: '#6366f1', width: '16px', height: '16px' }}
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={parseBool(pSettings.thumbnail_enabled)}
+                  title={parseBool(pSettings.thumbnail_enabled) ? "BẬT AI Thumbnail" : "TẮT AI Thumbnail"}
+                  onClick={() => setEditSettings(prev => ({ ...prev, thumbnail_enabled: !parseBool(prev.thumbnail_enabled) }))}
+                  style={{
+                    width: '46px',
+                    height: '24px',
+                    borderRadius: '12px',
+                    background: parseBool(pSettings.thumbnail_enabled) ? '#6366f1' : '#475569',
+                    border: 'none',
+                    position: 'relative',
+                    cursor: 'pointer',
+                    transition: 'background 0.2s ease',
+                    padding: 0,
+                    outline: 'none',
+                    boxShadow: parseBool(pSettings.thumbnail_enabled) ? '0 0 10px rgba(99, 102, 241, 0.6)' : 'none',
+                  }}
+                >
+                  <span
+                    style={{
+                      display: 'block',
+                      width: '18px',
+                      height: '18px',
+                      borderRadius: '50%',
+                      background: '#ffffff',
+                      position: 'absolute',
+                      top: '3px',
+                      left: parseBool(pSettings.thumbnail_enabled) ? '25px' : '3px',
+                      transition: 'left 0.2s ease',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+                    }}
                   />
-                  Tự động Tạo Thumbnail
-                </label>
+                </button>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Provider / Style:</label>
-                  <div style={{ display: 'flex', gap: '10px' }}>
+              {parseBool(pSettings.thumbnail_enabled) ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div>
+                    <label className="form-label text-light small fw-bold" style={{ display: 'block', marginBottom: '6px' }}>
+                      🎭 Phong Cách Thumbnail (Style):
+                    </label>
                     <select
-                      value={pSettings.thumbnail_provider || 'pollinations'}
-                      onChange={(e) => setEditSettings(prev => ({ ...prev, thumbnail_provider: e.target.value }))}
-                      style={{ flex: 1, padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
-                    >
-                      <option value="pollinations">Pollinations AI (Free)</option>
-                    </select>
-                    <select
+                      className="form-select form-select-sm bg-dark text-light border-secondary"
                       value={pSettings.thumbnail_style || 'auto'}
                       onChange={(e) => setEditSettings(prev => ({ ...prev, thumbnail_style: e.target.value }))}
-                      style={{ flex: 1, padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
                     >
-                      <option value="auto">Tự động (Auto)</option>
-                      <option value="realistic">Realistic</option>
-                      <option value="anime">Anime / Manga</option>
-                      <option value="cinematic">Cinematic 3D</option>
+                      <option value="auto">🤖 Tự động (Phân tích cảm xúc kịch bản)</option>
+                      <option value="cinematic">🎬 Cinematic (Điện ảnh kịch tính)</option>
+                      <option value="youtube_viral">🚀 YouTube Viral (Bắt mắt, biểu cảm mạnh)</option>
+                      <option value="horror">👻 Horror (U tối, bí ẩn, kinh dị)</option>
+                      <option value="anime">🌸 Anime Nhật Bản (Nhiều màu sắc)</option>
+                      <option value="realistic">📸 Realistic (Ảnh chụp 8K chân thực)</option>
+                      <option value="cartoon">🎨 Cartoon 3D (Hoạt hình 3D)</option>
+                      <option value="documentary">📜 Documentary (Phim tài liệu)</option>
+                      <option value="minimal">📐 Minimal (Tối giản, tương phản)</option>
+                      <option value="movie_poster">🍿 Poster Phim Hollywood</option>
                     </select>
                   </div>
-                </div>
 
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Custom Instruction (Tùy chọn):</label>
-                  <textarea
-                    rows="2"
-                    value={pSettings.thumbnail_custom_instruction || ''}
-                    onChange={(e) => setEditSettings(prev => ({ ...prev, thumbnail_custom_instruction: e.target.value }))}
-                    placeholder="Ví dụ: Tập trung vào nhân vật chính với ánh sáng huyền ảo..."
-                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px', resize: 'vertical' }}
-                  />
+                  <div>
+                    <label className="form-label text-light small fw-bold" style={{ display: 'block', marginBottom: '6px' }}>
+                      ⚙️ AI Image Provider:
+                    </label>
+                    <select
+                      className="form-select form-select-sm bg-dark text-light border-secondary"
+                      value={pSettings.thumbnail_provider || 'pollinations'}
+                      onChange={(e) => setEditSettings(prev => ({ ...prev, thumbnail_provider: e.target.value }))}
+                    >
+                      <option value="pollinations">⚡ Pollinations AI (Miễn phí & Nhanh)</option>
+                      <option value="fal">🎨 fal.ai FLUX (Chất lượng cao)</option>
+                      <option value="openai">🤖 OpenAI DALL-E 3</option>
+                      <option value="local_image">🖼️ Local Scenery (Offline)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="form-label text-light small fw-bold" style={{ display: 'block', marginBottom: '6px' }}>
+                      💬 Yêu Cầu Bổ Sung (Custom Instruction):
+                    </label>
+                    <textarea
+                      className="form-textarea form-control form-control-sm bg-dark text-light border-secondary"
+                      rows="3"
+                      placeholder="Ví dụ: Tập trung vào nhân vật chính, tông màu xanh u tối, tương phản cao, góc quay rộng..."
+                      value={pSettings.thumbnail_custom_instruction || ''}
+                      onChange={(e) => setEditSettings(prev => ({ ...prev, thumbnail_custom_instruction: e.target.value }))}
+                      style={{ resize: 'vertical' }}
+                    />
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div style={{ fontSize: '13px', color: '#94a3b8', fontStyle: 'italic', padding: '12px', background: '#0f172a', borderRadius: '6px', border: '1px solid #334155' }}>
+                  🖼️ tự động hiện đang TẮT. Gạt thanh trượt đóng mở ở trên để kích hoạt.
+                </div>
+              )}
             </div>
           </div>
         </div>

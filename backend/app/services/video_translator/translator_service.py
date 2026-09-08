@@ -399,24 +399,25 @@ async def transcribe_audio_with_gemini(
 
     import httpx
     from app.providers.ai_router import AIRouter
-    from app.providers.llm.gemini_provider import GEMINI_MODEL_CANDIDATES, normalize_gemini_model_name
+    from app.providers.llm.gemini_provider import strip_gemini_model_prefix
+    from app.core.pipeline_errors import PipelineError, classify_http_error, classify_exception
+    from app.services.video_translator.stt_parser import parse_gemini_stt_response
 
-    # Resolve active STT provider & model via Configuration Priority Hierarchy
+    # Resolve active STT provider & model via AIModelResolver (Settings Database)
     resolved_info = await AIRouter.resolve_stt_model(db, requested_model=model_name)
     configured_model = resolved_info["model_id"]
     model_source = resolved_info["source"]
-    primary_model = normalize_gemini_model_name(configured_model)
+    # Use model directly — NO normalization, NO rewriting
+    primary_model = strip_gemini_model_prefix(configured_model)
 
-    logger.info(f"[STT CONFIG] Provider from database: Google Gemini | Model from database/router: {configured_model} | Source: {model_source}")
-    logger.info(f"[STT ROUTING] Resolved provider: {resolved_info['provider_id']} | Resolved model: {primary_model}")
+    logger.info(
+        f"[STT ROUTING] Capability: STT | "
+        f"Selected Provider: {resolved_info['provider_id']} | "
+        f"Selected Model: {primary_model} | "
+        f"Model Source: {model_source} | "
+        f"Fallback Enabled: false"
+    )
     log_job_event(job_id, "STT", f"[STT ROUTING] Active STT Model: {primary_model} (Source: {model_source})")
-
-    # Build model candidates queue prioritizing exact resolved_model
-    model_queue = [primary_model]
-    for cand in GEMINI_MODEL_CANDIDATES:
-        norm_cand = normalize_gemini_model_name(cand)
-        if norm_cand not in model_queue:
-            model_queue.append(norm_cand)
 
     total_duration = await probe_duration_async(audio_path)
     file_size_mb = audio_path.stat().st_size / (1024 * 1024)
@@ -517,74 +518,99 @@ async def transcribe_audio_with_gemini(
                                 },
                             ]
                         }
-                    ]
+                    ],
+                    "generationConfig": {
+                        "response_mime_type": "application/json",
+                        "temperature": 0.1,
+                    },
                 }
 
-                chunk_success = False
-                last_err = ""
+                # Use resolved model directly — NO fallback candidate queue
+                actual_api_model = f"models/{primary_model}"
+                logger.info(f"[STT API REQUEST] Actual model: {actual_api_model} | Chunk: {chunk_path.name}")
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{primary_model}:generateContent?key={settings.GEMINI_API_KEY}"
+                try:
+                    res = await client.post(url, json=payload)
+                    if res.status_code == 200:
+                        data = res.json()
+                        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                        if parts:
+                            raw_response = parts[0].get("text", "").strip()
+                            try:
+                                parsed_json = parse_gemini_stt_response(
+                                    raw_response,
+                                    actual_chunk_dur=actual_chunk_dur,
+                                    default_lang=detected_lang,
+                                )
+                            except Exception as parse_err:
+                                logger.error(
+                                    f"[Gemini STT Parse Error] Chunk: {chunk_path.name} | "
+                                    f"Error: {parse_err} | Raw response:\n{raw_response[:1000]}"
+                                )
+                                log_job_event(
+                                    job_id,
+                                    "STT",
+                                    f"[Gemini STT Parse Error] Raw response snippet for {chunk_path.name}: {raw_response[:200]!r}"
+                                )
+                                raise PipelineError(
+                                    code="AI_PROVIDER_API_ERROR",
+                                    stage="STT",
+                                    message=f"Gemini STT trả về JSON không hợp lệ cho chunk {chunk_path.name}.",
+                                    provider="gemini",
+                                    model=primary_model,
+                                    technical_error=f"{str(parse_err)} | Raw snippet: {raw_response[:200]!r}",
+                                ) from parse_err
 
-                for model in model_queue:
-                    actual_api_model = f"models/{model}"
-                    logger.info(f"[STT API REQUEST] Actual model: {actual_api_model} | Chunk: {chunk_path.name}")
-                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={settings.GEMINI_API_KEY}"
-                    try:
-                        res = await client.post(url, json=payload)
-                        if res.status_code == 200:
-                            data = res.json()
-                            parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                            if parts:
-                                raw_response = parts[0].get("text", "").strip()
-                                json_str = re.sub(r"^```json\s*", "", raw_response, flags=re.MULTILINE)
-                                json_str = re.sub(r"```$", "", json_str, flags=re.MULTILINE).strip()
-                                parsed_json = json.loads(json_str)
+                            detected_lang = parsed_json.get("language", detected_lang)
+                            raw_segments = parsed_json.get("segments", [])
 
-                                detected_lang = parsed_json.get("language", detected_lang)
-                                raw_segments = parsed_json.get("segments", [])
+                            if raw_segments:
+                                for s in raw_segments:
+                                    local_st = float(s.get("start_time", 0.0))
+                                    local_et = float(s.get("end_time", local_st + 4.0))
+                                    txt = str(s.get("text", "")).strip()
 
-                                if raw_segments:
-                                    for s in raw_segments:
-                                        local_st = float(s.get("start_time", 0.0))
-                                        local_et = float(s.get("end_time", local_st + 4.0))
-                                        txt = str(s.get("text", "")).strip()
+                                    if not txt:
+                                        continue
 
-                                        if not txt:
-                                            continue
+                                    # Handle case where model returns absolute video timestamps
+                                    if local_st >= time_offset and time_offset > 0:
+                                        logger.info(f"[{job_id}] Model returned absolute timestamp {local_st:.2f}s for chunk starting at {time_offset:.2f}s. Adjusting relative timestamp.")
+                                        local_st -= time_offset
+                                        local_et -= time_offset
 
-                                        # Handle case where model returns absolute video timestamps
-                                        if local_st >= time_offset and time_offset > 0:
-                                            logger.info(f"[{job_id}] Model returned absolute timestamp {local_st:.2f}s for chunk starting at {time_offset:.2f}s. Adjusting relative timestamp.")
-                                            local_st -= time_offset
-                                            local_et -= time_offset
+                                    # Enforce chunk bounds
+                                    if local_st < 0.0:
+                                        local_st = 0.0
+                                    if local_et > actual_chunk_dur + 0.5:
+                                        logger.warning(f"[{job_id}] Segment end {local_et:.2f}s exceeded chunk duration {actual_chunk_dur:.2f}s for {chunk_path.name}. Capping to chunk duration.")
+                                        local_et = min(local_et, actual_chunk_dur)
 
-                                        # Enforce chunk bounds
-                                        if local_st < 0.0:
-                                            local_st = 0.0
-                                        if local_et > actual_chunk_dur + 0.5:
-                                            logger.warning(f"[{job_id}] Segment end {local_et:.2f}s exceeded chunk duration {actual_chunk_dur:.2f}s for {chunk_path.name}. Capping to chunk duration.")
-                                            local_et = min(local_et, actual_chunk_dur)
+                                    if local_st >= actual_chunk_dur:
+                                        continue
 
-                                        if local_st >= actual_chunk_dur:
-                                            continue
+                                    st = round(time_offset + local_st, 2)
+                                    et = round(time_offset + max(local_st + 0.5, local_et), 2)
 
-                                        st = round(time_offset + local_st, 2)
-                                        et = round(time_offset + max(local_st + 0.5, local_et), 2)
-
-                                        all_segments.append({
-                                            "number": len(all_segments) + 1,
-                                            "start_time": st,
-                                            "end_time": et,
-                                            "text": txt,
-                                        })
-                                    chunk_success = True
-                                    break
-                        else:
-                            last_err = f"HTTP {res.status_code}: {res.text[:150]}"
-                    except Exception as ex:
-                        last_err = str(ex)
-                        continue
-
-                if not chunk_success:
-                    raise RuntimeError(f"Gemini STT failed for chunk {chunk_path.name}: {last_err}")
+                                    all_segments.append({
+                                        "number": len(all_segments) + 1,
+                                        "start_time": st,
+                                        "end_time": et,
+                                        "text": txt,
+                                    })
+                    else:
+                        # Non-200 response — raise structured PipelineError
+                        raise classify_http_error(
+                            status_code=res.status_code,
+                            response_text=res.text[:500],
+                            provider="gemini",
+                            model=primary_model,
+                            stage="STT",
+                        )
+                except PipelineError:
+                    raise
+                except (httpx.TimeoutException, httpx.RequestError) as req_err:
+                    raise classify_exception(req_err, provider="gemini", model=primary_model, stage="STT")
 
         if not all_segments:
             raise RuntimeError("Gemini STT không nhận diện được giọng nói trong audio.")
@@ -798,7 +824,8 @@ async def _translate_sub_batch(
     for attempt in range(2):
         try:
             resp = await llm.generate_text(
-                prompt if attempt == 0 else prompt + "\nLƯU Ý: Trả về mảng JSON hợp lệ [{\"id\": 0, \"translation\": \"...\"}]"
+                prompt if attempt == 0 else prompt + "\nLƯU Ý: Trả về mảng JSON hợp lệ [{\"id\": 0, \"translation\": \"...\"}]",
+                model=getattr(llm, '_resolved_model_id', None),
             )
             parsed_map = _safe_parse_json_translation(resp)
 
@@ -811,7 +838,7 @@ async def _translate_sub_batch(
                     "Trả về mảng JSON [{\"id\": X, \"translation\": \"...\"}]"
                 )
                 try:
-                    rec_resp = await llm.generate_text(rec_prompt)
+                    rec_resp = await llm.generate_text(rec_prompt, model=getattr(llm, '_resolved_model_id', None))
                     rec_map = _safe_parse_json_translation(rec_resp)
                     for r_id, r_trans in rec_map.items():
                         if r_id in missing_ids:
@@ -844,6 +871,8 @@ async def translate_transcript_segments(
     job_id: str = "VT-JOB",
     llm_provider_id: str = "gemini",
     batch_size: int = 30,
+    translation_model_id: Optional[str] = None,
+    db: Optional[AsyncSession] = None,
 ) -> List[Dict[str, Any]]:
     """
     Translate transcript text segments to target language using LLM Provider (Gemini / OpenAI).
@@ -878,6 +907,20 @@ async def translate_transcript_segments(
 
     if not candidate_llms:
         raise RuntimeError("Không tìm thấy LLM Provider nào khả thi trong hệ thống.")
+
+    # Resolve translation model ID via AIModelResolver if not explicitly provided
+    if not translation_model_id:
+        from app.services.model_resolver import AIModelResolver
+        try:
+            res_info = await AIModelResolver.resolve_model(db, capability="TRANSLATION", stage="TRANSLATE")
+            translation_model_id = res_info.model_id
+        except Exception as res_err:
+            logger.warning(f"[{job_id}] Model resolution for TRANSLATION capability failed: {res_err}")
+
+    # Attach resolved model ID to each LLM provider for generate_text() calls
+    for llm in candidate_llms:
+        llm._resolved_model_id = translation_model_id
+
 
     lang_names = {
         "vi": "Tiếng Việt",
@@ -943,7 +986,7 @@ async def translate_transcript_segments(
                 for attempt in range(2):
                     try:
                         curr_prompt = prompt if attempt == 0 else prompt + "\nLƯU Ý BẮT BUỘC: Đảm bảo mảng JSON hợp lệ [{\"id\": 0, \"translation\": \"...\"}]"
-                        response_text = await llm.generate_text(curr_prompt)
+                        response_text = await llm.generate_text(curr_prompt, model=getattr(llm, '_resolved_model_id', None))
                         parsed_map = _safe_parse_json_translation(response_text)
                         
                         expected_ids = set(range(len(batch_segments)))

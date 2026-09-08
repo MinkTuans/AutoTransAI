@@ -347,7 +347,9 @@ async def run_video_translator_preflight(
     wm_msg = None
     if watermark_enabled:
         if watermark_type == "image":
-            if not watermark_image_path or not Path(watermark_image_path).exists():
+            from app.services.video_editor.watermark_service import resolve_watermark_image_path
+            resolved_p = resolve_watermark_image_path(watermark_image_path)
+            if not resolved_p or not resolved_p.is_file():
                 watermark_ok = False
                 wm_msg = "Chưa chọn file Logo Ảnh hoặc file Logo không tồn tại."
         elif watermark_type == "text":

@@ -28,7 +28,7 @@ class AnalyzeStage:
         logger.info(f"[Stage ANALYZE] Executing step: {step_name}")
 
         if step_name == "speech_to_text":
-            return await self._speech_to_text(ctx)
+            return await self._speech_to_text(ctx, db)
         elif step_name == "detect_language":
             return await self._detect_language(ctx)
         elif step_name == "detect_speakers":
@@ -68,16 +68,22 @@ class AnalyzeStage:
             },
         }
 
-    async def _speech_to_text(self, ctx: WorkflowContext) -> dict[str, Any]:
-        # Delegate to VideoTranslatorService existing STT logic (Gemini STT with Whisper fallback)
-        from app.services.video_translator.translator_service import VideoTranslatorService
-        svc = VideoTranslatorService()
-        result = await svc.transcribe_audio(ctx.audio_path, language=ctx.source_language)
+    async def _speech_to_text(self, ctx: WorkflowContext, db: Any) -> dict[str, Any]:
+        # Use module-level STT function with db session for model resolution
+        from app.services.video_translator.translator_service import speech_to_text_and_detect_language
+
+        result_segments, detected_lang = await speech_to_text_and_detect_language(
+            audio_path=ctx.audio_path,
+            job_id=getattr(ctx, 'job_id', 'WF-JOB'),
+            target_language=ctx.target_language,
+            source_language=ctx.source_language,
+            db=db,
+        )
         
-        ctx.raw_transcript = result.get("full_text", "")
-        ctx.source_segments = result.get("segments", [])
-        if result.get("detected_language"):
-            ctx.source_language = result.get("detected_language")
+        ctx.raw_transcript = " ".join(seg.get("text", "") for seg in result_segments)
+        ctx.source_segments = result_segments
+        if detected_lang:
+            ctx.source_language = detected_lang
 
         return {"segment_count": len(ctx.source_segments), "detected_language": ctx.source_language}
 
@@ -96,17 +102,13 @@ class AnalyzeStage:
         return {"speakers": ctx.speakers}
 
     async def _validate_timeline(self, ctx: WorkflowContext) -> dict[str, Any]:
-        from app.services.video_translator.translator_service import VideoTranslatorService
-        svc = VideoTranslatorService()
-        validated_segments = svc.validate_timeline(ctx.source_segments, ctx.duration)
+        from app.services.video_translator.translator_service import validate_and_clean_timeline_segments
+        validated_segments = validate_and_clean_timeline_segments(ctx.source_segments, ctx.duration)
         ctx.source_segments = validated_segments
         return {"validated_count": len(ctx.source_segments)}
 
     async def _clean_timeline(self, ctx: WorkflowContext) -> dict[str, Any]:
-        from app.services.video_translator.translator_service import VideoTranslatorService
-        svc = VideoTranslatorService()
-        cleaned_segments = svc.clean_timeline(ctx.source_segments)
-        ctx.source_segments = cleaned_segments
+        # Timeline already validated and cleaned in _validate_timeline
         return {"cleaned_count": len(ctx.source_segments)}
 
     async def _transcript_qc(self, ctx: WorkflowContext) -> dict[str, Any]:

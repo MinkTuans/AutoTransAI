@@ -34,6 +34,7 @@ The central engine (`app.workflow.workflow_engine.WorkflowEngine`) orchestrates 
 - `Project` (`projects`): Top-level project entity supporting `title`, `description`, `workflow_mode`, `workflow_status`, `settings_json` for reusable configuration, and timestamps.
 - `ProjectTerminologyMemory` (`project_terminology_memory`): AI auto-detected entity terminology terms with `source_term`, `suggested_term`, `term_type`, `confidence`, and `needs_review`.
 - `WorkflowExecution` (`workflow_executions`): Top-level record tracking `project_id`, `status` (`not_started`, `running`, `paused`, `needs_review`, `failed`, `completed`, `cancelled`), `current_stage`, `current_step`, `context_data`, `error_message`, and timestamps.
+- `VideoTranslationJob` (`video_translation_jobs`): Per-video execution job tracking `project_id`, `asset_id`, `status`, `stage`, `settings_snapshot_json` (isolated configuration snapshot taken at job creation), `studio_state_json` (persisted UI step, active tab, selected segment ID), `last_checkpoint_stage` (`CREATED`, `EXTRACTING_AUDIO_DONE`, `STT_DONE`, `TRANSLATION_DONE`, `SEGMENT_EDITING_DONE`, `TTS_DONE`, `AUDIO_SYNC_DONE`, `RENDER_DONE`), `last_checkpoint_at`, watermark options, and timestamps.
 - `WorkflowStageExecution` (`workflow_stage_executions`): Tracks individual stage status (`pending`, `running`, `passed`, `failed`, `needs_review`, `skipped`), QC reports, and retry counts.
 - `WorkflowStepExecution` (`workflow_step_executions`): Fine-grained step execution tracking with status (`pending`, `running`, `success`, `failed`, `retrying`, `skipped`), input/output data payloads, and step retry counts.
 
@@ -53,12 +54,32 @@ The central engine (`app.workflow.workflow_engine.WorkflowEngine`) orchestrates 
 
 ### AI Model Routing & Single Source of Truth Architecture
 - **Configuration Priority Hierarchy**:
-  `REQUESTED MODEL` -> `DATABASE AI FUNCTION CONFIG (ai_function_configs)` -> `ENVIRONMENT DEFAULT (GEMINI_STT_MODEL/GEMINI_MODEL)` -> `HARDCODED SAFE DEFAULT (gemini-2.5-flash)`
+  `REQUESTED MODEL` (explicit override) -> `SETTINGS DATABASE (ai_function_configs / ai_models)` -> `PipelineError` (Structured `AI_MODEL_NOT_FOUND` exception if model is not configured in DB).
 - **Unified Resolution Engine**:
-  - `AIRouter.resolve_stt_model(db, requested_model)` resolves active STT provider & model.
-  - `normalize_gemini_model_name(model_name)` normalizes model strings (`models/gemini-2.5-flash` -> `gemini-2.5-flash`) and auto-migrates deprecated model strings (`gemini-2.0-flash` -> `gemini-2.5-flash`).
+  - `AIModelResolver` (`app.services.model_resolver`) is the sole authoritative single-source-of-truth for resolving AI Models (STT, LLM, TTS, Image, Video) strictly from Database tables (`ai_function_configs` -> `ai_models`).
+  - Automatically acquires an async database session if `db` parameter is omitted, querying active DB configuration directly.
+  - Zero hardcoded fallback model strings (e.g. `gemini-2.5-flash`) or candidate loops (`GEMINI_MODEL_CANDIDATES` removed) exist in resolution routines.
+  - `strip_gemini_model_prefix(model_name)` only strips `models/` prefix without modifying or inventing model identifiers.
+  - Providers (STT, LLM) accept explicit `model` parameters resolved by `AIModelResolver` and execute API calls against the user's exact database-configured model.
+- **Automatic Translation Model Resolution & Double Safety Nets**:
+  - `translate_transcript_segments` accepts an optional `db` parameter and automatically invokes `AIModelResolver.resolve_model(db, capability="TRANSLATION")` if `translation_model_id` is omitted.
+  - `GeminiLLMProvider.generate_text` features a secondary safety net invoking `AIModelResolver` if `model` is `None` at runtime, preventing `AI_CONFIGURATION_ERROR` pipeline crashes.
 - **Runtime Request Trace Logging**:
-  - Every STT execution logs exact diagnostic traces: `[STT CONFIG]`, `[STT ROUTING]`, and `[STT API REQUEST]` verifying actual model requested from AI providers.
+  - All AI Model resolutions log diagnostic details: capability, selected provider, selected model ID, model name, resolution source, and fallback status.
+
+### Gemini STT Robust Parsing & Resilient Pipeline Architecture
+- **Multi-Stage Response Parsing (`app.services.video_translator.stt_parser`)**:
+  - `parse_gemini_stt_response` processes raw Gemini API responses through 6 sequential fallback stages:
+    1. Strict JSON parsing (`json.loads`).
+    2. Markdown code block stripping (` ```json ... ``` `).
+    3. Regex object/array extraction (`{...}` / `[...]`) ignoring outer conversational filler text.
+    4. Malformed JSON sanitization (removing trailing commas, repairing unescaped newlines/control characters in string literals, fixing Python boolean literals).
+    5. Plain-text / timestamped dialogue fallback parser (`[00:00 - 00:05] Text` or plain text block).
+    6. Schema normalization (mapping `items`, `transcript`, `dialogue`, `sentences` -> `segments`; mapping `lang`, `language_code` -> `language`).
+- **Gemini API JSON Enforcement**:
+  - `transcribe_audio_with_gemini` includes `generationConfig: {"response_mime_type": "application/json", "temperature": 0.1}` in API request payloads.
+- **Enhanced Debug & Log Traceability**:
+  - Raw Gemini response snippets (first 1000 characters) are logged to `logger.error` and `log_job_event` when parsing exceptions occur.
 
 ### Frontend Workflow UI Controls & Smart Retry Flow
 - **Button State Machine**:
@@ -74,6 +95,14 @@ The central engine (`app.workflow.workflow_engine.WorkflowEngine`) orchestrates 
 - **Stage Execution Animations & Passed States**:
   - **Running Stage**: Highlighted with an animated glowing pulse border (`stagePulseGlow`), animated spinning gear badge (`spinner-icon`), and bright cyan accent.
   - **Passed/Completed Stage**: Rendered with solid emerald green border (`#10B981`), green checkmark badge (`✓ Passed`), and emerald highlight.
-- **Smart Retry Error Handling**:
-  - When a workflow stage execution fails, the Error Message Card displays the exact stage error message and error details directly beneath `WorkflowTimeline.jsx`.
-  - Clicking `🔄 Smart Retry` triggers stage-level retry (`POST /api/video-translator/projects/{project_id}/workflow/stage/{stage_name}/retry`) resuming execution directly from the failed stage.
+- **Smart Retry Error Handling & Global React ErrorBoundary**:
+  - Global `ErrorBoundary` class in `main.jsx` catches any uncaught React component render errors, rendering a dark fallback card with error details and a reload button instead of a blank screen.
+  - `handleRetryJob` and `handleRetryStage` in `VideoTranslator.jsx` execute `retryJob` or `retryStage` mutually exclusively to prevent concurrent pipeline double-invocations.
+  - Backend `retry_stage_api` safeguards job lookup with try-except, gracefully restarting associated jobs without throwing 500 errors.
+
+### Codebase Audit & Unused Component Cleanup
+- **Stale Import & Build Fix**: Removed broken `AIThumbnailPanel` imports in `VideoTranslator.jsx` and `ProjectDetail.jsx`, fixing production Vite builds (`npm run build` 100% clean).
+- **Unused Directory & Model Cleanup**: Removed obsolete directories `PIPER_MODELS/` (offline TTS experiment), `mdx_models/` (245MB legacy UVR/MDX ONNX models), `scratch/` (temporary test scripts), `docs/` & `PROJECT_KNOWLEDGE_BASE.docx`, and `data/r2_storage/`.
+- **Frontend Asset Optimization**: Removed unused starter assets (`hero.png`, `typescript.svg`, `favicon.svg`, `icons.svg`).
+- **Backend Dependency & Code Hygiene**: Removed `asyncpg` dependency from `requirements.txt`, removed legacy Postgres string replacement in `database.py`, removed duplicate imports in `main.py`, removed unused imports in `projects.py` and `video_translator.py`, and deleted obsolete scripts (`apply_db_schema.py`, `init_mysql_db.py`).
+

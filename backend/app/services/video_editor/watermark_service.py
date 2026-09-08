@@ -178,6 +178,43 @@ def build_image_watermark_filter(
     return filter_chain, "[wm_outv]"
 
 
+import sys
+
+def resolve_system_font_path() -> Optional[str]:
+    """
+    Locate an available system font file (.ttf) for FFmpeg drawtext on Windows/Linux/macOS.
+    Prevents FFmpeg fontconfig exit code 3221225477 (Access Violation) when fontconfig is missing on Windows.
+    Returns FFmpeg filter-escaped file path string or None.
+    """
+    candidates: List[Path] = []
+    if sys.platform.startswith("win"):
+        candidates = [
+            Path("C:/Windows/Fonts/arial.ttf"),
+            Path("C:/Windows/Fonts/calibri.ttf"),
+            Path("C:/Windows/Fonts/segoeui.ttf"),
+            Path("C:/Windows/Fonts/tahoma.ttf"),
+            Path("C:/Windows/Fonts/verdana.ttf"),
+        ]
+    elif sys.platform == "darwin":
+        candidates = [
+            Path("/System/Library/Fonts/Supplemental/Arial.ttf"),
+            Path("/Library/Fonts/Arial.ttf"),
+            Path("/System/Library/Fonts/Helvetica.ttc"),
+        ]
+    else:  # linux
+        candidates = [
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+            Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"),
+            Path("/usr/share/fonts/TTF/DejaVuSans.ttf"),
+        ]
+
+    for p in candidates:
+        if p.exists():
+            # Escape path for FFmpeg filter syntax (escape ':' with '\:')
+            return str(p.as_posix()).replace(":", "\\:")
+    return None
+
+
 def build_text_watermark_filter(
     video_w: int,
     video_h: int,
@@ -210,9 +247,12 @@ def build_text_watermark_filter(
         x_expr = f"w-tw-{margin_px}"
         y_expr = f"{margin_px}"
 
+    font_path = resolve_system_font_path()
+    fontfile_opt = f"fontfile='{font_path}':" if font_path else ""
+
     # Drawtext filter with high legibility background box
     filter_chain = (
-        f"[0:v]drawtext=text='{escaped_text}':"
+        f"[0:v]drawtext={fontfile_opt}text='{escaped_text}':"
         f"fontsize={font_size}:"
         f"fontcolor=white@{opacity:.2f}:"
         f"x={x_expr}:y={y_expr}:"
