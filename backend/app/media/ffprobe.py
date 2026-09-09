@@ -136,13 +136,14 @@ def probe_duration(file_path: Path) -> float:
     raise ValueError(f"Could not determine duration for media file {file_path}")
 
 
-def probe_media_info(file_path: Path) -> dict:
+def probe_media_info(file_path: Path | str) -> dict:
     """
     Get detailed media information using FFprobe.
 
     Returns:
         Dict with format and stream information.
     """
+    file_path = Path(file_path)
     if not is_ffmpeg_installed():
         raise FFmpegNotFoundError()
 
@@ -165,15 +166,16 @@ def probe_media_info(file_path: Path) -> dict:
     return json.loads(result.stdout)
 
 
-async def probe_media_info_async(file_path: Path) -> dict:
+async def probe_media_info_async(file_path: Path | str) -> dict:
     """Async non-blocking version of probe_media_info."""
     return await asyncio.to_thread(probe_media_info, file_path)
 
 
-def get_video_metadata(file_path: Path) -> dict:
+def get_video_metadata(file_path: Path | str) -> dict:
     """
     Extract video metadata (duration, width, height, format, has_audio) from media file.
     """
+    file_path = Path(file_path)
     info = probe_media_info(file_path)
     streams = info.get("streams", [])
     fmt = info.get("format", {})

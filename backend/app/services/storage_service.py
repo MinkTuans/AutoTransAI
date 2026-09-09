@@ -155,3 +155,9 @@ class LocalStorageService:
 # Aliases for 100% backward compatibility
 SupabaseStorageService = LocalStorageService
 storage_service = LocalStorageService()
+
+
+async def upload_file_to_r2(local_path: str | Path, object_key: str) -> str:
+    """Helper alias for uploading file to persistent local storage (formerly R2)."""
+    key, _url = await LocalStorageService.upload_file(Path(local_path), object_key)
+    return key

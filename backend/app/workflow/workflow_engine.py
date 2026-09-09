@@ -66,13 +66,17 @@ class WorkflowEngine:
             if context_data and isinstance(context_data, dict):
                 merged_context.update(context_data)
 
+            initial_stage = "INGEST"
+            if context_data and isinstance(context_data, dict) and "initial_stage" in context_data:
+                initial_stage = context_data["initial_stage"]
+
             if not wf_exec:
                 wf_exec = WorkflowExecution(
                     id=str(uuid.uuid4()),
                     project_id=project_id,
                     workflow_type="video_translation",
                     status=WorkflowEngineStatus.RUNNING.value,
-                    current_stage="INGEST",
+                    current_stage=initial_stage,
                     started_at=datetime.now(timezone.utc).replace(tzinfo=None),
                     context_data=merged_context,
                 )
@@ -83,6 +87,8 @@ class WorkflowEngine:
                 wf_exec.status = WorkflowEngineStatus.RUNNING.value
                 wf_exec.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 if context_data:
+                    if "initial_stage" in context_data:
+                        wf_exec.current_stage = context_data["initial_stage"]
                     existing_ctx = wf_exec.context_data or {}
                     existing_ctx.update(context_data)
                     wf_exec.context_data = existing_ctx
@@ -136,9 +142,30 @@ class WorkflowEngine:
             res = await db.execute(stmt)
             wf_exec = res.scalars().first()
             if not wf_exec:
-                raise ValueError(f"No workflow execution found for project {project_id}")
+                logger.info(f"[WorkflowEngine] No existing execution found for project {project_id}. Auto-starting workflow via resume.")
+                return await self.start_workflow(project_id, db=db)
 
             wf_exec.status = WorkflowEngineStatus.RUNNING.value
+            wf_exec.error_message = None
+
+            # Reset any failed stages or steps so loop re-runs them
+            stmt_stages = select(WorkflowStageExecution).where(
+                WorkflowStageExecution.workflow_execution_id == wf_exec.id
+            )
+            stages_res = await db.execute(stmt_stages)
+            for st in stages_res.scalars().all():
+                if st.status == WorkflowStageStatus.FAILED.value:
+                    st.status = WorkflowStageStatus.PENDING.value
+                    st.error = None
+                    stmt_steps = select(WorkflowStepExecution).where(
+                        WorkflowStepExecution.stage_execution_id == st.id
+                    )
+                    steps_res = await db.execute(stmt_steps)
+                    for step_rec in steps_res.scalars().all():
+                        if step_rec.status == WorkflowStepStatus.FAILED.value:
+                            step_rec.status = WorkflowStepStatus.PENDING.value
+                            step_rec.error = None
+
             await db.commit()
 
             if project_id in self._active_tasks and not self._active_tasks[project_id].done():
@@ -187,7 +214,8 @@ class WorkflowEngine:
             res = await db.execute(stmt)
             wf_exec = res.scalars().first()
             if not wf_exec:
-                raise ValueError(f"No workflow execution found for project {project_id}")
+                logger.info(f"[WorkflowEngine] No existing execution found for project {project_id}. Auto-starting workflow from stage '{stage_name}'.")
+                return await self.start_workflow(project_id, context_data={"initial_stage": stage_name}, db=db)
 
             # Reset specified stage and subsequent stages
             stmt_stages = select(WorkflowStageExecution).where(
@@ -245,6 +273,17 @@ class WorkflowEngine:
             ctx_dict = wf_exec.context_data or {"project_id": project_id}
             ctx = WorkflowContext.from_dict(ctx_dict)
             ctx.workflow_id = execution_id
+
+            # Ensure video_path and video_url are hydrated from DB if missing
+            if not ctx.video_path or not Path(ctx.video_path).is_file():
+                try:
+                    from app.workflow.stages.ingest_stage import IngestStage
+                    await IngestStage()._resolve_video_from_db(ctx, db)
+                except Exception as res_err:
+                    logger.warning(f"[WorkflowEngine] Failed to resolve video for context in loop: {res_err}")
+
+            wf_exec.context_data = ctx.to_dict()
+            await db.commit()
             
             # Progress callback for stages to use
             async def progress_cb(stage_name: str, pct: int, current: int, total: int, msg: str):
@@ -315,6 +354,7 @@ class WorkflowEngine:
                                 step_exec.output_data = output
                                 step_exec.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
                                 step_success = True
+                                wf_exec.context_data = ctx.to_dict()
                                 await db.commit()
                                 await self.emit_progress(project_id)
                                 break

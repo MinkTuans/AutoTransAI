@@ -403,6 +403,7 @@ async def create_translation_job(
         await session.flush()
         project_id = proj.id
 
+    job_id = str(uuid.uuid4())[:8]
     proj_settings = proj.settings_json or {} if (proj and proj.settings_json) else {}
     wm_enabled = body.watermark_enabled if body.watermark_enabled else _parse_bool(proj_settings.get("watermark_enabled"), False)
     wm_type = body.watermark_type if body.watermark_type != "image" else proj_settings.get("watermark_type", "image")
@@ -1282,7 +1283,7 @@ async def update_job_segments(
     session: AsyncSession = Depends(get_session),
 ):
     """Update translated text for transcript segments."""
-        updated_count = 0
+    updated_count = 0
     for item in body.segments:
         res = await session.execute(
             update(VideoTranslationSegment)
@@ -1481,11 +1482,216 @@ async def execute_job_render_pipeline(job_id: str) -> None:
             def on_sync_pid(pid: int):
                 asyncio.create_task(_update_pid(job_id, pid))
 
-                await fail_session.commit()
-        finally:
-            stop_job_heartbeat(job_id)
+            if not seg.get("tts_audio_path") or not Path(seg["tts_audio_path"]).exists():
+                logger.warning(f"[VIDEO-SYNC] Segment #{seg['segment_number']} TTS audio missing, skipping time-stretch.")
+                seg["synced_audio_path"] = None
+            else:
+                await sync_and_stretch_audio(
+                    Path(seg["tts_audio_path"]),
+                    target_duration=target_dur,
+                    output_synced_path=synced_path,
+                    job_id=job_id,
+                    on_progress=on_sync_progress,
+                    on_pid=on_sync_pid,
+                )
+                seg["synced_audio_path"] = str(synced_path)
 
-    background_tasks.add_task(run_render)
+            # Atomic DB update
+            async with async_session_factory() as step_session:
+                await step_session.execute(
+                    update(VideoTranslationSegment)
+                    .where(VideoTranslationSegment.id == seg["id"])
+                    .where(VideoTranslationSegment.job_id == job_id)
+                    .values(synced_audio_path=seg["synced_audio_path"])
+                )
+                sync_pct = round((idx / len(segments_data)) * 100.0, 1)
+                await step_session.execute(
+                    update(VideoTranslationJob)
+                    .where(VideoTranslationJob.id == job_id)
+                    .values(
+                        stage_progress_pct=sync_pct,
+                        overall_progress_pct=calculate_overall_progress("SYNCING_AUDIO", sync_pct),
+                    )
+                )
+                await step_session.commit()
+
+        # Step 3: Render Final Video Stage
+        current_stage = "RENDERING"
+        async with async_session_factory() as render_init_session:
+            await render_init_session.execute(
+                update(VideoTranslationJob)
+                .where(VideoTranslationJob.id == job_id)
+                .values(
+                    status=TranslationJobStatus.RENDERING.value,
+                    stage="RENDERING",
+                    current_step="Đang render video lồng tiếng bằng FFmpeg",
+                    stage_progress_pct=0.0,
+                    overall_progress_pct=calculate_overall_progress("RENDERING", 0.0),
+                )
+            )
+            await render_init_session.commit()
+        log_job_event(job_id, "RENDERING", "Starting final FFmpeg video render...")
+
+        if is_job_cancelled(job_id) or cancel_evt.is_set():
+            logger.info(f"[JOB-CANCEL] Job {job_id} cancelled before render. Stopping pipeline.")
+            return
+
+        def on_render_progress(stats: dict):
+            asyncio.create_task(_update_ffmpeg_stats(job_id, "RENDERING", stats.get("progress_pct", 0.0), stats.get("pid"), stats))
+
+        def on_render_pid(pid: int):
+            asyncio.create_task(_update_pid(job_id, pid))
+
+        final_video_path = job_dir / "final_dubbed_video.mp4"
+
+        # Query fresh ORM instances for rendering function
+        async with async_session_factory() as render_session:
+            seg_render_res = await render_session.execute(
+                select(VideoTranslationSegment)
+                .where(VideoTranslationSegment.job_id == job_id)
+                .order_by(VideoTranslationSegment.segment_number)
+            )
+            db_render_segments = seg_render_res.scalars().all()
+
+            rendered_path = await render_dubbed_video(
+                video_path=asset_file_path,
+                segments=db_render_segments,
+                original_audio_mode=original_audio_mode,
+                output_video_path=final_video_path,
+                work_dir=job_dir,
+                job_id=job_id,
+                on_progress=on_render_progress,
+                on_pid=on_render_pid,
+            )
+
+        # Apply Watermark if enabled
+        async with async_session_factory() as wm_session:
+            job_res = await wm_session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))
+            job_obj = job_res.scalar_one_or_none()
+
+            if job_obj and job_obj.watermark_enabled:
+                log_job_event(job_id, "WATERMARK", f"Applying {job_obj.watermark_type} watermark ({job_obj.watermark_position})...")
+                wm_config = WatermarkConfig(
+                    enabled=job_obj.watermark_enabled,
+                    type=WatermarkType(job_obj.watermark_type or "image"),
+                    image_path=job_obj.watermark_image_path,
+                    text=job_obj.watermark_text,
+                    position=WatermarkPosition.normalize(job_obj.watermark_position or "bottom_right"),
+                    scale=job_obj.watermark_scale or 0.20,
+                    opacity=job_obj.watermark_opacity or 0.80,
+                    margin=job_obj.watermark_margin or 20,
+                    font_size=job_obj.watermark_font_size or 32,
+                )
+
+                watermarked_final_path = job_dir / "final_dubbed_watermarked_video.mp4"
+                rendered_path = await WatermarkService.apply_watermark(
+                    input_video_path=rendered_path,
+                    output_video_path=watermarked_final_path,
+                    config=wm_config,
+                    job_id=job_id,
+                )
+                final_video_path = rendered_path
+
+        # Strict FFprobe Validation
+        meta = await get_video_metadata_async(rendered_path)
+        if not meta.get("has_audio"):
+            raise RuntimeError("❌ Output validation failed: Video thành phẩm không có audio stream.")
+        if meta.get("duration", 0.0) <= 0.0:
+            raise RuntimeError("❌ Output validation failed: Thời lượng video thành phẩm = 0s.")
+
+        log_job_event(
+            job_id,
+            "VALIDATION",
+            f"FFprobe Validation Passed: Duration={meta['duration']}s, Resolution={meta['width']}x{meta['height']}, Audio=True"
+        )
+
+        # Upload final video to Cloudflare R2 / Storage Service
+        r2_key = f"translator/jobs/{job_id}/final_dubbed_video.mp4"
+        object_key, output_url = await storage_service.upload_file(
+            final_video_path,
+            r2_key,
+            content_type="video/mp4"
+        )
+
+        # Clean intermediate temporary files via unified FileCleanupService
+        try:
+            from app.services.cleanup_service import FileCleanupService
+            clean_res = FileCleanupService.cleanup_job_workspace(job_id, keep_logs=True, keep_final_video=True)
+            log_job_event(job_id, "CLEANUP", f"Intermediate files purged ({clean_res['deleted_files']} files, {clean_res['bytes_freed'] / (1024*1024):.2f} MB freed).")
+        except Exception as clean_err:
+            logger.warning("Error cleaning intermediate files", error=str(clean_err), job_id=job_id)
+
+        async with async_session_factory() as final_session:
+            now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+            await final_session.execute(
+                update(VideoTranslationJob)
+                .where(VideoTranslationJob.id == job_id)
+                .values(
+                    status=TranslationJobStatus.COMPLETED.value,
+                    stage="COMPLETED",
+                    current_step="Hoàn tất lồng tiếng video",
+                    stage_progress_pct=100.0,
+                    overall_progress_pct=100.0,
+                    output_video_path=str(final_video_path),
+                    r2_key=object_key,
+                    output_url=output_url,
+                    is_cleaned=True,
+                    pid=None,
+                    last_checkpoint_stage="RENDER_DONE",
+                    last_checkpoint_at=now_dt,
+                    studio_state_json=json.dumps({"active_step": "completed", "active_tab": "overview"}),
+                    updated_at=now_dt,
+                )
+            )
+            await final_session.commit()
+        log_job_event(job_id, "COMPLETED", f"Final video ready at {output_url or final_video_path}")
+
+    except Exception as e:
+        tb_str = traceback.format_exc()
+        err_name = type(e).__name__
+        err_msg = str(e) or repr(e)
+        full_err_log = f"Error: {err_name}: {err_msg}\nStage: {current_stage}\nStack:\n{tb_str}"
+
+        db_err_detail = f"{err_name}: {err_msg}"
+        if isinstance(e, FFmpegExecutionError):
+            full_err_log += f"\nFFmpeg Exit Code: {e.exit_code}\nFFmpeg Stderr: {e.stderr_text}\nCommand: {' '.join(e.cmd)}"
+            if e.stderr_text:
+                db_err_detail += f" | Stderr: {e.stderr_text[:500]}"
+
+        logger.exception("Render dubbed video failed", job_id=job_id)
+        log_job_event(job_id, "FAILED", f"Render Exception:\n{full_err_log}")
+
+        async with async_session_factory() as fail_session:
+            await fail_session.execute(
+                update(VideoTranslationJob)
+                .where(VideoTranslationJob.id == job_id)
+                .values(
+                    status=TranslationJobStatus.FAILED.value,
+                    stage="FAILED",
+                    current_step=f"Lỗi tại stage {current_stage}: {err_name}",
+                    error_message=db_err_detail[:1000],
+                    pid=None,
+                    updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                )
+            )
+            await fail_session.commit()
+    finally:
+        stop_job_heartbeat(job_id)
+
+
+@router.post("/jobs/{job_id}/render", response_model=dict)
+async def render_final_translated_video(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+):
+    """Execute Phase 2 (TTS Generation -> Audio Sync -> FFmpeg Render Final Video)."""
+    res = await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))
+    job = res.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="❌ Job không tồn tại.")
+
+    background_tasks.add_task(execute_job_render_pipeline, job_id)
     return {"success": True, "data": {"rendering": True, "job_id": job_id}}
 
 
@@ -1799,6 +2005,23 @@ async def start_workflow_api(
 
     ctx_data["settings_snapshot"] = proj_settings
 
+    # Auto-resolve video_path / video_url from VideoTranslationJob & VideoAsset if not set
+    if not ctx_data.get("video_path") and not ctx_data.get("video_url"):
+        j_res = await session.execute(
+            select(VideoTranslationJob)
+            .where((VideoTranslationJob.project_id == project_id) | (VideoTranslationJob.id == project_id))
+            .order_by(VideoTranslationJob.created_at.desc())
+        )
+        job_rec = j_res.scalars().first()
+        if job_rec and job_rec.asset_id:
+            a_res = await session.execute(select(VideoAsset).where(VideoAsset.id == job_rec.asset_id))
+            asset_rec = a_res.scalars().first()
+            if asset_rec:
+                if asset_rec.file_path and Path(asset_rec.file_path).is_file():
+                    ctx_data["video_path"] = asset_rec.file_path
+                elif asset_rec.source_url:
+                    ctx_data["video_url"] = asset_rec.source_url
+
     print(f"[WORKFLOW SETTINGS SNAPSHOT] Project ID: {project_id} | Settings Snapshot Frozen: {list(proj_settings.keys())}")
     wf_exec = await _global_workflow_engine.start_workflow(project_id, context_data=ctx_data, db=session)
     return {"success": True, "data": {"workflow_id": wf_exec.id, "status": wf_exec.status}}
@@ -1813,10 +2036,46 @@ async def pause_workflow_api(project_id: str, session: AsyncSession = Depends(ge
 
 
 @router.post("/projects/{project_id}/workflow/resume", response_model=dict)
-async def resume_workflow_api(project_id: str, session: AsyncSession = Depends(get_session)):
+async def resume_workflow_api(
+    project_id: str,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+):
     """Resume unified 6-stage workflow engine from failed/paused stage."""
     await _validate_project_exists(project_id, session)
     wf_exec = await _global_workflow_engine.resume_workflow(project_id, session)
+
+    # Automatically restart/resume any associated VideoTranslationJob
+    try:
+        stmt = (
+            select(VideoTranslationJob)
+            .where(
+                (VideoTranslationJob.project_id == project_id) | (VideoTranslationJob.id == project_id)
+            )
+            .order_by(VideoTranslationJob.created_at.desc())
+        )
+        res = await session.execute(stmt)
+        job = res.scalars().first()
+        if job:
+            if job.status == TranslationJobStatus.SEGMENT_EDITING.value and job.auto_confirm_translation:
+                background_tasks.add_task(execute_job_render_pipeline, job.id)
+            elif job.status in [
+                TranslationJobStatus.FAILED.value,
+                TranslationJobStatus.CREATED.value,
+                TranslationJobStatus.SEGMENT_EDITING.value,
+            ]:
+                signal_job_cancellation(job.id)
+                job.error_message = None
+                job.status = TranslationJobStatus.CREATED.value
+                job.stage = "QUEUED"
+                job.current_step = "Resuming workflow pipeline..."
+                job.pid = None
+                await session.commit()
+                log_job_event(job.id, "RESUME", "Resuming translation job via resume_workflow_api.")
+                await start_translation_pipeline(job.id, background_tasks, session)
+    except Exception as err:
+        logger.warning(f"Failed to auto-resume job for project {project_id} in resume_workflow_api: {err}")
+
     return {"success": True, "data": {"workflow_id": wf_exec.id, "status": wf_exec.status}}
 
 
@@ -1852,7 +2111,7 @@ async def retry_stage_api(
         job = res.scalars().first()
         if job and job.status in [
             TranslationJobStatus.FAILED.value,
-            TranslationJobStatus.PAUSED.value,
+            TranslationJobStatus.SEGMENT_EDITING.value,
             TranslationJobStatus.CREATED.value,
         ]:
             signal_job_cancellation(job.id)
