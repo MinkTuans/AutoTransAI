@@ -37,8 +37,23 @@ The central engine (`app.workflow.workflow_engine.WorkflowEngine`) orchestrates 
 - `VideoTranslationJob` (`video_translation_jobs`): Per-video execution job tracking `project_id`, `asset_id`, `status`, `stage`, `settings_snapshot_json` (isolated configuration snapshot taken at job creation), `studio_state_json` (persisted UI step, active tab, selected segment ID), `last_checkpoint_stage` (`CREATED`, `EXTRACTING_AUDIO_DONE`, `STT_DONE`, `TRANSLATION_DONE`, `SEGMENT_EDITING_DONE`, `TTS_DONE`, `AUDIO_SYNC_DONE`, `RENDER_DONE`), `last_checkpoint_at`, watermark options, and timestamps.
 - `WorkflowStageExecution` (`workflow_stage_executions`): Tracks individual stage status (`pending`, `running`, `passed`, `failed`, `needs_review`, `skipped`), QC reports, and retry counts.
 - `WorkflowStepExecution` (`workflow_step_executions`): Fine-grained step execution tracking with status (`pending`, `running`, `success`, `failed`, `retrying`, `skipped`), input/output data payloads, and step retry counts.
+- `VideoMergeJob` (`video_merge_jobs`): Standalone video merge job tracking `id`, `title`, `status` (`pending`, `preparing`, `processing`, `completed`, `failed`, `cancelled`), `progress` (0-100%), `input_files_json` (ordered array of source video items), `output_video_path`, `output_relative_url`, `total_duration`, `processed_duration`, `error_message`, and timestamps.
+- `VideoMergeAsset` (`video_merge_assets`): Storage asset model for video merger uploads tracking `id`, `original_filename`, `file_path`, `file_size`, `duration`, `width`, `height`, `fps`, `has_audio`, `thumbnail_url`, and timestamps.
 
-### Real-Time Tracking & APIs
+### Standalone Video Merger Architecture
+- **Complete Decoupling**: Completely standalone workflow, page (`VideoMerger.jsx`), and routing (`?page=merger` / `/video-merger`) accessed directly via top-level `Navbar.jsx` menu item `🎬 Ghép Video`. Zero dependency on Video Translator workflow state.
+- **Resilient FFmpeg Concat & Normalization Engine (`VideoMergerService`)**:
+  - Preflight Inspection: Probe each input file via `probe_media_info_async` for file existence, readability, resolution, duration, FPS, codecs, and audio presence.
+  - Fast Concat (`-c copy`): Automatically used if all video inputs share identical resolution, frame rate, aspect ratio, codecs, and audio presence.
+  - Complex Filter Normalization (`-filter_complex`): If video parameters differ or any video is silent (missing audio), rescales while maintaining aspect ratio with black letterboxing, normalizes FPS to 30, generates synchronized silent audio tracks via `anullsrc=r=44100:cl=stereo:d={duration}`, and concatenates into a unified H.264/AAC output MP4.
+  - Real-time Progress: Tracks FFmpeg stdout `out_time_us` via `run_ffmpeg_with_progress_async` streaming progress updates to DB for real-time frontend status polling.
+- **Video Merger APIs (`/api/video-merger/*`)**:
+  - `POST /api/video-merger/upload`: Upload video file for merging with FFprobe probing and thumbnail frame extraction.
+  - `GET /api/video-merger/assets`: List existing system video assets for selection.
+  - `POST /api/video-merger/jobs`: Create merge job with ordered video sequence.
+  - `POST /api/video-merger/jobs/{job_id}/start`: Start background merge task with double-click submission guard.
+  - `GET /api/video-merger/jobs/{job_id}`: Real-time job status polling endpoint.
+  - `POST /api/video-merger/jobs/{job_id}/retry`: Retry failed merge job.
 - Pre-flight Endpoint: `POST /api/video-translator/projects/{project_id}/workflow/preflight` (Evaluates CRITICAL vs OPTIONAL check prerequisites).
 - Status Endpoint: `GET /api/video-translator/projects/{project_id}/workflow-status`
 - Start Endpoint: `POST /api/video-translator/projects/{project_id}/workflow/start` (accepts `StartWorkflowRequest` configuration)
@@ -46,11 +61,13 @@ The central engine (`app.workflow.workflow_engine.WorkflowEngine`) orchestrates 
 - Resume Endpoint: `POST /api/video-translator/projects/{project_id}/workflow/resume`
 - Cancel Endpoint: `POST /api/video-translator/projects/{project_id}/workflow/cancel`
 - Retry Stage Endpoint: `POST /api/video-translator/projects/{project_id}/workflow/stage/{stage_name}/retry`
-- Project Settings Endpoints: `GET /api/projects/{project_id}/settings`, `POST /api/projects/{project_id}/settings`, `PUT /api/projects/{project_id}/settings` (enforces single source of truth, `DEFAULT_PROJECT_SETTINGS` fallback, strict `_parse_bool` boolean string normalization for `watermark_enabled` / `thumbnail_enabled` / `auto_confirm_translation`, numeric boundary validation, and emits structured debug logs `[PROJECT SETTINGS LOAD]` and `[PROJECT SETTINGS SAVE]`).
-- Automated Translation Text Confirmation (`auto_confirm_translation`): Enabled by default (`True`). When starting workflow, Phase 1 (Speech-to-Text & Translation) automatically confirms generated text segments upon completion and seamlessly proceeds to Phase 2 (`execute_job_render_pipeline`: TTS dubbing synthesis, time-stretch audio sync, and FFmpeg video rendering) without pausing for manual user confirmation. Users can optionally toggle auto-confirmation off in project settings for manual segment editing before rendering.
+- Project Settings Endpoints: `GET /api/projects/{project_id}/settings`, `POST /api/projects/{project_id}/settings`, `PUT /api/projects/{project_id}/settings` (enforces single source of truth, `DEFAULT_PROJECT_SETTINGS` fallback, strict `_parse_bool` boolean string normalization for `watermark_enabled` / `thumbnail_enabled` / `auto_confirm_translation` / `youtube_enabled` / `youtube_ai_seo_enabled`, YouTube Channel Name, Title Template with zero-padded `{episode}` order calculation, Description default, Tags merge engine `merge_youtube_tags` case-insensitive deduplication, numeric boundary validation, and emits structured debug logs `[PROJECT SETTINGS LOAD]` and `[PROJECT SETTINGS SAVE]`).
+- Automated Translation Text Confirmation (`auto_confirm_translation`): Enabled by default (`True`). When Phase 1 (Speech-to-Text & Translation) finishes, backend automatically confirms translated text segments, persists `confirmed` status in DB, and releases job lock before launching Phase 2 (`execute_job_render_pipeline`: TTS dubbing synthesis, time-stretch audio sync, and FFmpeg video rendering). Standalone idempotent helper `auto_confirm_and_start_render_if_needed(job_id)` is invoked across status polling (`GET /jobs/{job_id}`, `GET /projects/{project_id}/workflow-status`), workflow resume, and heartbeat checks, guaranteeing seamless transition to `DUB` (`GENERATING_TTS`) without user intervention or false 60s `STALLED` timeouts.
+- Single Source of Truth 6-Stage Workflow Synchronization: `GET /api/video-translator/projects/{project_id}/workflow-status` dynamically resolves lifecycle stages (`INGEST` → `ANALYZE` → `TRANSLATE` → `DUB` → `PRODUCE` → `PUBLISH`) from active `VideoTranslationJob` status (`SEGMENT_EDITING`, `GENERATING_TTS`, `SYNCING_AUDIO`, `RENDERING`, `COMPLETED`), ensuring stage cards in `WorkflowTimeline.jsx` never freeze at `INGEST` once ingestion sub-steps pass.
+
 - Watermark Asset Storage & Path Resolution: `POST /api/video-translator/upload-watermark-logo` stores files under `storage/projects/{project_id}/assets/watermarks/`, creates `Asset` DB records (`asset_type="watermark_logo"`), and links `watermark_image_asset_id` directly in project `settings_json`. `WatermarkService.resolve_watermark_image_path` safely resolves relative paths against `STORAGE_ROOT` and `DATA_DIR`.
 - Workflow Context & Stage Execution Order: `WorkflowContext` serializes and preserves `watermark_enabled`, `watermark_type`, `watermark_image_path`, etc., across all stages. In `ProduceStage`, `final_render` (dubbed video multiplexing) executes before `add_watermark_logo` so the watermark overlay pass is burned directly onto the final dubbed video.
-- Project Detail & Management API: `GET /api/projects/{project_id}` returns project metadata, normalized settings, list of associated videos (`videos`), segments array, and glossary stats (`glossary_count`, `terminology_count`).
+- Project Detail & Management API: `GET /api/projects/{project_id}` returns project metadata, normalized settings, list of associated videos (`videos`), segments array, and glossary stats (`glossary_count`, `terminology_count`). `PATCH /api/projects/{project_id}` and `PUT /api/projects/{project_id}` update `Project.title`, `Project.description`, and synchronize `VideoAsset.title` in SQLite DB.
 - Projects List Endpoint: `GET /api/projects` (Supports optional server-side pagination params: `page: int`, `page_size: int` defaulting to 8 items per page, returning `total`, `page`, `page_size`, `total_pages`).
 
 ### AI Model Routing & Single Source of Truth Architecture
@@ -90,11 +107,12 @@ The central engine (`app.workflow.workflow_engine.WorkflowEngine`) orchestrates 
   - `running`: Displays `⏸ Pause` and `🛑 Cancel` buttons.
   - `paused`: Replaces `Pause` with `▶ Resume` button while retaining `🛑 Cancel`.
   - **Optimistic State Transition**: Clicking `▶ Start Workflow` immediately triggers optimistic frontend status set (`status: 'running'`), ensuring instant visual action response without lag.
-- **Unified Workflow Layout Hierarchy**:
-  1. `Unified 6-Stage Workflow Pipeline` (`WorkflowTimeline.jsx`): Always fixed and expanded at the top.
-  2. `Error Message Card` (`❌ Xử Lý Thất Bại`): Positioned directly beneath `WorkflowTimeline.jsx` when workflow state is `failed`.
-  3. `Job Progress Panel` (`📊 Tiến Trình Xử Lý Pipeline (Job: ...)`): Positioned directly beneath Error Card, rendering overall progress, stage details, and debug telemetry.
-  4. `Collapsible Configuration & Control Cards`: Section cards (`⚙️ Cấu hình Nhập Video`, `📖 Quản Lý Thuật Ngữ`, `🖼️ Tạo Thumbnail AI`) feature collapsible accordion controls (`▼ Mở rộng` / `▲ Thu gọn`) for a clean, non-cluttered interface.
+- **Unified Workflow Layout Hierarchy (2-Column Responsive Studio Layout)**:
+  1. `Studio Header Bar`: Compact project selector dropdown and settings dirty warning banner.
+  2. `Main Studio Grid` (`.translator-studio-grid`):
+     - **Left Primary Column**: Integrated `Unified 6-Stage Workflow Pipeline` (`WorkflowTimeline.jsx`) incorporating stage cards, overall progress, stage progress, heartbeat status, FFmpeg process stats, STT/Translation/TTS status, debug telemetry, and compact inline error alert -> Compact Video Input & Translation/Dubbing Config Panel.
+     - **Right Auxiliary Column**: Advanced Branding & AI Controls Card containing Watermark (Logo/Text toggle, preview, position/scale sliders) and AI Auto Thumbnail (Style, Provider, Custom Instructions) built with progressive disclosure.
+  3. `Below Viewport Area`: Project Glossary Manager accordion (`ProjectGlossaryManager.jsx`, default collapsed to maintain single-viewport fit) -> Segment Editor (when Phase 1 completes) -> Final Dubbed Video Player & Export Studio.
 - **Stage Execution Animations & Passed States**:
   - **Running Stage**: Highlighted with an animated glowing pulse border (`stagePulseGlow`), animated spinning gear badge (`spinner-icon`), and bright cyan accent.
   - **Passed/Completed Stage**: Rendered with solid emerald green border (`#10B981`), green checkmark badge (`✓ Passed`), and emerald highlight.

@@ -19,21 +19,32 @@ settings = get_settings()
 
 @router.get("/files/{file_path:path}")
 async def get_storage_file(file_path: str):
-    """Stream media file stored in persistent Supabase/local storage."""
-    file_path = file_path.lstrip("/\\").replace("\\", "/")
+    """Stream media file stored in persistent local storage."""
+    raw_path = file_path.replace("\\", "/")
     
-    # 1. Check local supabase_storage
-    local_target = SupabaseStorageService.get_local_storage_dir() / file_path
+    # 1. Direct absolute path check
+    p_abs = Path(raw_path)
+    if p_abs.is_absolute() and p_abs.exists() and p_abs.is_file():
+        return FileResponse(p_abs)
+
+    # Clean relative path prefixes
+    clean_path = raw_path.lstrip("/\\")
+    for prefix in ("api/storage/files/", "storage/files/", "media/", "storage/"):
+        if clean_path.startswith(prefix):
+            clean_path = clean_path[len(prefix):]
+
+    # 2. Check local storage dir
+    local_target = SupabaseStorageService.get_local_storage_dir() / clean_path
     if local_target.exists() and local_target.is_file():
         return FileResponse(local_target)
 
-    # 2. Check data directory
-    data_target = settings.DATA_DIR / file_path
+    # 3. Check data directory
+    data_target = settings.DATA_DIR / clean_path
     if data_target.exists() and data_target.is_file():
         return FileResponse(data_target)
 
-    # 3. Check relative path from root
-    root_target = Path(file_path)
+    # 4. Check relative path from current directory
+    root_target = Path(clean_path)
     if root_target.exists() and root_target.is_file():
         return FileResponse(root_target)
 
@@ -42,36 +53,44 @@ async def get_storage_file(file_path: str):
 @router.get("/download")
 async def download_file(path: str, filename: str = "download.mp4"):
     """Force download of a file with Content-Disposition attachment."""
-    file_path = path.lstrip("/\\").replace("\\", "/")
-    
-    # 1. Check local supabase_storage (where output videos are saved)
-    local_target = SupabaseStorageService.get_local_storage_dir() / file_path
-    if local_target.exists() and local_target.is_file():
+    if not path:
+        raise HTTPException(status_code=400, detail="❌ Khuyết đường dẫn file download.")
+
+    raw_path = path.replace("\\", "/")
+    target_file: Optional[Path] = None
+
+    # 1. Direct absolute path check
+    p_abs = Path(raw_path)
+    if p_abs.is_absolute() and p_abs.exists() and p_abs.is_file():
+        target_file = p_abs
+    else:
+        # Clean relative path prefixes
+        clean_path = raw_path.lstrip("/\\")
+        for prefix in ("api/storage/files/", "storage/files/", "media/", "storage/"):
+            if clean_path.startswith(prefix):
+                clean_path = clean_path[len(prefix):]
+
+        # 2. Check local storage dir
+        local_target = SupabaseStorageService.get_local_storage_dir() / clean_path
+        if local_target.exists() and local_target.is_file():
+            target_file = local_target
+        else:
+            # 3. Check data directory
+            data_target = settings.DATA_DIR / clean_path
+            if data_target.exists() and data_target.is_file():
+                target_file = data_target
+            else:
+                # 4. Check relative path
+                root_target = Path(clean_path)
+                if root_target.exists() and root_target.is_file():
+                    target_file = root_target
+
+    if target_file and target_file.exists() and target_file.is_file():
         return FileResponse(
-            path=local_target, 
-            filename=filename, 
+            path=target_file,
+            filename=filename,
             media_type="application/octet-stream",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
         )
-    
-    # 2. Check data directory (since media files are there)
-    data_target = settings.DATA_DIR / file_path
-    if data_target.exists() and data_target.is_file():
-        return FileResponse(
-            path=data_target, 
-            filename=filename, 
-            media_type="application/octet-stream",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
-        )
-        
-    # 3. Check absolute path fallback
-    root_target = Path(file_path)
-    if root_target.exists() and root_target.is_file():
-        return FileResponse(
-            path=root_target, 
-            filename=filename, 
-            media_type="application/octet-stream",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
-        )
-        
-    raise HTTPException(status_code=404, detail=f"❌ File not found for download: {file_path}")
+
+    raise HTTPException(status_code=404, detail=f"❌ File không tồn tại để tải về: {path}")

@@ -5,17 +5,17 @@ import AIQCScorecard from '../components/AIQCScorecard';
 import YouTubePublisherModal from '../components/YouTubePublisherModal';
 import WorkflowTimeline from '../components/WorkflowTimeline';
 import ProjectGlossaryManager from '../components/ProjectGlossaryManager';
-import { LoadingSpinner, ButtonSpinner, LoadingOverlay } from '../components/LoadingSpinner';
+import { LoadingSpinner, ButtonSpinner } from '../components/LoadingSpinner';
 
 function CollapsibleCard({ title, icon, defaultOpen = true, children, extraHeaderRight }) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
   return (
-    <div className="card" style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '12px', marginBottom: '24px', overflow: 'hidden' }}>
+    <div className="card" style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '12px', marginBottom: '20px', overflow: 'hidden' }}>
       <div
         onClick={() => setIsOpen(!isOpen)}
         style={{
-          padding: '16px 20px',
+          padding: '14px 18px',
           background: '#0f172a',
           cursor: 'pointer',
           display: 'flex',
@@ -27,20 +27,19 @@ function CollapsibleCard({ title, icon, defaultOpen = true, children, extraHeade
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span style={{ fontSize: '18px' }}>{icon}</span>
-          <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold', color: '#f8fafc' }}>{title}</h3>
+          <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 'bold', color: '#f8fafc' }}>{title}</h3>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           {extraHeaderRight && <div onClick={(e) => e.stopPropagation()}>{extraHeaderRight}</div>}
-          <span style={{ fontSize: '13px', color: '#94a3b8', background: '#1e293b', padding: '4px 10px', borderRadius: '6px', fontWeight: 'bold', border: '1px solid #334155' }}>
+          <span style={{ fontSize: '12px', color: '#94a3b8', background: '#1e293b', padding: '4px 8px', borderRadius: '6px', fontWeight: 'bold', border: '1px solid #334155' }}>
             {isOpen ? '▲ Thu gọn' : '▼ Mở rộng'}
           </span>
         </div>
       </div>
-      {isOpen && <div style={{ padding: '20px' }}>{children}</div>}
+      {isOpen && <div style={{ padding: '16px 18px' }}>{children}</div>}
     </div>
   );
 }
-
 
 export default function VideoTranslator({ initialJobId, initialProjectId, onProcessingStateChange }) {
   const [showYouTubeModal, setShowYouTubeModal] = useState(false);
@@ -79,6 +78,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   const [watermarkFontSize, setWatermarkFontSize] = useState(32);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const [watermarkValidationError, setWatermarkValidationError] = useState('');
+  const [showWatermarkDetails, setShowWatermarkDetails] = useState(false);
 
   // AI Thumbnail Settings State
   const [thumbnailEnabled, setThumbnailEnabled] = useState(false);
@@ -100,6 +100,40 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   const [newProjectTitle, setNewProjectTitle] = useState('');
   const [newProjectDescription, setNewProjectDescription] = useState('');
   const [isCreatingProject, setIsCreatingProject] = useState(false);
+
+  const [showEditTitleModal, setShowEditTitleModal] = useState(false);
+  const [editTitleInput, setEditTitleInput] = useState('');
+  const [isSavingTitle, setIsSavingTitle] = useState(false);
+
+  const handleOpenEditTitleModal = () => {
+    if (!selectedProjectId) return;
+    const currentProj = projectsList.find(p => p.id === selectedProjectId);
+    const titleToEdit = currentProj?.title || job?.asset?.title || '';
+    setEditTitleInput(titleToEdit);
+    setShowEditTitleModal(true);
+  };
+
+  const handleSaveProjectTitleInStudio = async () => {
+    if (!selectedProjectId || !editTitleInput.trim()) return;
+    setIsSavingTitle(true);
+    try {
+      const res = await projectsApi.update(selectedProjectId, { title: editTitleInput.trim() });
+      if (res.success) {
+        setShowEditTitleModal(false);
+        await fetchProjectsList();
+        if (job) {
+          setJob(prev => prev ? { ...prev, asset: { ...prev.asset, title: editTitleInput.trim() } } : prev);
+        }
+      } else {
+        alert('Không thể cập nhật tên dự án: ' + (res.message || 'Lỗi không xác định'));
+      }
+    } catch (err) {
+      alert('Lỗi khi cập nhật tên dự án: ' + formatApiError(err, 'Lỗi hệ thống'));
+    } finally {
+      setIsSavingTitle(false);
+    }
+  };
+
 
   const [showPreflightModal, setShowPreflightModal] = useState(false);
   const [isPreflighting, setIsPreflighting] = useState(false);
@@ -154,7 +188,6 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         const urlStr = res.data.url || URL.createObjectURL(file);
         setWatermarkImagePreview(urlStr);
 
-        // Immediately persist to Project Settings DB if a project is selected
         if (selectedProjectId && selectedProjectId !== 'default_project') {
           const currentConfig = getCurrentSettingsObject();
           currentConfig.watermark_image_path = imgPath;
@@ -175,7 +208,6 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     }
   };
 
-
   // Job execution state
   const [asset, setAsset] = useState(null);
   const [job, setJob] = useState(null);
@@ -187,7 +219,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   const [workflowStatusData, setWorkflowStatusData] = useState(null);
   const [loadingWorkflowAction, setLoadingWorkflowAction] = useState(null);
 
-  // Handle browser tab close/refresh guard & notify parent App of running pipeline
+  // Handle browser tab close/refresh guard & notify parent App
   useEffect(() => {
     const isRunning = isProcessing || (workflowStatusData && ['running', 'processing'].includes(workflowStatusData.status));
 
@@ -280,7 +312,6 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     setIsSettingsDirty(false);
   };
 
-  // Sync Project Settings when Project selection changes
   useEffect(() => {
     if (!selectedProjectId || selectedProjectId === 'default_project') return;
 
@@ -294,7 +325,6 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     fetchWorkflowStatus(selectedProjectId);
   }, [selectedProjectId]);
 
-  // Detect dirty state changes across ALL fields
   useEffect(() => {
     if (!savedProjectSettings || !selectedProjectId) {
       setIsSettingsDirty(false);
@@ -401,7 +431,6 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   useEffect(() => {
     if (!activeProjectId || activeProjectId === 'default_project') return;
 
-    // Initial fetch to get full state
     fetchWorkflowStatus(activeProjectId);
 
     let eventSource = null;
@@ -416,8 +445,6 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
           if (event.data === 'ping') return;
           const payload = JSON.parse(event.data);
           if (payload && payload.type === 'workflow_update') {
-            // Re-fetch the full status when we get an update ping
-            // In a more robust system, we might stream the exact state, but fetching guarantees correctness
             fetchWorkflowStatus(activeProjectId);
           }
         } catch (err) {
@@ -428,7 +455,6 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       eventSource.onerror = (err) => {
         console.error("SSE Connection Error", err);
         eventSource.close();
-        // Auto reconnect after 5 seconds
         retryTimeout = setTimeout(connectSSE, 5000);
       };
     };
@@ -559,17 +585,6 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     }
   };
 
-  useEffect(() => {
-    const handleBeforeUnload = (e) => {
-      if (isSettingsDirty || (showCreateProjectModal && newProjectTitle.trim())) {
-        e.preventDefault();
-        e.returnValue = '';
-      }
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [isSettingsDirty, showCreateProjectModal, newProjectTitle]);
-
   const handleStartWorkflow = async () => {
     if (!activeProjectId || activeProjectId === 'default_project') {
       setShowNoProjectModal(true);
@@ -578,21 +593,6 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     setLoadingWorkflowAction('start');
     setIsProcessing(true);
     setPipelineError(null);
-    setWorkflowStatusData(prev => ({
-      ...(prev || {}),
-      status: 'running',
-      current_stage: prev?.current_stage || 'INGEST',
-      current_step: 'Đang gửi yêu cầu khởi chạy...',
-      overall_progress_pct: prev?.overall_progress_pct || 0,
-      stages: prev?.stages || [
-        { name: 'INGEST', status: 'running' },
-        { name: 'ANALYZE', status: 'pending' },
-        { name: 'TRANSLATE', status: 'pending' },
-        { name: 'DUB', status: 'pending' },
-        { name: 'PRODUCE', status: 'pending' },
-        { name: 'PUBLISH', status: 'pending' },
-      ]
-    }));
     try {
       const payload = {
         video_url: inputMode === 'url' ? videoUrl : null,
@@ -623,7 +623,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   };
 
   const handlePauseWorkflow = async () => {
-    if (!validateProjectBeforeAction()) return;
+    if (!activeProjectId) return;
     setLoadingWorkflowAction('pause');
     try {
       await videoTranslatorApi.pauseWorkflow(activeProjectId);
@@ -636,7 +636,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   };
 
   const handleResumeWorkflow = async () => {
-    if (!validateProjectBeforeAction()) return;
+    if (!activeProjectId) return;
     setLoadingWorkflowAction('resume');
     try {
       await videoTranslatorApi.resumeWorkflow(activeProjectId);
@@ -649,7 +649,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   };
 
   const handleCancelWorkflow = async () => {
-    if (!validateProjectBeforeAction()) return;
+    if (!activeProjectId) return;
     setLoadingWorkflowAction('cancel');
     try {
       await videoTranslatorApi.cancelWorkflow(activeProjectId);
@@ -660,10 +660,9 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       setLoadingWorkflowAction(null);
     }
   };
-  const handleCancelJob = handleCancelWorkflow;
 
   const handleRetryStage = async (stageName) => {
-    if (!validateProjectBeforeAction()) return;
+    if (!activeProjectId) return;
     setLoadingWorkflowAction('retry');
     setIsProcessing(true);
     setPipelineError(null);
@@ -692,12 +691,11 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
 
   const autoSaveTimerRef = useRef(null);
 
-  // Initial Job ID & Studio State effect
   useEffect(() => {
     if (initialJobId) {
       videoTranslatorApi.getStudioState(initialJobId).then(res => {
         if (res.success && res.data) {
-          const { job: loadedJob, asset: loadedAsset, settings_snapshot, studio_state, segments: loadedSegs } = res.data;
+          const { job: loadedJob, asset: loadedAsset, settings_snapshot, segments: loadedSegs } = res.data;
           setJob({ ...loadedJob, asset: loadedAsset || loadedJob?.asset });
           if (loadedSegs) setSegments(loadedSegs);
           if (settings_snapshot) {
@@ -726,7 +724,6 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     }
   }, [initialJobId]);
 
-  // Debounced Autosave for edited transcript segments
   useEffect(() => {
     if (!job?.id || !segments || segments.length === 0) return;
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
@@ -745,7 +742,6 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     };
   }, [segments, job?.id]);
 
-
   // Log Modal state
   const [showLogModal, setShowLogModal] = useState(false);
   const [logsContent, setLogsContent] = useState('');
@@ -757,7 +753,6 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   const [lastPollTime, setLastPollTime] = useState(null);
   const [lastApiResponseTime, setLastApiResponseTime] = useState(null);
 
-  // Fetch voices when provider or language changes
   useEffect(() => {
     providersApi.listVoices(audioProviderId, targetLanguage)
       .then(res => {
@@ -774,7 +769,6 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   const activeJobId = job?.id || job?.job_id;
   const lastPollTimestampRef = useRef(0);
 
-  // Single Source of Truth Polling Effect
   useEffect(() => {
     if (!activeJobId) return;
 
@@ -789,7 +783,6 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       const reqTimestamp = Date.now();
       const nowStr = new Date().toLocaleTimeString('vi-VN');
       setLastPollTime(nowStr);
-      console.log(`[JOB POLL] Job ID: ${activeJobId} | Request time: ${nowStr}`);
 
       videoTranslatorApi.getJob(activeJobId)
         .then(res => {
@@ -803,13 +796,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
               id: rawData.id || rawData.job_id,
             };
 
-            console.log(`[JOB POLL RESPONSE] Job: ${newJob.id} | Status: ${newJob.status} | Stage: ${newJob.stage} | Overall: ${newJob.overall_progress_pct}% | StagePct: ${newJob.stage_progress_pct}% | Heartbeat: ${newJob.heartbeat?.active} | FFmpeg: ${newJob.process?.status} | Segments: ${newJob.segments?.length || 0}`);
-
-            // Stale response check: reject if request is older than latest received
-            if (reqTimestamp < lastPollTimestampRef.current) {
-              console.warn('[JOB POLL] Ignoring stale response');
-              return;
-            }
+            if (reqTimestamp < lastPollTimestampRef.current) return;
             lastPollTimestampRef.current = reqTimestamp;
 
             setJob(prev => {
@@ -832,9 +819,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
             }
           }
         })
-        .catch(err => {
-          console.error('[JOB POLL ERROR]', err);
-        });
+        .catch(err => console.error('[JOB POLL ERROR]', err));
     };
 
     fetchJobStatus();
@@ -852,7 +837,6 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   const formatApiError = (err, defaultMsg) => {
     const status = err.response?.status ? `[HTTP ${err.response.status}] ` : '';
     const method = err.config?.method ? err.config.method.toUpperCase() + ' ' : '';
-    const url = err.config?.url ? err.config.url + '\n' : '';
     const serverDetail = err.response?.data?.detail;
     const errorMsg = err.response?.data?.error || err.message;
 
@@ -864,7 +848,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     } else {
       detailStr = defaultMsg;
     }
-    return `${status}${method}${url}Lỗi: ${detailStr}`;
+    return `${status}${method} Lỗi: ${detailStr}`;
   };
 
   const fetchLogs = async (jobId) => {
@@ -872,7 +856,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     if (!targetId) {
       setLogsContent(
         pipelineError
-          ? `⚠️ Chưa có Job ID được gán (Khởi tạo Job thất bại).\n\n[Chi Tiết Lỗi Request/Pipeline]:\n${pipelineError}`
+          ? `⚠️ Chưa có Job ID được gán.\n\n[Chi Tiết Lỗi Pipeline]:\n${pipelineError}`
           : 'Chưa có thông tin Job ID hoặc log execution.'
       );
       return;
@@ -885,9 +869,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       }
     } catch (err) {
       const errFormatted = formatApiError(err, 'Lỗi không thể lấy log từ server');
-      setLogsContent(
-        `Không thể tải log từ server cho Job ID (${targetId}):\n${errFormatted}\n\n[Chi Tiết Lỗi Pipeline Hiển Thị]:\n${pipelineError || job?.error_message || 'N/A'}`
-      );
+      setLogsContent(`Không thể tải log cho Job ID (${targetId}):\n${errFormatted}\n\n[Lỗi Pipeline]:\n${pipelineError || job?.error_message || 'N/A'}`);
     } finally {
       setIsFetchingLogs(false);
     }
@@ -969,11 +951,9 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         watermark_font_size: watermarkFontSize,
       });
 
-
       const newJobId = jobRes.data.job_id || jobRes.data.id;
       const realProjectId = jobRes.data.project_id || newJobId;
 
-      // Immediately set job state so activeJobId and project_id are populated before startJob completes
       const initialPendingJob = {
         id: newJobId,
         job_id: newJobId,
@@ -1048,11 +1028,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       if (activeJobId) {
         const res = await videoTranslatorApi.getJob(activeJobId);
         if (res && res.success && res.data) {
-          const normalized = {
-            ...res.data,
-            id: res.data.id || res.data.job_id,
-          };
-          setJob(normalized);
+          setJob({ ...res.data, id: res.data.id || res.data.job_id });
         }
       }
     } catch (err) {
@@ -1070,945 +1046,600 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  const getHeartbeatBadge = (currentJob) => {
-    if (!currentJob) return null;
-    const status = currentJob.status;
-    const heartbeat = currentJob.heartbeat || {};
-    const ageSec = heartbeat.age_seconds ?? 999;
-
-    if (status === 'failed') {
-      return (
-        <span style={{ color: '#f87171', fontSize: '13px', fontWeight: 'bold' }}>
-          🔴 Job thất bại (FAILED)
-        </span>
-      );
-    }
-    if (status === 'completed') {
-      return (
-        <span style={{ color: '#4ade80', fontSize: '13px', fontWeight: 'bold' }}>
-          🟢 Hoàn thành (COMPLETED)
-        </span>
-      );
-    }
-    if (status === 'cancelled') {
-      return (
-        <span style={{ color: '#94a3b8', fontSize: '13px', fontWeight: 'bold' }}>
-          ⚪ Đã hủy bởi người dùng (CANCELLED)
-        </span>
-      );
-    }
-    if (status === 'segment_editing') {
-      return (
-        <span style={{ color: '#6ee7b7', fontSize: '13px', fontWeight: 'bold' }}>
-          🟢 Phase 1 Hoàn Thành (Đang chờ bạn xác nhận phân đoạn)
-        </span>
-      );
-    }
-    if (status === 'stalled') {
-      return (
-        <span style={{ color: '#fb923c', fontSize: '13px', fontWeight: 'bold' }}>
-          🟠 Process có thể đã bị treo (STALLED)
-        </span>
-      );
-    }
-
-    if (heartbeat.active && ageSec <= 15) {
-      return (
-        <span style={{ color: '#4ade80', fontSize: '13px', fontWeight: 'bold' }}>
-          🟢 Worker đang hoạt động (Cập nhật {Math.round(ageSec)}s trước)
-        </span>
-      );
-    }
-    if (ageSec <= 45) {
-      return (
-        <span style={{ color: '#facc15', fontSize: '13px', fontWeight: 'bold' }}>
-          🟡 Đang xử lý / Chờ server... (Cập nhật {Math.round(ageSec)}s trước)
-        </span>
-      );
-    }
-    return (
-      <span style={{ color: '#94a3b8', fontSize: '13px', fontWeight: 'bold' }}>
-        ⚪ Worker đã dừng (Dừng heartbeat)
-      </span>
-    );
-  };
-
   return (
-    <div className="video-translator-container" style={{ padding: '24px', maxWidth: '1100px', margin: '0 auto' }}>
-      <h1 style={{ fontSize: '28px', fontWeight: 'bold', marginBottom: '8px', color: '#818cf8' }}>
-        🎬 Video Translator – Dịch & Lồng tiếng Video
-      </h1>
-      <p style={{ color: '#94a3b8', marginBottom: '24px' }}>
-        Tự động dịch giọng nói trong video từ URL Internet hoặc file Upload với cơ chế real-time tracking, heartbeat và FFmpeg process log.
-      </p>
+    <div className="video-translator-studio">
+      {/* Studio Header Bar */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+        <div>
+          <h1 style={{ fontSize: '22px', fontWeight: 'bold', margin: 0, color: '#818cf8', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            🎬 Video Translator – Studio Dịch & Lồng Tiếng
+          </h1>
+          <p style={{ color: '#94a3b8', margin: '2px 0 0 0', fontSize: '13px' }}>
+            Tự động dịch giọng nói trong video với Unified 6-Stage Engine, realtime tracking & AI controls.
+          </p>
+        </div>
 
-      {/* Project Selector Bar */}
-      <div style={{ background: '#1e1b4b', border: '1px solid #4338ca', borderRadius: '12px', padding: '8px 20px', marginBottom: '24px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: '280px' }}>
-          <span style={{ fontSize: '15px', fontWeight: 'bold', color: '#fff', whiteSpace: 'nowrap' }}>Dự án hiện tại:</span>
+        {/* Project Selector Compact Dropdown */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#1e1b4b', border: '1px solid #4338ca', padding: '6px 12px', borderRadius: '8px' }}>
+          <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#fff', whiteSpace: 'nowrap' }}>Dự án:</span>
           <select
             value={selectedProjectId || ''}
             onChange={(e) => handleProjectSelectAttempt(e.target.value || null)}
-            style={{ flex: 1, width: '100%', minWidth: '200px', padding: '10px 14px', borderRadius: '8px', background: '#0f1117', color: '#fff', border: '1px solid #4338ca', fontSize: '14px', fontWeight: '500' }}
+            style={{ padding: '6px 10px', borderRadius: '6px', background: '#0f1117', color: '#fff', border: '1px solid #4338ca', fontSize: '13px', minWidth: '180px' }}
           >
-            <option value="">-- Chưa chọn dự án (Bấm để chọn) --</option>
+            <option value="">-- Chọn dự án --</option>
             {projectsList.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.title} (ID: {p.id})
               </option>
             ))}
           </select>
+          {selectedProjectId && (
+            <button
+              onClick={handleOpenEditTitleModal}
+              title="Đổi tên dự án hiện tại"
+              style={{ background: '#3730a3', color: '#e0e7ff', border: '1px solid #6366f1', padding: '6px 10px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px', whiteSpace: 'nowrap' }}
+            >
+              ✏️ Sửa tên
+            </button>
+          )}
+          <button
+            onClick={() => setShowCreateProjectModal(true)}
+            style={{ background: '#4f46e5', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px', whiteSpace: 'nowrap' }}
+          >
+            ➕ Tạo mới
+          </button>
+
         </div>
-        <button
-          onClick={() => setShowCreateProjectModal(true)}
-          style={{ background: '#4f46e5', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', whiteSpace: 'nowrap' }}
-        >
-          ➕ Tạo dự án mới
-        </button>
       </div>
 
-      {/* Dirty Settings Indicator Bar */}
+      {/* Dirty Settings Warning Banner */}
       {isSettingsDirty && selectedProjectId && (
-        <div style={{ background: '#1e3a8a', border: '1px solid #3b82f6', borderRadius: '10px', padding: '14px 20px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#fff', flexWrap: 'wrap', gap: '12px' }}>
-          <span style={{ color: '#93c5fd', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            ⚠️ Bạn có thay đổi chưa lưu cho dự án này.
+        <div style={{ background: '#1e3a8a', border: '1px solid #3b82f6', borderRadius: '8px', padding: '10px 16px', marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#fff', flexWrap: 'wrap', gap: '10px', fontSize: '13px' }}>
+          <span style={{ color: '#93c5fd', fontWeight: 'bold' }}>
+            ⚠️ Bạn có thay đổi cấu hình dự án chưa lưu.
           </span>
-          <div style={{ display: 'flex', gap: '10px' }}>
+          <div style={{ display: 'flex', gap: '8px' }}>
             <button
               onClick={handleSaveSettingsToProject}
               disabled={isSavingSettings}
-              style={{ background: '#2563eb', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}
+              style={{ background: '#2563eb', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
             >
-              {isSavingSettings ? 'Đang lưu DB...' : '💾 Lưu cấu hình dự án'}
+              {isSavingSettings ? 'Đang lưu DB...' : '💾 Lưu DB'}
             </button>
             <button
               onClick={handleDiscardChanges}
-              style={{ background: '#475569', color: '#f8fafc', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}
+              style={{ background: '#475569', color: '#f8fafc', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
             >
-              ↩️ Hủy thay đổi
+              ↩️ Hủy
             </button>
           </div>
         </div>
       )}
 
-      {/* Switch Project Guard Modal */}
-      {showSwitchGuardModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
-          <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '14px', padding: '28px', maxWidth: '480px', width: '90%', color: '#fff' }}>
-            <h3 style={{ margin: '0 0 12px 0', fontSize: '18px', color: '#f59e0b' }}>⚠️ Có thay đổi cấu hình chưa lưu</h3>
-            <p style={{ color: '#94a3b8', fontSize: '14px', marginBottom: '20px', lineHeight: '1.5' }}>
-              Bạn vừa thay đổi cấu hình của dự án hiện tại nhưng chưa bấm <strong>Lưu cấu hình</strong>. Bạn muốn làm gì trước khi chuyển sang dự án mới?
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <button
-                onClick={async () => {
-                  await handleSaveSettingsToProject();
-                  setSelectedProjectId(pendingSwitchProjectId);
-                  setShowSwitchGuardModal(false);
-                }}
-                style={{ background: '#2563eb', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' }}
-              >
-                💾 Lưu thay đổi & Chuyển dự án
-              </button>
-              <button
-                onClick={() => {
-                  handleDiscardChanges();
-                  setSelectedProjectId(pendingSwitchProjectId);
-                  setShowSwitchGuardModal(false);
-                }}
-                style={{ background: '#475569', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' }}
-              >
-                🗑️ Bỏ qua thay đổi & Chuyển dự án
-              </button>
-              <button
-                onClick={() => setShowSwitchGuardModal(false)}
-                style={{ background: 'transparent', color: '#94a3b8', border: '1px solid #475569', padding: '10px 16px', borderRadius: '8px', cursor: 'pointer', fontSize: '14px' }}
-              >
-                ❌ Hủy (Ở lại dự án này)
-              </button>
+      {/* MAIN 2-COLUMN STUDIO GRID */}
+      <div className="translator-studio-grid">
+        
+        {/* LEFT PRIMARY COLUMN: PIPELINE + CONFIG */}
+        <div className="studio-left-col">
+          
+          {/* Unified 6-Stage Workflow Pipeline Card */}
+          <WorkflowTimeline
+            projectId={activeProjectId}
+            statusData={workflowStatusData || {
+              status: job?.status === 'running' || ['extracting_audio', 'stt', 'translating', 'generating_tts', 'syncing_audio', 'rendering'].includes(job?.status)
+                ? 'running'
+                : job?.status === 'paused'
+                  ? 'paused'
+                  : job?.status === 'failed'
+                    ? 'failed'
+                    : job?.status === 'completed'
+                      ? 'completed'
+                      : job?.status === 'cancelled'
+                        ? 'cancelled'
+                        : (job?.status || 'not_started'),
+              current_stage: job?.stage || 'INGEST',
+              current_step: job?.current_step || 'Ready',
+              overall_progress_pct: job?.overall_progress_pct || 0,
+              stages: [
+                { name: 'INGEST', status: job ? 'passed' : 'pending' },
+                { name: 'ANALYZE', status: job?.stage === 'TRANSLATING' || job?.status === 'completed' ? 'passed' : job?.stage === 'TRANSCRIBING' ? 'running' : 'pending' },
+                { name: 'TRANSLATE', status: job?.stage === 'SYNTHESIZING' || job?.status === 'completed' ? 'passed' : job?.stage === 'TRANSLATING' ? 'running' : 'pending' },
+                { name: 'DUB', status: job?.stage === 'RENDERING' || job?.status === 'completed' ? 'passed' : job?.stage === 'SYNTHESIZING' ? 'running' : 'pending' },
+                { name: 'PRODUCE', status: job?.status === 'completed' ? 'passed' : job?.stage === 'RENDERING' ? 'running' : 'pending' },
+                { name: 'PUBLISH', status: 'pending' },
+              ]
+            }}
+            job={job}
+            pipelineError={pipelineError}
+            onStart={handleOpenPreflightOrPromptProject}
+            onPause={handlePauseWorkflow}
+            onResume={handleResumeWorkflow}
+            onCancel={handleCancelWorkflow}
+            onRetryStage={handleRetryStage}
+            onRetryJob={handleRetryJob}
+            onOpenLogs={handleOpenLogs}
+            loadingAction={loadingWorkflowAction}
+            lastPollTime={lastPollTime}
+            lastApiResponseTime={lastApiResponseTime}
+            segments={segments}
+          />
+
+          {/* Compact Input Video & Configuration Options */}
+          <div className="compact-card">
+            <div className="compact-card-header">
+              <h3 className="compact-card-title">
+                ⚙️ Cấu hình Nhập Video, Dịch & Lồng Tiếng
+              </h3>
             </div>
-          </div>
-        </div>
-      )}
 
-      {/* Visual 6-Stage Workflow Timeline */}
-      <WorkflowTimeline
-        projectId={activeProjectId}
-        statusData={workflowStatusData || {
-          status: job?.status === 'running' || ['extracting_audio', 'stt', 'translating', 'generating_tts', 'syncing_audio', 'rendering'].includes(job?.status)
-            ? 'running'
-            : job?.status === 'paused'
-              ? 'paused'
-              : job?.status === 'failed'
-                ? 'failed'
-                : job?.status === 'completed'
-                  ? 'completed'
-                  : job?.status === 'cancelled'
-                    ? 'cancelled'
-                    : (job?.status || 'not_started'),
-          current_stage: job?.stage || 'INGEST',
-          current_step: job?.current_step || 'Ready',
-          overall_progress_pct: job?.overall_progress_pct || 0,
-          stages: [
-            { name: 'INGEST', status: job ? 'passed' : 'pending' },
-            { name: 'ANALYZE', status: job?.stage === 'TRANSLATING' || job?.status === 'completed' ? 'passed' : job?.stage === 'TRANSCRIBING' ? 'running' : 'pending' },
-            { name: 'TRANSLATE', status: job?.stage === 'SYNTHESIZING' || job?.status === 'completed' ? 'passed' : job?.stage === 'TRANSLATING' ? 'running' : 'pending' },
-            { name: 'DUB', status: job?.stage === 'RENDERING' || job?.status === 'completed' ? 'passed' : job?.stage === 'SYNTHESIZING' ? 'running' : 'pending' },
-            { name: 'PRODUCE', status: job?.status === 'completed' ? 'passed' : job?.stage === 'RENDERING' ? 'running' : 'pending' },
-            { name: 'PUBLISH', status: 'pending' },
-          ]
-        }}
-        onStart={handleOpenPreflightOrPromptProject}
-        onPause={handlePauseWorkflow}
-        onResume={handleResumeWorkflow}
-        onCancel={handleCancelWorkflow}
-        onRetryStage={handleRetryStage}
-        loadingAction={loadingWorkflowAction}
-      />
-
-      {/* Error Message Card - Displayed directly below Workflow Timeline */}
-      {(pipelineError || (job && job.status === 'failed') || (workflowStatusData && workflowStatusData.status === 'failed')) && (
-        <div style={{ marginBottom: '24px', padding: '20px', background: '#7f1d1d', border: '1px solid #ef4444', borderRadius: '12px', color: '#fee2e2' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <h4 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold', color: '#fca5a5' }}>
-              ❌ Xử Lý Thất Bại (Job / Workflow Failed)
-            </h4>
-            <div style={{ display: 'flex', gap: '8px' }}>
+            {/* Mode Selector */}
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
               <button
-                onClick={handleOpenLogs}
-                style={{ padding: '6px 12px', borderRadius: '6px', background: '#451a03', color: '#fde68a', border: '1px solid #d97706', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
-              >
-                📜 Xem Log Chi Tiết
-              </button>
-              <button
-                onClick={handleRetryJob}
-                disabled={loadingWorkflowAction === 'retry'}
+                onClick={() => setInputMode('url')}
                 style={{
-                  padding: '6px 12px',
+                  flex: 1,
+                  padding: '8px 12px',
                   borderRadius: '6px',
-                  background: loadingWorkflowAction === 'retry' ? '#78350f' : '#d97706',
+                  border: inputMode === 'url' ? '2px solid #818cf8' : '1px solid #334155',
+                  background: inputMode === 'url' ? '#312e81' : '#0f172a',
                   color: '#fff',
-                  border: 'none',
-                  cursor: loadingWorkflowAction === 'retry' ? 'not-allowed' : 'pointer',
-                  fontWeight: '600',
-                  fontSize: '12px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                }}
-              >
-                {loadingWorkflowAction === 'retry' ? (
-                  <>
-                    <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-                    Đang Thử Lại...
-                  </>
-                ) : (
-                  <>🔄 Smart Retry</>
-                )}
-              </button>
-            </div>
-          </div>
-          <div style={{ fontSize: '14px', fontFamily: 'monospace', background: '#450a0a', padding: '12px', borderRadius: '6px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-            {job?.error_message || workflowStatusData?.error_message || pipelineError || 'Xảy ra lỗi không xác định trong pipeline.'}
-          </div>
-        </div>
-      )}
-
-      {/* Real-time Tracking & Progress Panel - Displayed directly below Workflow Timeline */}
-      {job && (
-        <div className="card" style={{ background: '#0f172a', border: `1px solid ${job.status === 'failed' ? '#ef4444' : '#3b82f6'}`, borderRadius: '12px', padding: '24px', color: '#fff', marginBottom: '24px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h3 style={{ fontSize: '18px', fontWeight: 'bold', color: job.status === 'failed' ? '#fca5a5' : '#60a5fa', margin: 0 }}>
-              📊 Tiến Trình Xử Lý Pipeline (Job: {job.id || job.job_id})
-            </h3>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                onClick={handleOpenLogs}
-                style={{
-                  padding: '6px 14px',
-                  borderRadius: '6px',
-                  background: '#334155',
-                  color: '#fff',
-                  border: 'none',
+                  fontWeight: 'bold',
                   cursor: 'pointer',
-                  fontWeight: '600',
                   fontSize: '13px',
                 }}
               >
-                📜 Xem Log Chi Tiết
+                🔗 Dán Link/URL Video
               </button>
-
-              {['extracting_audio', 'stt', 'translating', 'generating_tts', 'syncing_audio', 'rendering'].includes(job.status) && (
-                <button
-                  onClick={handleCancelJob}
-                  style={{
-                    padding: '6px 14px',
-                    borderRadius: '6px',
-                    background: '#991b1b',
-                    color: '#fff',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontWeight: '600',
-                    fontSize: '13px',
-                  }}
-                >
-                  ❌ Hủy Xử Lý
-                </button>
-              )}
-
-              {(job.status === 'failed' || job.status === 'stalled') && (
-                <button
-                  onClick={handleRetryJob}
-                  disabled={loadingWorkflowAction === 'retry'}
-                  style={{
-                    padding: '6px 14px',
-                    borderRadius: '6px',
-                    background: loadingWorkflowAction === 'retry' ? '#78350f' : '#d97706',
-                    color: '#fff',
-                    border: 'none',
-                    cursor: loadingWorkflowAction === 'retry' ? 'not-allowed' : 'pointer',
-                    fontWeight: '600',
-                    fontSize: '13px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                  }}
-                >
-                  {loadingWorkflowAction === 'retry' ? (
-                    <>
-                      <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-                      Đang Thử Lại...
-                    </>
-                  ) : (
-                    <>🔄 Smart Retry</>
-                  )}
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Heartbeat Status Badge */}
-          <div style={{ marginBottom: '16px', padding: '10px 14px', background: '#1e293b', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>{getHeartbeatBadge(job)}</div>
-            <div style={{ fontSize: '12px', color: '#94a3b8' }}>
-              Stage: <strong>{job.stage || 'QUEUED'}</strong> | Status: <strong>{(job.status || '').toUpperCase()}</strong>
-            </div>
-          </div>
-
-          {/* Overall Progress Bar */}
-          <div style={{ marginBottom: '16px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '6px' }}>
-              <span>Tiến trình Tổng thể:</span>
-              <span style={{ fontWeight: 'bold', color: job.status === 'failed' ? '#fca5a5' : '#60a5fa' }}>
-                {job.overall_progress_pct}%
-              </span>
-            </div>
-            <div style={{ background: '#1e293b', borderRadius: '8px', height: '14px', width: '100%', overflow: 'hidden' }}>
-              <div
-                style={{
-                  width: `${job.overall_progress_pct}%`,
-                  height: '100%',
-                  background: job.status === 'failed' ? '#ef4444' : 'linear-gradient(90deg, #3b82f6, #8b5cf6)',
-                  transition: 'width 0.3s ease',
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Stage Detail Stats */}
-          <div style={{ background: '#1e293b', borderRadius: '8px', padding: '16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', fontSize: '13px' }}>
-            <div>
-              <span style={{ color: '#94a3b8' }}>Bước hiện tại:</span>
-              <div style={{ fontWeight: 'bold', color: job.status === 'failed' ? '#fca5a5' : '#e2e8f0', marginTop: '2px' }}>
-                {job.current_step}
-              </div>
-            </div>
-
-            <div>
-              <span style={{ color: '#94a3b8' }}>Tiến trình Stage ({job.stage}):</span>
-              <div style={{ fontWeight: 'bold', color: job.status === 'failed' ? '#ef4444' : '#a7f3d0', marginTop: '2px' }}>
-                {job.stage_progress_pct}%
-              </div>
-            </div>
-
-            <div>
-              <span style={{ color: '#94a3b8' }}>FFmpeg Process Status:</span>
-              <div style={{ fontWeight: 'bold', color: job.process?.status === 'RUNNING' ? '#60a5fa' : (job.process?.status === 'COMPLETED' ? '#4ade80' : (job.process?.status === 'FAILED' ? '#ef4444' : '#94a3b8')), marginTop: '2px' }}>
-                {job.process?.status === 'RUNNING' ? `⚡ RUNNING (PID: ${job.process.pid})` : (job.process?.status === 'COMPLETED' ? '✅ COMPLETED' : (job.process?.status || 'IDLE'))}
-              </div>
-            </div>
-
-            {job.ffmpeg_stats && job.status !== 'failed' && (
-              <>
-                <div>
-                  <span style={{ color: '#94a3b8' }}>Đã xử lý (FFmpeg):</span>
-                  <div style={{ fontWeight: 'bold', color: '#facc15', marginTop: '2px' }}>
-                    {formatTime(job.ffmpeg_stats.processed_seconds)} / {formatTime(job.ffmpeg_stats.total_duration)}
-                  </div>
-                </div>
-                <div>
-                  <span style={{ color: '#94a3b8' }}>Tốc độ & FPS:</span>
-                  <div style={{ fontWeight: 'bold', color: '#e2e8f0', marginTop: '2px' }}>
-                    Speed: {job.ffmpeg_stats.speed} | FPS: {job.ffmpeg_stats.fps}
-                  </div>
-                </div>
-              </>
-            )}
-
-            {job.stage === 'GENERATING_TTS' && (
-              <div>
-                <span style={{ color: '#94a3b8' }}>Phân đoạn TTS:</span>
-                <div style={{ fontWeight: 'bold', color: '#c084fc', marginTop: '2px' }}>
-                  {job.completed_segments_count} / {job.total_segments_count} Phân đoạn
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* DEBUG JOB STATE PANEL (Dev Mode Single Source of Truth) */}
-          <details open style={{ marginTop: '20px', padding: '14px 18px', background: '#020617', border: '1px solid #1e293b', borderRadius: '10px', fontSize: '12px', fontFamily: 'monospace', color: '#38bdf8' }}>
-            <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: '#facc15', fontSize: '14px' }}>🐞 DEBUG JOB STATE (Single Source of Truth)</summary>
-            <div style={{ marginTop: '12px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '10px' }}>
-              <div>Job ID: <strong style={{ color: '#fff' }}>{job.id || job.job_id}</strong></div>
-              <div>Backend Status: <strong style={{ color: '#a7f3d0' }}>{job.status}</strong></div>
-              <div>Backend Stage: <strong style={{ color: '#60a5fa' }}>{job.stage}</strong></div>
-              <div>Overall Progress: <strong style={{ color: '#facc15' }}>{job.overall_progress_pct}%</strong></div>
-              <div>Stage Progress: <strong style={{ color: '#facc15' }}>{job.stage_progress_pct}%</strong></div>
-              <div>Heartbeat Active: <strong style={{ color: job.heartbeat?.active ? '#4ade80' : '#f87171' }}>{job.heartbeat?.active ? 'ACTIVE (TRUE)' : 'INACTIVE (FALSE)'}</strong> ({job.heartbeat?.age_seconds ?? 'N/A'}s)</div>
-              <div>FFmpeg Status: <strong style={{ color: job.process?.status === 'COMPLETED' ? '#4ade80' : '#60a5fa' }}>{job.process?.status || 'IDLE'}</strong> (PID: {job.process?.pid || 'N/A'})</div>
-              <div>STT Status: <strong style={{ color: job.stt?.status === 'COMPLETED' ? '#4ade80' : '#60a5fa' }}>{job.stt?.status || 'PENDING'}</strong> ({job.stt?.provider || 'gemini'})</div>
-              <div>Detected Language: <strong style={{ color: '#fbbf24' }}>{job.detected_language || 'Auto'}</strong></div>
-              <div>Translation Status: <strong style={{ color: job.translation?.status === 'COMPLETED' ? '#4ade80' : '#60a5fa' }}>{job.translation?.status || 'PENDING'}</strong></div>
-              <div>Segments Loaded: <strong style={{ color: '#c084fc' }}>{segments.length} / {job.total_segments_count || segments.length}</strong></div>
-              <div>Last Backend Update: <strong style={{ color: '#cbd5e1' }}>{job.updated_at ? new Date(job.updated_at).toLocaleTimeString('vi-VN') : 'N/A'}</strong></div>
-              <div>Last Frontend Poll: <strong style={{ color: '#cbd5e1' }}>{lastPollTime || 'N/A'}</strong></div>
-              <div>API Response Time: <strong style={{ color: '#cbd5e1' }}>{lastApiResponseTime || 'N/A'}</strong></div>
-            </div>
-          </details>
-        </div>
-      )}
-
-      {/* Collapsible Card: Input Selection & Configuration Options */}
-      <CollapsibleCard title="⚙️ Cấu hình Nhập Video, Dịch & Lồng Tiếng" icon="⚙️" defaultOpen={true}>
-        <div style={{ display: 'flex', gap: '12px', marginBottom: '20px' }}>
-          <button
-            onClick={() => setInputMode('url')}
-            style={{
-              flex: 1,
-              padding: '12px',
-              borderRadius: '8px',
-              border: inputMode === 'url' ? '2px solid #818cf8' : '1px solid #4338ca',
-              background: inputMode === 'url' ? '#312e81' : '#1e1b4b',
-              color: '#fff',
-              fontWeight: 'bold',
-              cursor: 'pointer',
-            }}
-          >
-            🔗 Dán Link/URL Video
-          </button>
-          <button
-            onClick={() => setInputMode('upload')}
-            style={{
-              flex: 1,
-              padding: '12px',
-              borderRadius: '8px',
-              border: inputMode === 'upload' ? '2px solid #818cf8' : '1px solid #4338ca',
-              background: inputMode === 'upload' ? '#312e81' : '#1e1b4b',
-              color: '#fff',
-              fontWeight: 'bold',
-              cursor: 'pointer',
-            }}
-          >
-            📁 Upload File từ Máy
-          </button>
-        </div>
-
-        {inputMode === 'url' ? (
-          <div style={{ marginBottom: '20px' }}>
-            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', color: '#cbd5e1' }}>
-              Nhập Đường Dẫn Video (Direct MP4, YouTube, Bilibili, TikTok...):
-            </label>
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <input
-                type="text"
-                placeholder="https://example.com/video.mp4"
-                value={videoUrl}
-                onChange={(e) => setVideoUrl(e.target.value)}
+              <button
+                onClick={() => setInputMode('upload')}
                 style={{
                   flex: 1,
-                  padding: '12px',
+                  padding: '8px 12px',
                   borderRadius: '6px',
-                  border: '1px solid #475569',
-                  background: '#0f172a',
+                  border: inputMode === 'upload' ? '2px solid #818cf8' : '1px solid #334155',
+                  background: inputMode === 'upload' ? '#312e81' : '#0f172a',
                   color: '#fff',
-                }}
-              />
-              <button
-                onClick={handleCheckUrl}
-                disabled={isCheckingUrl || !videoUrl}
-                style={{
-                  padding: '12px 20px',
-                  borderRadius: '6px',
-                  background: '#4f46e5',
-                  color: '#fff',
-                  border: 'none',
                   fontWeight: 'bold',
-                  cursor: isCheckingUrl ? 'not-allowed' : 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.4rem',
+                  cursor: 'pointer',
+                  fontSize: '13px',
                 }}
               >
-                {isCheckingUrl ? <><ButtonSpinner /> Đang kiểm tra...</> : '🔍 Kiểm tra URL'}
+                📁 Upload File từ Máy
               </button>
             </div>
-            {checkError && (
-              <div style={{ color: '#ef4444', fontSize: '13px', marginTop: '8px' }}>
-                {checkError}
-              </div>
-            )}
-            {urlMetadata && (
-              <div style={{ marginTop: '12px', padding: '12px', background: '#0f172a', borderRadius: '6px', fontSize: '13px', border: '1px solid #334155' }}>
-                <div style={{ color: '#4ade80', fontWeight: 'bold', marginBottom: '4px' }}>✓ Metadata Hợp Lệ</div>
-                <div><strong>Tiêu đề:</strong> {urlMetadata.title}</div>
-                <div><strong>Thời lượng:</strong> {formatTime(urlMetadata.duration)} ({urlMetadata.duration}s)</div>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div style={{ marginBottom: '20px' }}>
-            <label style={{ display: 'block', marginBottom: '8px', fontSize: '14px', color: '#cbd5e1' }}>
-              Chọn File Video (MP4, MOV, MKV, AVI):
-            </label>
-            <input
-              type="file"
-              accept="video/*"
-              onChange={(e) => setUploadFile(e.target.files[0] || null)}
-              style={{
-                width: '100%',
-                padding: '10px',
-                borderRadius: '6px',
-                border: '1px solid #475569',
-                background: '#0f172a',
-                color: '#fff',
-              }}
-            />
-          </div>
-        )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '20px' }}>
-          <div>
-            <label style={{ display: 'block', fontSize: '13px', marginBottom: '6px', color: '#94a3b8' }}>LLM / Script Provider:</label>
-            <select
-              value={llmProviderId}
-              onChange={(e) => setLlmProviderId(e.target.value)}
-              style={{ width: '100%', padding: '10px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569' }}
-            >
-              <option value="gemini">✨ Google Gemini AI Studio (Mặc định)</option>
-              <option value="openai">🤖 OpenAI ChatGPT</option>
-            </select>
-          </div>
-
-          <div>
-            <label style={{ display: 'block', fontSize: '13px', marginBottom: '6px', color: '#94a3b8' }}>Ngôn ngữ đích (Target):</label>
-            <select
-              value={targetLanguage}
-              onChange={(e) => setTargetLanguage(e.target.value)}
-              style={{ width: '100%', padding: '10px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569' }}
-            >
-              <option value="vi">🇻🇳 Tiếng Việt (Vietnamese)</option>
-              <option value="en">🇬🇧 Tiếng Anh (English)</option>
-              <option value="ja">🇯🇵 Tiếng Nhật (Japanese)</option>
-              <option value="ko">🇰🇷 Tiếng Hàn (Korean)</option>
-              <option value="zh">🇨🇳 Tiếng Trung (Chinese)</option>
-              <option value="fr">🇫🇷 Tiếng Pháp (French)</option>
-            </select>
-          </div>
-
-          <div>
-            <label style={{ display: 'block', fontSize: '13px', marginBottom: '6px', color: '#94a3b8' }}>TTS Provider:</label>
-            <select
-              value={audioProviderId}
-              onChange={(e) => setAudioProviderId(e.target.value)}
-              style={{ width: '100%', padding: '10px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569' }}
-            >
-              <option value="edge_tts">Edge TTS (Miễn phí / Tốc độ cao)</option>
-              <option value="elevenlabs">ElevenLabs (Chất lượng cao)</option>
-              <option value="google_tts">Google Cloud TTS</option>
-            </select>
-          </div>
-
-          <div>
-            <label style={{ display: 'block', fontSize: '13px', marginBottom: '6px', color: '#94a3b8' }}>Giọng đọc (Voice):</label>
-            <select
-              value={voiceId}
-              onChange={(e) => setVoiceId(e.target.value)}
-              style={{ width: '100%', padding: '10px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569' }}
-            >
-              {voices.map(v => (
-                <option key={v.id} value={v.id}>{v.name} ({v.gender})</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label style={{ display: 'block', fontSize: '13px', marginBottom: '6px', color: '#94a3b8' }}>Âm thanh gốc (Original Audio):</label>
-            <select
-              value={originalAudioMode}
-              onChange={(e) => setOriginalAudioMode(e.target.value)}
-              style={{ width: '100%', padding: '10px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569' }}
-            >
-              <option value="mute">Tắt hoàn toàn tiếng gốc (Mute)</option>
-              <option value="duck">Giảm âm lượng gốc (Background Ducking 20%)</option>
-              <option value="keep">Giữ âm thanh gốc trộn cùng tiếng đọc</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Auto-Confirm Translation Section */}
-        <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid #334155' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <span style={{ fontSize: '15px', fontWeight: 'bold', color: '#10b981', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                ⚡ Tự Động Xác Nhận Văn Bản Dịch & Render Lồng Tiếng
-              </span>
-              <p style={{ fontSize: '12px', color: '#94a3b8', margin: '4px 0 0 0' }}>
-                Tự động chuyển từ dịch câu thoại sang tạo giọng TTS & Render video thành phẩm mà không dừng chờ xác nhận thủ công.
-              </p>
-            </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: '#e2e8f0', whiteSpace: 'nowrap' }}>
-              <input
-                type="checkbox"
-                checked={autoConfirmTranslation}
-                onChange={(e) => setAutoConfirmTranslation(e.target.checked)}
-                style={{ width: '18px', height: '18px', accentColor: '#10b981', cursor: 'pointer' }}
-              />
-              Auto-Confirm
-            </label>
-          </div>
-        </div>
-
-        {/* Watermark Branding Section */}
-        <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid #334155' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-            <span style={{ fontSize: '15px', fontWeight: 'bold', color: '#818cf8', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              🏷️ Gắn Logo / Watermark Tự Động
-            </span>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: '#e2e8f0' }}>
-              <input
-                type="checkbox"
-                checked={watermarkEnabled}
-                onChange={(e) => setWatermarkEnabled(e.target.checked)}
-                style={{ width: '18px', height: '18px', accentColor: '#6366f1', cursor: 'pointer' }}
-              />
-              Bật Watermark
-            </label>
-          </div>
-
-          {watermarkEnabled ? (
-            <div style={{ background: '#0f172a', borderRadius: '8px', padding: '16px', border: '1px solid #334155' }}>
-              <div style={{ display: 'flex', gap: '16px', marginBottom: '16px' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: '#cbd5e1', fontSize: '13px' }}>
-                  <input
-                    type="radio"
-                    name="wm_type"
-                    value="image"
-                    checked={watermarkType === 'image'}
-                    onChange={() => setWatermarkType('image')}
-                    style={{ accentColor: '#6366f1' }}
-                  />
-                  🖼️ Logo Ảnh (PNG/JPG/WEBP)
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: '#cbd5e1', fontSize: '13px' }}>
-                  <input
-                    type="radio"
-                    name="wm_type"
-                    value="text"
-                    checked={watermarkType === 'text'}
-                    onChange={() => setWatermarkType('text')}
-                    style={{ accentColor: '#6366f1' }}
-                  />
-                  🔤 Watermark Chữ (Text)
-                </label>
-              </div>
-
-              {watermarkType === 'image' ? (
-                <div style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', fontSize: '13px', color: '#94a3b8', marginBottom: '6px' }}>
-                    Upload File Logo (Khuyên dùng PNG nền trong suốt):
-                  </label>
-                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                    <input
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp"
-                      onChange={handleLogoUpload}
-                      disabled={isUploadingLogo}
-                      style={{ background: '#1e293b', padding: '8px', borderRadius: '6px', color: '#fff', border: '1px solid #475569', flex: 1 }}
-                    />
-                    {isUploadingLogo && <span style={{ color: '#818cf8', fontSize: '13px' }}><ButtonSpinner /> Đang tải...</span>}
-                  </div>
-                  {watermarkImagePreview && (
-                    <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <img src={watermarkImagePreview} alt="Logo Preview" style={{ maxHeight: '48px', maxWidth: '120px', objectFit: 'contain', background: '#334155', padding: '4px', borderRadius: '4px' }} />
-                      <span style={{ color: '#4ade80', fontSize: '12px' }}>✓ Logo đã chọn thành công</span>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', fontSize: '13px', color: '#94a3b8', marginBottom: '6px' }}>Nội dung Text Watermark:</label>
+            {inputMode === 'url' ? (
+              <div style={{ marginBottom: '14px' }}>
+                <div style={{ display: 'flex', gap: '8px' }}>
                   <input
                     type="text"
-                    value={watermarkText}
-                    onChange={(e) => setWatermarkText(e.target.value)}
-                    placeholder="© AutoTransAI - Bản quyền thuộc về channel"
-                    style={{ width: '100%', padding: '10px', borderRadius: '6px', background: '#1e293b', border: '1px solid #475569', color: '#fff' }}
+                    placeholder="https://example.com/video.mp4"
+                    value={videoUrl}
+                    onChange={(e) => setVideoUrl(e.target.value)}
+                    style={{
+                      flex: 1,
+                      padding: '8px 12px',
+                      borderRadius: '6px',
+                      border: '1px solid #475569',
+                      background: '#0f172a',
+                      color: '#fff',
+                      fontSize: '13px',
+                    }}
                   />
-                </div>
-              )}
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Vị trí Watermark:</label>
-                  <select
-                    value={watermarkPosition}
-                    onChange={(e) => setWatermarkPosition(e.target.value)}
-                    style={{ width: '100%', padding: '8px', borderRadius: '6px', background: '#1e293b', color: '#fff', border: '1px solid #475569' }}
+                  <button
+                    onClick={handleCheckUrl}
+                    disabled={isCheckingUrl || !videoUrl}
+                    style={{
+                      padding: '8px 14px',
+                      borderRadius: '6px',
+                      background: '#4f46e5',
+                      color: '#fff',
+                      border: 'none',
+                      fontWeight: 'bold',
+                      fontSize: '12px',
+                      cursor: isCheckingUrl ? 'not-allowed' : 'pointer',
+                      whiteSpace: 'nowrap',
+                    }}
                   >
-                    <option value="bottom_right">↘️ Góc Dưới Phải (Bottom Right)</option>
-                    <option value="bottom_left">↙️ Góc Dưới Trái (Bottom Left)</option>
-                    <option value="top_right">↗️ Góc Trên Phải (Top Right)</option>
-                    <option value="top_left">↖️ Góc Trên Trái (Top Left)</option>
-                    <option value="center">⏹️ Chính Giữa (Center)</option>
-                  </select>
+                    {isCheckingUrl ? <><ButtonSpinner /> Kiểm tra...</> : '🔍 Kiểm tra URL'}
+                  </button>
                 </div>
+                {checkError && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{checkError}</div>}
+                {urlMetadata && (
+                  <div style={{ marginTop: '8px', padding: '8px 12px', background: '#0f172a', borderRadius: '6px', fontSize: '12px', border: '1px solid #334155', display: 'flex', gap: '16px' }}>
+                    <span style={{ color: '#4ade80', fontWeight: 'bold' }}>✓ Metadata Hợp Lệ</span>
+                    <span><strong>Tiêu đề:</strong> {urlMetadata.title}</span>
+                    <span><strong>Thời lượng:</strong> {formatTime(urlMetadata.duration)}</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ marginBottom: '14px' }}>
+                <input
+                  type="file"
+                  accept="video/*"
+                  onChange={(e) => setUploadFile(e.target.files[0] || null)}
+                  style={{
+                    width: '100%',
+                    padding: '8px',
+                    borderRadius: '6px',
+                    border: '1px solid #475569',
+                    background: '#0f172a',
+                    color: '#fff',
+                    fontSize: '13px',
+                  }}
+                />
+              </div>
+            )}
 
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
-                    Tỷ lệ Kích thước ({Math.round(watermarkScale * 100)}% rộng video):
-                  </label>
-                  <input
-                    type="range"
-                    min="0.10"
-                    max="0.50"
-                    step="0.05"
-                    value={watermarkScale}
-                    onChange={(e) => setWatermarkScale(parseFloat(e.target.value))}
-                    style={{ width: '100%', accentColor: '#818cf8' }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
-                    Độ Trong Suốt ({Math.round(watermarkOpacity * 100)}%):
-                  </label>
-                  <input
-                    type="range"
-                    min="0.10"
-                    max="1.00"
-                    step="0.05"
-                    value={watermarkOpacity}
-                    onChange={(e) => setWatermarkOpacity(parseFloat(e.target.value))}
-                    style={{ width: '100%', accentColor: '#818cf8' }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
-                    Khoảng Cách Mép ({watermarkMargin}px):
-                  </label>
-                  <input
-                    type="range"
-                    min="10"
-                    max="50"
-                    step="5"
-                    value={watermarkMargin}
-                    onChange={(e) => setWatermarkMargin(parseInt(e.target.value, 10))}
-                    style={{ width: '100%', accentColor: '#818cf8' }}
-                  />
-                </div>
+            {/* Compact Configuration Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', marginBottom: '14px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: '#94a3b8' }}>LLM Provider:</label>
+                <select
+                  value={llmProviderId}
+                  onChange={(e) => setLlmProviderId(e.target.value)}
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
+                >
+                  <option value="gemini">✨ Google Gemini AI Studio</option>
+                  <option value="openai">🤖 OpenAI ChatGPT</option>
+                </select>
               </div>
 
-              {watermarkValidationError && (
-                <div style={{ color: '#ef4444', fontSize: '13px', marginTop: '12px', fontWeight: 'bold' }}>
-                  {watermarkValidationError}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div style={{ fontSize: '13px', color: '#94a3b8', fontStyle: 'italic', padding: '12px', background: '#0f172a', borderRadius: '6px', border: '1px solid #334155' }}>
-              🚫 Watermark hiện đang TẮT. Đánh dấu vào ô <strong>"Bật Watermark"</strong> ở trên để mở tùy chỉnh logo hoặc văn bản watermark.
-            </div>
-          )}
-        </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: '#94a3b8' }}>Target Language:</label>
+                <select
+                  value={targetLanguage}
+                  onChange={(e) => setTargetLanguage(e.target.value)}
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
+                >
+                  <option value="vi">🇻🇳 Tiếng Việt (Vietnamese)</option>
+                  <option value="en">🇬🇧 Tiếng Anh (English)</option>
+                  <option value="ja">🇯🇵 Tiếng Nhật (Japanese)</option>
+                  <option value="ko">🇰🇷 Tiếng Hàn (Korean)</option>
+                  <option value="zh">🇨🇳 Tiếng Trung (Chinese)</option>
+                  <option value="fr">🇫🇷 Tiếng Pháp (French)</option>
+                </select>
+              </div>
 
-        {/* AI Auto Thumbnail Branding Section */}
-        <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid #334155' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-            <span style={{ fontSize: '15px', fontWeight: 'bold', color: '#818cf8', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              🖼️ Tự Động Tạo Thumbnail AI
-            </span>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: '#94a3b8' }}>TTS Provider:</label>
+                <select
+                  value={audioProviderId}
+                  onChange={(e) => setAudioProviderId(e.target.value)}
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
+                >
+                  <option value="edge_tts">Edge TTS (Miễn phí / Nhanh)</option>
+                  <option value="elevenlabs">ElevenLabs (Cao cấp)</option>
+                  <option value="google_tts">Google Cloud TTS</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: '#94a3b8' }}>Giọng đọc (Voice):</label>
+                <select
+                  value={voiceId}
+                  onChange={(e) => setVoiceId(e.target.value)}
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
+                >
+                  {voices.map(v => (
+                    <option key={v.id} value={v.id}>{v.name} ({v.gender})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: '#94a3b8' }}>Âm thanh gốc:</label>
+                <select
+                  value={originalAudioMode}
+                  onChange={(e) => setOriginalAudioMode(e.target.value)}
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
+                >
+                  <option value="mute">Tắt hoàn toàn tiếng gốc (Mute)</option>
+                  <option value="duck">Giảm âm lượng gốc (Ducking 20%)</option>
+                  <option value="keep">Giữ âm thanh gốc trộn cùng</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0', marginTop: '16px' }}>
+                  <input
+                    type="checkbox"
+                    checked={autoConfirmTranslation}
+                    onChange={(e) => setAutoConfirmTranslation(e.target.checked)}
+                    style={{ width: '16px', height: '16px', accentColor: '#10b981', cursor: 'pointer' }}
+                  />
+                  Auto-Confirm Translation
+                </label>
+              </div>
+            </div>
+
+            {/* Start Pipeline Action Button */}
             <button
-              type="button"
-              onClick={() => setThumbnailEnabled(!thumbnailEnabled)}
+              onClick={handleOpenPreflightOrPromptProject}
+              disabled={isProcessing}
               style={{
-                width: '46px',
-                height: '24px',
-                borderRadius: '12px',
-                background: thumbnailEnabled ? '#6366f1' : '#475569',
+                width: '100%',
+                padding: '10px 16px',
+                borderRadius: '8px',
+                background: 'linear-gradient(90deg, #4f46e5 0%, #7c3aed 100%)',
+                color: '#fff',
+                fontWeight: 'bold',
+                fontSize: '14px',
                 border: 'none',
-                position: 'relative',
-                cursor: 'pointer',
-                transition: 'background 0.2s ease',
-                padding: '2px',
+                cursor: isProcessing ? 'not-allowed' : 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
               }}
             >
-              <div
-                style={{
-                  width: '20px',
-                  height: '20px',
-                  borderRadius: '50%',
-                  background: '#fff',
-                  transform: thumbnailEnabled ? 'translateX(22px)' : 'translateX(0px)',
-                  transition: 'transform 0.2s ease',
-                }}
-              />
+              {isProcessing ? <><ButtonSpinner /> ⚡ Đang xử lý Pipeline...</> : '🚀 Bắt đầu Nhập & Dịch Video'}
             </button>
           </div>
 
-          {thumbnailEnabled ? (
-            <div style={{ background: '#0f172a', borderRadius: '8px', padding: '16px', border: '1px solid #334155' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div>
-                  <label className="form-label text-light small fw-bold" style={{ display: 'block', marginBottom: '6px' }}>
-                    🎭 Phong Cách Thumbnail (Style):
+        </div>
+
+        {/* RIGHT SIDEBAR COLUMN: WATERMARK & AI THUMBNAIL */}
+        <div className="studio-right-col">
+          
+          {/* Watermark Branding Section */}
+          <div className="compact-card">
+            <div className="compact-card-header">
+              <h3 className="compact-card-title">
+                🏷️ Watermark (Logo/Branding)
+              </h3>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
+                <input
+                  type="checkbox"
+                  checked={watermarkEnabled}
+                  onChange={(e) => setWatermarkEnabled(e.target.checked)}
+                  style={{ width: '16px', height: '16px', accentColor: '#6366f1', cursor: 'pointer' }}
+                />
+                Bật
+              </label>
+            </div>
+
+            {watermarkEnabled ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ display: 'flex', gap: '12px', fontSize: '12px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: '#cbd5e1' }}>
+                    <input
+                      type="radio"
+                      name="wm_type"
+                      value="image"
+                      checked={watermarkType === 'image'}
+                      onChange={() => setWatermarkType('image')}
+                      style={{ accentColor: '#6366f1' }}
+                    />
+                    🖼️ Logo Ảnh
                   </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: '#cbd5e1' }}>
+                    <input
+                      type="radio"
+                      name="wm_type"
+                      value="text"
+                      checked={watermarkType === 'text'}
+                      onChange={() => setWatermarkType('text')}
+                      style={{ accentColor: '#6366f1' }}
+                    />
+                    🔤 Text
+                  </label>
+                </div>
+
+                {watermarkType === 'image' ? (
+                  <div>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        onChange={handleLogoUpload}
+                        disabled={isUploadingLogo}
+                        style={{ background: '#0f172a', padding: '6px', borderRadius: '6px', color: '#fff', border: '1px solid #475569', fontSize: '11px', flex: 1 }}
+                      />
+                      {isUploadingLogo && <span style={{ color: '#818cf8', fontSize: '11px' }}><ButtonSpinner /></span>}
+                    </div>
+                    {watermarkImagePreview && (
+                      <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px', background: '#0f172a', padding: '4px 8px', borderRadius: '6px' }}>
+                        <img src={watermarkImagePreview} alt="Logo" style={{ maxHeight: '28px', maxWidth: '80px', objectFit: 'contain' }} />
+                        <span style={{ color: '#4ade80', fontSize: '11px' }}>✓ Đã chọn logo</span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div>
+                    <input
+                      type="text"
+                      value={watermarkText}
+                      onChange={(e) => setWatermarkText(e.target.value)}
+                      placeholder="© Watermark Text"
+                      style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', border: '1px solid #475569', color: '#fff', fontSize: '12px' }}
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '3px' }}>Vị trí:</label>
                   <select
-                    className="form-select form-select-sm bg-dark text-light border-secondary"
+                    value={watermarkPosition}
+                    onChange={(e) => setWatermarkPosition(e.target.value)}
+                    style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
+                  >
+                    <option value="bottom_right">↘️ Góc Dưới Phải</option>
+                    <option value="bottom_left">↙️ Góc Dưới Trái</option>
+                    <option value="top_right">↗️ Góc Trên Phải</option>
+                    <option value="top_left">↖️ Góc Trên Trái</option>
+                    <option value="center">⏹️ Chính Giữa</option>
+                  </select>
+                </div>
+
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setShowWatermarkDetails(!showWatermarkDetails)}
+                    style={{ background: 'none', border: 'none', color: '#818cf8', fontSize: '11px', cursor: 'pointer', padding: 0, fontWeight: 'bold' }}
+                  >
+                    {showWatermarkDetails ? '▲ Thu gọn tùy chỉnh' : '⚙️ Tùy chỉnh kích thước & opacity'}
+                  </button>
+                </div>
+
+                {showWatermarkDetails && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '8px', background: '#0f172a', borderRadius: '6px', fontSize: '11px' }}>
+                    <div>
+                      <span style={{ color: '#94a3b8' }}>Scale ({Math.round(watermarkScale * 100)}%):</span>
+                      <input
+                        type="range"
+                        min="0.10"
+                        max="0.50"
+                        step="0.05"
+                        value={watermarkScale}
+                        onChange={(e) => setWatermarkScale(parseFloat(e.target.value))}
+                        style={{ width: '100%', accentColor: '#818cf8' }}
+                      />
+                    </div>
+                    <div>
+                      <span style={{ color: '#94a3b8' }}>Opacity ({Math.round(watermarkOpacity * 100)}%):</span>
+                      <input
+                        type="range"
+                        min="0.10"
+                        max="1.00"
+                        step="0.05"
+                        value={watermarkOpacity}
+                        onChange={(e) => setWatermarkOpacity(parseFloat(e.target.value))}
+                        style={{ width: '100%', accentColor: '#818cf8' }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {watermarkValidationError && (
+                  <div style={{ color: '#ef4444', fontSize: '11px', fontWeight: 'bold' }}>
+                    {watermarkValidationError}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ fontSize: '12px', color: '#94a3b8', fontStyle: 'italic' }}>
+                🚫 Watermark hiện đang TẮT.
+              </div>
+            )}
+          </div>
+
+          {/* AI Auto Thumbnail Branding Section */}
+          <div className="compact-card">
+            <div className="compact-card-header">
+              <h3 className="compact-card-title">
+                🖼️ Tự Động Tạo Thumbnail AI
+              </h3>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
+                <input
+                  type="checkbox"
+                  checked={thumbnailEnabled}
+                  onChange={(e) => setThumbnailEnabled(e.target.checked)}
+                  style={{ width: '16px', height: '16px', accentColor: '#6366f1', cursor: 'pointer' }}
+                />
+                Bật
+              </label>
+            </div>
+
+            {thumbnailEnabled ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '3px' }}>Phong cách (Style):</label>
+                  <select
                     value={thumbnailStyle}
                     onChange={(e) => setThumbnailStyle(e.target.value)}
+                    style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
                   >
-                    <option value="auto">🤖 Tự động (Phân tích cảm xúc kịch bản)</option>
-                    <option value="cinematic">🎬 Cinematic (Điện ảnh kịch tính)</option>
-                    <option value="youtube_viral">🚀 YouTube Viral (Bắt mắt, biểu cảm mạnh)</option>
-                    <option value="horror">👻 Horror (U tối, bí ẩn, kinh dị)</option>
-                    <option value="anime">🌸 Anime Nhật Bản (Nhiều màu sắc)</option>
-                    <option value="realistic">📸 Realistic (Ảnh chụp 8K chân thực)</option>
-                    <option value="cartoon">🎨 Cartoon 3D (Hoạt hình 3D)</option>
-                    <option value="documentary">📜 Documentary (Phim tài liệu)</option>
-                    <option value="minimal">📐 Minimal (Tối giản, tương phản)</option>
-                    <option value="movie_poster">🍿 Poster Phim Hollywood</option>
+                    <option value="auto">🤖 Tự động theo kịch bản</option>
+                    <option value="cinematic">🎬 Cinematic Kịch tính</option>
+                    <option value="youtube_viral">🚀 YouTube Viral Bắt mắt</option>
+                    <option value="anime">🌸 Anime Nhật Bản</option>
+                    <option value="realistic">📸 Realistic 8K</option>
+                    <option value="cartoon">🎨 Cartoon 3D</option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="form-label text-light small fw-bold" style={{ display: 'block', marginBottom: '6px' }}>
-                    ⚙️ AI Image Provider:
-                  </label>
+                  <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '3px' }}>AI Provider:</label>
                   <select
-                    className="form-select form-select-sm bg-dark text-light border-secondary"
                     value={thumbnailProvider}
                     onChange={(e) => setThumbnailProvider(e.target.value)}
+                    style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
                   >
-                    <option value="pollinations">⚡ Pollinations AI (Miễn phí & Nhanh)</option>
-                    <option value="fal">🎨 fal.ai FLUX (Chất lượng cao)</option>
+                    <option value="pollinations">⚡ Pollinations AI (Miễn phí)</option>
+                    <option value="fal">🎨 fal.ai FLUX</option>
                     <option value="openai">🤖 OpenAI DALL-E 3</option>
-                    <option value="local_image">🖼️ Local Scenery (Offline)</option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="form-label text-light small fw-bold" style={{ display: 'block', marginBottom: '6px' }}>
-                    💬 Yêu Cầu Bổ Sung (Custom Instruction):
-                  </label>
+                  <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '3px' }}>Custom Instruction:</label>
                   <textarea
-                    className="form-textarea form-control form-control-sm bg-dark text-light border-secondary"
-                    rows="3"
-                    placeholder="Ví dụ: Tập trung vào nhân vật chính, tông màu xanh u tối, tương phản cao, góc quay rộng..."
+                    rows={2}
+                    placeholder="Tập trung nhân vật chính, tông u tối..."
                     value={thumbnailInstruction}
                     onChange={(e) => setThumbnailInstruction(e.target.value)}
-                    style={{ resize: 'vertical' }}
+                    style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '11px', resize: 'vertical' }}
                   />
                 </div>
               </div>
-            </div>
-          ) : (
-            <div style={{ fontSize: '13px', color: '#94a3b8', fontStyle: 'italic', padding: '12px', background: '#0f172a', borderRadius: '6px', border: '1px solid #334155' }}>
-              🖼️ Tạo Thumbnail AI tự động hiện đang TẮT. Gạt thanh trượt đóng mở ở trên để kích hoạt.
-            </div>
-          )}
+            ) : (
+              <div style={{ fontSize: '12px', color: '#94a3b8', fontStyle: 'italic' }}>
+                🖼️ Tạo Thumbnail AI hiện đang TẮT.
+              </div>
+            )}
+          </div>
+
         </div>
 
-        <button
-          onClick={handleOpenPreflightOrPromptProject}
-          disabled={isProcessing}
-          style={{
-            marginTop: '20px',
-            width: '100%',
-            padding: '14px',
-            borderRadius: '8px',
-            background: 'linear-gradient(90deg, #4f46e5 0%, #7c3aed 100%)',
-            color: '#fff',
-            fontWeight: 'bold',
-            fontSize: '16px',
-            border: 'none',
-            cursor: isProcessing ? 'not-allowed' : 'pointer',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '0.5rem',
-          }}
-        >
-          {isProcessing ? <><ButtonSpinner /> ⚡ Đang xử lý Pipeline...</> : '🚀 Bắt đầu Nhập & Dịch Video'}
-        </button>
-      </CollapsibleCard>
+      </div>
 
-      {/* Collapsible Card: Project Glossary Manager */}
-      <CollapsibleCard title="📖 Quản Lý Thuật Ngữ Dự Án (Glossary & Terminology Memory)" icon="📖" defaultOpen={false}>
-        <ProjectGlossaryManager projectId={activeProjectId} />
-      </CollapsibleCard>
+      {/* BELOW VIEWPORT SECTION: GLOSSARY MANAGER (DEFAULT CLOSED) */}
+      <div style={{ marginTop: '20px' }}>
+        <CollapsibleCard title="📖 Quản Lý Thuật Ngữ Dự Án (Glossary & Terminology Memory)" icon="📖" defaultOpen={false}>
+          <ProjectGlossaryManager projectId={activeProjectId} />
+        </CollapsibleCard>
+      </div>
 
       {/* Segment Editor when phase 1 completes */}
       {job && (job.status === 'segment_editing' || job.status === 'completed' || segments.length > 0) && (
-        <div className="card" style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '12px', padding: '24px', color: '#fff', marginBottom: '24px' }}>
-          <div style={{ marginBottom: '20px', padding: '16px 20px', background: '#064e3b', border: '1px solid #10b981', borderRadius: '10px', color: '#a7f3d0' }}>
-            <h4 style={{ margin: '0 0 6px 0', fontSize: '16px', fontWeight: 'bold', color: '#6ee7b7' }}>
+        <div className="card" style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '12px', padding: '20px', color: '#fff', marginBottom: '20px' }}>
+          <div style={{ marginBottom: '16px', padding: '12px 16px', background: '#064e3b', border: '1px solid #10b981', borderRadius: '8px', color: '#a7f3d0' }}>
+            <h4 style={{ margin: '0 0 4px 0', fontSize: '15px', fontWeight: 'bold', color: '#6ee7b7' }}>
               🟢 Phase 1 Hoàn Thành – Đã Trích Xuất & Dịch Phân Đoạn!
             </h4>
-            <p style={{ margin: 0, fontSize: '13px' }}>
-              Hệ thống đã nhận diện giọng nói và dịch thành công <strong>{segments.length}</strong> phân đoạn. Vui lòng xem lại và chỉnh sửa bản dịch dưới đây trước khi xác nhận render video lồng tiếng.
+            <p style={{ margin: 0, fontSize: '12px' }}>
+              Hệ thống đã dịch thành công <strong>{segments.length}</strong> phân đoạn. Vui lòng xem lại và chỉnh sửa bản dịch dưới đây trước khi xác nhận render video lồng tiếng.
             </p>
           </div>
 
-          <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '12px' }}>📝 Xem lại & Chỉnh sửa Văn Bản Dịch</h3>
-          <p style={{ fontSize: '13px', color: '#94a3b8', marginBottom: '20px' }}>
-            Bạn có thể chỉnh sửa câu từ dịch của từng mốc thời gian trước khi tiến hành tạo giọng đọc TTS và Render video.
-          </p>
+          <h3 style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '12px' }}>📝 Xem lại & Chỉnh sửa Văn Bản Dịch</h3>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '400px', overflowY: 'auto', paddingRight: '4px' }}>
             {segments.map((seg) => (
-              <div key={seg.id} style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', padding: '16px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', color: '#818cf8', fontWeight: 'bold', fontSize: '13px' }}>
+              <div key={seg.id} style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', padding: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', color: '#818cf8', fontWeight: 'bold', fontSize: '12px' }}>
                   <span>Phân đoạn #{seg.number}</span>
                   <span>⏱ {formatTime(seg.start_time)} → {formatTime(seg.end_time)}</span>
                 </div>
-                <div style={{ fontSize: '13px', color: '#cbd5e1', marginBottom: '8px', fontStyle: 'italic' }}>
+                <div style={{ fontSize: '12px', color: '#cbd5e1', marginBottom: '6px', fontStyle: 'italic' }}>
                   Gốc ({job.detected_language || 'Auto'}): "{seg.original_text}"
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Bản dịch ({targetLanguage.toUpperCase()}):</label>
                   <textarea
                     rows={2}
                     value={seg.translated_text}
                     onChange={(e) => handleSegmentTextChange(seg.id, e.target.value)}
                     style={{
                       width: '100%',
-                      padding: '10px',
+                      padding: '8px',
                       borderRadius: '6px',
                       background: '#1e293b',
                       color: '#fff',
                       border: '1px solid #475569',
-                      fontSize: '14px',
+                      fontSize: '13px',
                     }}
                   />
                 </div>
@@ -2021,14 +1652,14 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
               onClick={handleRenderFinalVideo}
               disabled={isProcessing}
               style={{
-                marginTop: '20px',
+                marginTop: '16px',
                 width: '100%',
-                padding: '14px',
+                padding: '12px',
                 borderRadius: '8px',
                 background: 'linear-gradient(90deg, #10b981 0%, #059669 100%)',
                 color: '#fff',
                 fontWeight: 'bold',
-                fontSize: '16px',
+                fontSize: '15px',
                 border: 'none',
                 cursor: 'pointer',
               }}
@@ -2041,16 +1672,16 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
 
       {/* Final Dubbed Video Player */}
       {job && job.status === 'completed' && (job.output_url || job.output_video_path) && (
-        <div className="card" style={{ background: '#064e3b', border: '1px solid #10b981', borderRadius: '12px', padding: '24px', color: '#fff' }}>
-          <h3 style={{ fontSize: '20px', fontWeight: 'bold', color: '#6ee7b7', marginBottom: '16px' }}>🎉 Video Lồng Tiếng Đã Hoàn Thành!</h3>
-          <div style={{ width: '100%', borderRadius: '8px', overflow: 'hidden', marginBottom: '16px', background: '#000' }}>
+        <div className="card" style={{ background: '#064e3b', border: '1px solid #10b981', borderRadius: '12px', padding: '20px', color: '#fff', marginBottom: '20px' }}>
+          <h3 style={{ fontSize: '18px', fontWeight: 'bold', color: '#6ee7b7', marginBottom: '14px' }}>🎉 Video Lồng Tiếng Đã Hoàn Thành!</h3>
+          <div style={{ width: '100%', borderRadius: '8px', overflow: 'hidden', marginBottom: '14px', background: '#000' }}>
             <video
               controls
-              style={{ width: '100%', maxHeight: '500px' }}
+              style={{ width: '100%', maxHeight: '480px' }}
               src={job.output_url || `/media/${job.output_video_path.replace(/^.*[\\\/]data[\\\/]/, '')}`}
             />
           </div>
-          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
             <a
               href={`http://127.0.0.1:8000/api/storage/download?path=${encodeURIComponent(job.output_video_path?.replace(/^.*[\\\/]data[\\\/]/, '') || '')}&filename=video_long_tieng.mp4`}
               download="final_translated_video.mp4"
@@ -2058,12 +1689,13 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
               rel="noopener noreferrer"
               style={{
                 display: 'inline-block',
-                padding: '12px 24px',
-                borderRadius: '8px',
+                padding: '10px 20px',
+                borderRadius: '6px',
                 background: '#10b981',
                 color: '#fff',
                 fontWeight: 'bold',
                 textDecoration: 'none',
+                fontSize: '13px',
               }}
             >
               📥 Tải Video Lồng Tiếng (MP4)
@@ -2071,23 +1703,21 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
             <button
               onClick={() => setShowYouTubeModal(true)}
               style={{
-                padding: '12px 24px',
-                borderRadius: '8px',
+                padding: '10px 20px',
+                borderRadius: '6px',
                 background: '#f43f5e',
                 color: '#fff',
                 fontWeight: 'bold',
                 border: 'none',
                 cursor: 'pointer',
+                fontSize: '13px',
               }}
             >
               🔴 Tự Động SEO & Đăng Bài YouTube
             </button>
           </div>
 
-          {/* AI QC Scorecard */}
           <AIQCScorecard jobId={job.id} />
-
-          {/* Video Editing & Branding Automation Studio */}
           <VideoEditorStudio jobId={job.id} />
         </div>
       )}
@@ -2102,52 +1732,22 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
 
       {/* Log Terminal Modal */}
       {showLogModal && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0, left: 0, right: 0, bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.75)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-            padding: '20px',
-          }}
-        >
-          <div
-            style={{
-              background: '#090d16',
-              border: '1px solid #3b82f6',
-              borderRadius: '12px',
-              width: '100%',
-              maxWidth: '850px',
-              maxHeight: '80vh',
-              display: 'flex',
-              flexDirection: 'column',
-              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
-            }}
-          >
-            <div style={{ padding: '16px 20px', borderBottom: '1px solid #1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold', color: '#60a5fa' }}>
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0, 0, 0, 0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
+          <div style={{ background: '#090d16', border: '1px solid #3b82f6', borderRadius: '12px', width: '100%', maxWidth: '850px', maxHeight: '80vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)' }}>
+            <div style={{ padding: '14px 18px', borderBottom: '1px solid #1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 'bold', color: '#60a5fa' }}>
                 📜 Job Execution Logs ({job?.id || job?.job_id})
               </h3>
-              <button
-                onClick={() => setShowLogModal(false)}
-                style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '20px', cursor: 'pointer' }}
-              >
-                ✕
-              </button>
+              <button onClick={() => setShowLogModal(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '20px', cursor: 'pointer' }}>✕</button>
             </div>
 
-            <div style={{ padding: '16px', flex: 1, overflowY: 'auto', background: '#020617', fontFamily: 'monospace', fontSize: '12px', color: '#38bdf8', whiteSpace: 'pre-wrap' }}>
+            <div style={{ padding: '14px', flex: 1, overflowY: 'auto', background: '#020617', fontFamily: 'monospace', fontSize: '12px', color: '#38bdf8', whiteSpace: 'pre-wrap' }}>
               {isFetchingLogs ? 'Đang tải log...' : logsContent}
             </div>
 
-            <div style={{ padding: '12px 20px', borderTop: '1px solid #1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                {copySuccess && <span style={{ color: '#4ade80', fontSize: '13px' }}>✓ {copySuccess}</span>}
-              </div>
-              <div style={{ display: 'flex', gap: '10px' }}>
+            <div style={{ padding: '10px 18px', borderTop: '1px solid #1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>{copySuccess && <span style={{ color: '#4ade80', fontSize: '12px' }}>✓ {copySuccess}</span>}</div>
+              <div style={{ display: 'flex', gap: '8px' }}>
                 {job?.error_message && (
                   <button
                     onClick={() => {
@@ -2155,7 +1755,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                       setCopySuccess('Đã sao chép câu thông báo lỗi');
                       setTimeout(() => setCopySuccess(''), 2000);
                     }}
-                    style={{ padding: '8px 16px', borderRadius: '6px', background: '#7f1d1d', color: '#fca5a5', border: 'none', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}
+                    style={{ padding: '6px 12px', borderRadius: '6px', background: '#7f1d1d', color: '#fca5a5', border: 'none', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
                   >
                     ⚠️ Sao Chép Lỗi
                   </button>
@@ -2166,19 +1766,19 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                     setCopySuccess('Đã sao chép toàn bộ log');
                     setTimeout(() => setCopySuccess(''), 2000);
                   }}
-                  style={{ padding: '8px 16px', borderRadius: '6px', background: '#334155', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}
+                  style={{ padding: '6px 12px', borderRadius: '6px', background: '#334155', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
                 >
                   📋 Sao Chép Full Log
                 </button>
                 <button
                   onClick={() => fetchLogs(job?.id || job?.job_id)}
-                  style={{ padding: '8px 16px', borderRadius: '6px', background: '#2563eb', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}
+                  style={{ padding: '6px 12px', borderRadius: '6px', background: '#2563eb', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
                 >
                   🔄 Làm Mới
                 </button>
                 <button
                   onClick={() => setShowLogModal(false)}
-                  style={{ padding: '8px 16px', borderRadius: '6px', background: '#475569', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}
+                  style={{ padding: '6px 12px', borderRadius: '6px', background: '#475569', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
                 >
                   Đóng
                 </button>
@@ -2187,33 +1787,73 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
           </div>
         </div>
       )}
-      {/* Modal 1: No Project Selected Modal */}
+
+      {/* Switch Project Guard Modal */}
+      {showSwitchGuardModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+          <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '14px', padding: '24px', maxWidth: '460px', width: '90%', color: '#fff' }}>
+            <h3 style={{ margin: '0 0 10px 0', fontSize: '16px', color: '#f59e0b' }}>⚠️ Có thay đổi cấu hình chưa lưu</h3>
+            <p style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '16px', lineHeight: '1.5' }}>
+              Bạn vừa thay đổi cấu hình của dự án hiện tại nhưng chưa bấm <strong>Lưu cấu hình</strong>. Vui lòng chọn thao tác:
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <button
+                onClick={async () => {
+                  await handleSaveSettingsToProject();
+                  setSelectedProjectId(pendingSwitchProjectId);
+                  setShowSwitchGuardModal(false);
+                }}
+                style={{ background: '#2563eb', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}
+              >
+                💾 Lưu thay đổi & Chuyển dự án
+              </button>
+              <button
+                onClick={() => {
+                  handleDiscardChanges();
+                  setSelectedProjectId(pendingSwitchProjectId);
+                  setShowSwitchGuardModal(false);
+                }}
+                style={{ background: '#475569', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}
+              >
+                🗑️ Bỏ qua thay đổi & Chuyển dự án
+              </button>
+              <button
+                onClick={() => setShowSwitchGuardModal(false)}
+                style={{ background: 'transparent', color: '#94a3b8', border: '1px solid #475569', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}
+              >
+                ❌ Hủy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* No Project Selected Modal */}
       {showNoProjectModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
-          <div style={{ background: '#1e1b4b', border: '1px solid #4338ca', borderRadius: '14px', padding: '28px', maxWidth: '480px', width: '90%', color: '#fff', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)' }}>
-            <h2 style={{ margin: '0 0 12px 0', fontSize: '20px', fontWeight: 'bold', color: '#fbbf24' }}>
+          <div style={{ background: '#1e1b4b', border: '1px solid #4338ca', borderRadius: '14px', padding: '24px', maxWidth: '460px', width: '90%', color: '#fff' }}>
+            <h2 style={{ margin: '0 0 10px 0', fontSize: '18px', fontWeight: 'bold', color: '#fbbf24' }}>
               ⚠️ Chưa chọn dự án
             </h2>
-            <p style={{ color: '#cbd5e1', fontSize: '14px', lineHeight: '1.5', margin: '0 0 20px 0' }}>
-              Để bắt đầu dịch video và lưu trữ subtitle, audio & thumbnail, vui lòng chọn một dự án có sẵn hoặc tạo dự án mới.
+            <p style={{ color: '#cbd5e1', fontSize: '13px', lineHeight: '1.5', margin: '0 0 16px 0' }}>
+              Để bắt đầu dịch video, vui lòng chọn một dự án có sẵn hoặc tạo dự án mới.
             </p>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <button
                 onClick={() => {
                   setShowNoProjectModal(false);
                   setShowCreateProjectModal(true);
                 }}
-                style={{ background: '#4f46e5', color: '#fff', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                style={{ background: '#4f46e5', color: '#fff', border: 'none', padding: '10px', borderRadius: '6px', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer' }}
               >
                 ➕ Tạo dự án mới ngay
               </button>
 
               {projectsList.length > 0 && (
-                <div style={{ marginTop: '4px' }}>
-                  <label style={{ fontSize: '12px', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Hoặc chọn dự án có sẵn:</label>
+                <div>
                   <select
-                    style={{ width: '100%', padding: '10px', borderRadius: '6px', background: '#0f1117', color: '#fff', border: '1px solid #4338ca', fontSize: '14px' }}
+                    style={{ width: '100%', padding: '8px', borderRadius: '6px', background: '#0f1117', color: '#fff', border: '1px solid #4338ca', fontSize: '13px' }}
                     onChange={(e) => {
                       if (e.target.value) {
                         setSelectedProjectId(e.target.value);
@@ -2232,7 +1872,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
 
               <button
                 onClick={() => setShowNoProjectModal(false)}
-                style={{ background: '#374151', color: '#94a3b8', border: 'none', padding: '10px', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', marginTop: '4px' }}
+                style={{ background: '#374151', color: '#94a3b8', border: 'none', padding: '8px', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' }}
               >
                 Hủy bỏ
               </button>
@@ -2241,58 +1881,58 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         </div>
       )}
 
-      {/* Modal 2: Create Project Modal */}
+      {/* Create Project Modal */}
       {showCreateProjectModal && (
         <div
           style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}
           onClick={(e) => { if (e.target === e.currentTarget) closeCreateProjectModalSafely(); }}
         >
-          <div style={{ background: '#1e1b4b', border: '1px solid #4338ca', borderRadius: '14px', padding: '28px', maxWidth: '500px', width: '90%', color: '#fff', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)' }}>
-            <h2 style={{ margin: '0 0 16px 0', fontSize: '20px', fontWeight: 'bold', color: '#818cf8' }}>
+          <div style={{ background: '#1e1b4b', border: '1px solid #4338ca', borderRadius: '14px', padding: '24px', maxWidth: '480px', width: '90%', color: '#fff' }}>
+            <h2 style={{ margin: '0 0 14px 0', fontSize: '18px', fontWeight: 'bold', color: '#818cf8' }}>
               📁 Tạo Dự Án Mới
             </h2>
             <form onSubmit={handleCreateProjectSubmit}>
-              <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', fontSize: '13px', color: '#cbd5e1', marginBottom: '6px', fontWeight: '500' }}>
+              <div style={{ marginBottom: '14px' }}>
+                <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '4px', fontWeight: '500' }}>
                   Tên dự án <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <input
                   type="text"
-                  placeholder="Ví dụ: Dịch phim hoạt hình Trung Quốc"
+                  placeholder="Ví dụ: Dịch phim hoạt hình"
                   value={newProjectTitle}
                   onChange={(e) => setNewProjectTitle(e.target.value)}
-                  style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', background: '#0f1117', color: '#fff', border: '1px solid #4338ca', fontSize: '14px' }}
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', background: '#0f1117', color: '#fff', border: '1px solid #4338ca', fontSize: '13px' }}
                   required
                   autoFocus
                 />
               </div>
 
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ display: 'block', fontSize: '13px', color: '#cbd5e1', marginBottom: '6px', fontWeight: '500' }}>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '4px', fontWeight: '500' }}>
                   Mô tả dự án (Tùy chọn)
                 </label>
                 <textarea
-                  placeholder="Ghi chú thể loại, tone màu hoặc phong cách dịch..."
+                  placeholder="Ghi chú dự án..."
                   value={newProjectDescription}
                   onChange={(e) => setNewProjectDescription(e.target.value)}
-                  style={{ width: '100%', padding: '10px 14px', borderRadius: '6px', background: '#0f1117', color: '#fff', border: '1px solid #4338ca', fontSize: '13px', minHeight: '80px', resize: 'vertical' }}
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', background: '#0f1117', color: '#fff', border: '1px solid #4338ca', fontSize: '12px', minHeight: '70px', resize: 'vertical' }}
                 />
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
                 <button
                   type="button"
                   onClick={closeCreateProjectModalSafely}
-                  style={{ background: '#374151', color: '#cbd5e1', border: 'none', padding: '10px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}
+                  style={{ background: '#374151', color: '#cbd5e1', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' }}
                 >
                   Hủy
                 </button>
                 <button
                   type="submit"
                   disabled={isCreatingProject}
-                  style={{ background: '#4f46e5', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
+                  style={{ background: '#4f46e5', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}
                 >
-                  {isCreatingProject ? <ButtonSpinner text="Đang tạo..." /> : '🚀 Tạo dự án & Bắt đầu'}
+                  {isCreatingProject ? <ButtonSpinner text="Đang tạo..." /> : '🚀 Tạo dự án'}
                 </button>
               </div>
             </form>
@@ -2300,77 +1940,58 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         </div>
       )}
 
-      {/* Modal 3: Pre-flight Check Results Modal */}
+      {/* Pre-flight Check Modal */}
       {showPreflightModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
-          <div style={{ background: '#1e1b4b', border: '1px solid #4338ca', borderRadius: '14px', padding: '28px', maxWidth: '640px', width: '90%', color: '#fff', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold', color: '#818cf8', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ background: '#1e1b4b', border: '1px solid #4338ca', borderRadius: '14px', padding: '24px', maxWidth: '600px', width: '90%', color: '#fff' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 'bold', color: '#818cf8' }}>
                 📋 WORKFLOW PRE-FLIGHT CHECK
               </h2>
-              <button onClick={() => setShowPreflightModal(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '24px', cursor: 'pointer' }}>×</button>
+              <button onClick={() => setShowPreflightModal(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '22px', cursor: 'pointer' }}>×</button>
             </div>
 
             {isPreflighting ? (
-              <div style={{ padding: '32px 0', textAlign: 'center' }}>
+              <div style={{ padding: '24px 0', textAlign: 'center' }}>
                 <LoadingSpinner size="lg" />
-                <p style={{ marginTop: '16px', color: '#94a3b8', fontSize: '14px' }}>Đang thực hiện kiểm tra tiền điều kiện hệ thống & AI Providers...</p>
+                <p style={{ marginTop: '12px', color: '#94a3b8', fontSize: '13px' }}>Đang kiểm tra tiền điều kiện hệ thống...</p>
               </div>
             ) : preflightResult ? (
               <div>
-                <div style={{ padding: '12px 16px', borderRadius: '8px', background: preflightResult.can_start ? '#065f4633' : '#991b1b33', border: `1px solid ${preflightResult.can_start ? '#059669' : '#dc2626'}`, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <span style={{ fontSize: '20px' }}>{preflightResult.can_start ? '✅' : '❌'}</span>
+                <div style={{ padding: '10px 14px', borderRadius: '6px', background: preflightResult.can_start ? '#065f4633' : '#991b1b33', border: `1px solid ${preflightResult.can_start ? '#059669' : '#dc2626'}`, marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '18px' }}>{preflightResult.can_start ? '✅' : '❌'}</span>
                   <div>
-                    <div style={{ fontWeight: 'bold', color: preflightResult.can_start ? '#34d399' : '#f87171', fontSize: '15px' }}>
-                      {preflightResult.can_start ? 'READY TO START — Tất cả kiểm tra bắt buộc đã vượt qua' : 'CRITICAL FAILURE — Kiểm tra bắt buộc thất bại'}
-                    </div>
-                    <div style={{ fontSize: '12px', color: '#cbd5e1', marginTop: '2px' }}>
-                      {preflightResult.can_start ? 'Hệ thống sẵn sàng khởi chạy Unified 6-Stage Workflow.' : 'Vui lòng khắc phục các lỗi màu đỏ trước khi tiếp tục.'}
+                    <div style={{ fontWeight: 'bold', color: preflightResult.can_start ? '#34d399' : '#f87171', fontSize: '14px' }}>
+                      {preflightResult.can_start ? 'READY TO START — Tất cả kiểm tra bắt buộc đã đạt' : 'CRITICAL FAILURE — Kiểm tra bắt buộc thất bại'}
                     </div>
                   </div>
                 </div>
 
-                <div style={{ maxHeight: '300px', overflowY: 'auto', paddingRight: '4px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ maxHeight: '260px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   {preflightResult.checks.map((chk, idx) => (
-                    <div key={idx} style={{ padding: '10px 14px', borderRadius: '6px', background: '#0f1117', border: '1px solid #2a2f3d', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
-                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-                        <span style={{ fontSize: '16px' }}>{chk.passed ? '✓' : (chk.category === 'optional' ? '⚠️' : '❌')}</span>
-                        <div>
-                          <div style={{ fontWeight: '600', fontSize: '13px', color: chk.passed ? '#e2e8f0' : (chk.category === 'optional' ? '#fbbf24' : '#f87171') }}>
-                            {chk.description}
-                          </div>
-                          {chk.error_message && (
-                            <div style={{ fontSize: '12px', color: chk.category === 'optional' ? '#fcd34d' : '#fca5a5', marginTop: '4px', lineHeight: '1.4' }}>
-                              {chk.error_message}
-                            </div>
-                          )}
-                        </div>
+                    <div key={idx} style={{ padding: '8px 12px', borderRadius: '6px', background: '#0f1117', border: '1px solid #2a2f3d', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span>{chk.passed ? '✓' : (chk.category === 'optional' ? '⚠️' : '❌')}</span>
+                        <span style={{ fontSize: '12px', color: chk.passed ? '#e2e8f0' : (chk.category === 'optional' ? '#fbbf24' : '#f87171') }}>{chk.description}</span>
                       </div>
-                      <span style={{ fontSize: '11px', fontWeight: 'bold', padding: '3px 8px', borderRadius: '4px', background: chk.passed ? '#065f46' : (chk.category === 'optional' ? '#78350f' : '#7f1d1d'), color: chk.passed ? '#a7f3d0' : (chk.category === 'optional' ? '#fef3c7' : '#fecaca'), whiteSpace: 'nowrap' }}>
-                        {chk.passed ? 'PASS' : (chk.category === 'optional' ? 'WARNING' : 'FAILED')}
+                      <span style={{ fontSize: '10px', fontWeight: 'bold', padding: '2px 6px', borderRadius: '4px', background: chk.passed ? '#065f46' : '#7f1d1d', color: chk.passed ? '#a7f3d0' : '#fecaca' }}>
+                        {chk.passed ? 'PASS' : 'FAILED'}
                       </span>
                     </div>
                   ))}
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px', paddingTop: '14px', borderTop: '1px solid #334155' }}>
-                  <button onClick={() => setShowPreflightModal(false)} style={{ background: '#374151', color: '#cbd5e1', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid #334155' }}>
+                  <button onClick={() => setShowPreflightModal(false)} style={{ background: '#374151', color: '#cbd5e1', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' }}>
                     Đóng
                   </button>
-                  {preflightResult.can_start ? (
+                  {preflightResult.can_start && (
                     <button
                       onClick={executeStartWorkflowAfterPreflight}
                       disabled={loadingWorkflowAction === 'start'}
-                      style={{ background: 'linear-gradient(90deg, #059669 0%, #10b981 100%)', color: '#fff', border: 'none', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
+                      style={{ background: 'linear-gradient(90deg, #059669 0%, #10b981 100%)', color: '#fff', border: 'none', padding: '8px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}
                     >
                       {loadingWorkflowAction === 'start' ? <ButtonSpinner text="Đang khởi chạy..." /> : '🚀 Bắt đầu Workflow ngay'}
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => runPreflightCheck()}
-                      style={{ background: '#d97706', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}
-                    >
-                      🔄 Thử lại kiểm tra (Retry Check)
                     </button>
                   )}
                 </div>
@@ -2379,6 +2000,59 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
           </div>
         </div>
       )}
+
+      {/* Edit Project Title Modal */}
+      {showEditTitleModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
+          <div style={{ background: '#1e1b4b', border: '1px solid #4338ca', borderRadius: '14px', padding: '24px', maxWidth: '480px', width: '90%', color: '#fff' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 'bold', color: '#818cf8' }}>
+                ✏️ Chỉnh sửa tên dự án
+              </h2>
+              <button onClick={() => setShowEditTitleModal(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '22px', cursor: 'pointer' }}>×</button>
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '6px', fontWeight: '500' }}>
+                Tên mới cho dự án (ID: <code>{selectedProjectId}</code>):
+              </label>
+              <input
+                type="text"
+                value={editTitleInput}
+                onChange={(e) => setEditTitleInput(e.target.value)}
+                placeholder="Tên dự án..."
+                autoFocus
+                style={{ width: '100%', padding: '10px 12px', borderRadius: '6px', background: '#0f1117', color: '#fff', border: '1px solid #4338ca', fontSize: '13px', boxSizing: 'border-box' }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSaveProjectTitleInStudio();
+                  if (e.key === 'Escape') setShowEditTitleModal(false);
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button
+                type="button"
+                onClick={() => setShowEditTitleModal(false)}
+                disabled={isSavingTitle}
+                style={{ background: '#374151', color: '#cbd5e1', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' }}
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveProjectTitleInStudio}
+                disabled={isSavingTitle || !editTitleInput.trim()}
+                style={{ background: '#4f46e5', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}
+              >
+                {isSavingTitle ? <ButtonSpinner text="Đang lưu..." /> : '💾 Lưu tên mới'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
+

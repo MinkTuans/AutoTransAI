@@ -25,7 +25,36 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
   const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
   const [error, setError] = useState(null);
 
+  // Editable title state
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleInput, setTitleInput] = useState('');
+  const [savingTitle, setSavingTitle] = useState(false);
+
+  const handleStartEditingTitle = () => {
+    setTitleInput(project?.title || '');
+    setIsEditingTitle(true);
+  };
+
+  const handleSaveTitle = async () => {
+    if (!projectId || !titleInput.trim()) return;
+    setSavingTitle(true);
+    try {
+      const res = await projectsApi.update(projectId, { title: titleInput.trim() });
+      if (res.success) {
+        setProject(prev => prev ? { ...prev, title: titleInput.trim() } : prev);
+        setIsEditingTitle(false);
+      } else {
+        alert('Không thể cập nhật tên dự án: ' + (res.message || 'Lỗi không xác định'));
+      }
+    } catch (err) {
+      alert('Lỗi khi cập nhật tên dự án: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setSavingTitle(false);
+    }
+  };
+
   // Editable settings form state
+
   const [editSettings, setEditSettings] = useState({});
   const [savedSnapshot, setSavedSnapshot] = useState({});
   const [isTabDirty, setIsTabDirty] = useState(false);
@@ -234,9 +263,39 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
           >
             ← Quay lại Dashboard
           </button>
-          <h1 style={{ fontSize: '26px', fontWeight: 'bold', color: '#f8fafc', margin: '0 0 6px 0' }}>
-            📁 {project.title}
-          </h1>
+          {isEditingTitle ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+              <input
+                type="text"
+                value={titleInput}
+                onChange={(e) => setTitleInput(e.target.value)}
+                style={{ padding: '6px 12px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #6366f1', fontSize: '18px', fontWeight: 'bold' }}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSaveTitle();
+                  if (e.key === 'Escape') setIsEditingTitle(false);
+                }}
+              />
+              <button className="btn btn-primary" onClick={handleSaveTitle} disabled={savingTitle} style={{ padding: '6px 12px', fontSize: '13px' }}>
+                {savingTitle ? '⏳ Saving...' : '💾 Lưu'}
+              </button>
+              <button className="btn btn-secondary" onClick={() => setIsEditingTitle(false)} disabled={savingTitle} style={{ padding: '6px 12px', fontSize: '13px' }}>
+                Hủy
+              </button>
+            </div>
+          ) : (
+            <h1 style={{ fontSize: '26px', fontWeight: 'bold', color: '#f8fafc', margin: '0 0 6px 0', display: 'flex', alignItems: 'center', gap: '10px' }}>
+              📁 {project.title}
+              <button
+                onClick={handleStartEditingTitle}
+                title="Sửa tên dự án"
+                style={{ background: '#1e293b', border: '1px solid #475569', color: '#cbd5e1', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', cursor: 'pointer' }}
+              >
+                ✏️ Sửa tên
+              </button>
+            </h1>
+          )}
+
           <p style={{ color: '#94a3b8', fontSize: '13px', margin: 0 }}>
             ID: <code style={{ background: '#1e293b', padding: '2px 8px', borderRadius: '4px', color: '#818cf8' }}>{project.id}</code>
             {' | '} Tạo lúc: {formatDate(project.created_at)}
@@ -470,7 +529,9 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
       )}
 
       {/* TAB 2: EDITABLE PROJECT SETTINGS */}
-      {activeTab === 'settings' && (
+      {activeTab === 'settings' && (() => {
+        const pSettings = editSettings || {};
+        return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           {/* Header Action Bar */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#1e1b4b', padding: '16px 20px', borderRadius: '10px', border: '1px solid #4338ca', flexWrap: 'wrap', gap: '12px' }}>
@@ -502,6 +563,172 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
               ⚠️ Bạn có thay đổi chưa lưu trên trang này. Hãy nhấn "Lưu Cấu hình Dự án" để lưu lại.
             </div>
           )}
+
+          {/* YouTube & SEO Defaults Card */}
+          <div className="card" style={{ background: '#1e293b', borderRadius: '10px', padding: '20px', border: '1px solid #4338ca', boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid #334155', paddingBottom: '10px' }}>
+              <h4 style={{ margin: 0, fontSize: '16px', color: '#f43f5e', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                📺 YouTube & SEO Defaults
+              </h4>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: '#e2e8f0', fontWeight: 'bold' }}>
+                <input
+                  type="checkbox"
+                  checked={parseBool(pSettings.youtube_enabled, true)}
+                  onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_enabled: e.target.checked }))}
+                  style={{ accentColor: '#f43f5e', width: '16px', height: '16px' }}
+                />
+                ☑ Sử dụng YouTube & SEO Defaults
+              </label>
+            </div>
+
+            <p style={{ fontSize: '13px', color: '#94a3b8', marginTop: '-4px', marginBottom: '16px' }}>
+              Cấu hình mẫu mặc định cho tất cả video trong project. Mỗi video mới sẽ tự động kế thừa cấu hình này.
+            </p>
+
+            {parseBool(pSettings.youtube_enabled, true) ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
+                  {/* Tên Kênh YouTube */}
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '6px', fontWeight: 'bold' }}>
+                      📌 Tên Kênh YouTube:
+                    </label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={pSettings.youtube_channel_name ?? 'Xói Xám Content'}
+                      onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_channel_name: e.target.value }))}
+                      placeholder="vd: Xói Xám Content"
+                      style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                    />
+                  </div>
+
+                  {/* Mẫu tiêu đề Video (Title Template) */}
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '6px', fontWeight: 'bold' }}>
+                      📌 Mẫu Tiêu Đề Video (Title Template):
+                    </label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={pSettings.youtube_title_template ?? 'Tập {episode} | {project_name} | {channel_name}'}
+                      onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_title_template: e.target.value }))}
+                      placeholder="Tập {episode} | {project_name} | {channel_name}"
+                      style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                    />
+                  </div>
+                </div>
+
+                {/* Variable Tags & Preview */}
+                <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', padding: '12px 16px' }}>
+                  <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '6px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span style={{ fontWeight: 'bold', color: '#cbd5e1' }}>Biến hỗ trợ:</span>
+                    <code style={{ background: '#1e293b', padding: '2px 6px', borderRadius: '4px', color: '#38bdf8' }}>{`{episode}`}</code>
+                    <code style={{ background: '#1e293b', padding: '2px 6px', borderRadius: '4px', color: '#38bdf8' }}>{`{project_name}`}</code>
+                    <code style={{ background: '#1e293b', padding: '2px 6px', borderRadius: '4px', color: '#38bdf8' }}>{`{channel_name}`}</code>
+                    <code style={{ background: '#1e293b', padding: '2px 6px', borderRadius: '4px', color: '#38bdf8' }}>{`{video_name}`}</code>
+                  </div>
+                  <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #1e293b' }}>
+                    <span style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: 'bold', display: 'block', marginBottom: '2px' }}>
+                      👁️ Preview Tiêu Đề:
+                    </span>
+                    <div style={{ color: '#38bdf8', fontWeight: 'bold', fontSize: '14px' }}>
+                      {(pSettings.youtube_title_template || 'Tập {episode} | {project_name} | {channel_name}')
+                        .replace('{episode}', '01')
+                        .replace('{project_name}', project?.title || 'Tên Project')
+                        .replace('{channel_name}', pSettings.youtube_channel_name || 'Xói Xám Content')
+                        .replace('{video_name}', 'Tên Video')}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Mô tả Video mặc định */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '6px', fontWeight: 'bold' }}>
+                    📝 Mô tả Video Mặc Định:
+                  </label>
+                  <textarea
+                    rows="3"
+                    className="form-textarea"
+                    value={pSettings.youtube_description_default ?? ''}
+                    onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_description_default: e.target.value }))}
+                    placeholder="Kênh Xói Xám Content&#10;&#10;Nội dung video được dịch và lồng tiếng bằng AI.&#10;&#10;#ai #dichvideo"
+                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px', resize: 'vertical' }}
+                  />
+                </div>
+
+                {/* Tags mặc định */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '6px', fontWeight: 'bold' }}>
+                    🏷️ Tags Mặc Định (Bắt buộc giữ lại):
+                  </label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={pSettings.youtube_default_tags ?? ''}
+                    onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_default_tags: e.target.value }))}
+                    placeholder="#xoiXamContent, #ai, #dichvideo"
+                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                  />
+                </div>
+
+                {/* Section 2: AI SEO Generator settings */}
+                <div style={{ background: '#1e1b4b', border: '1px solid #4338ca', borderRadius: '8px', padding: '14px', marginTop: '4px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#a78bfa', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      🤖 AI SEO Generator
+                    </span>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#ddd6fe', fontWeight: 'bold' }}>
+                      <input
+                        type="checkbox"
+                        checked={parseBool(pSettings.youtube_ai_seo_enabled, true)}
+                        onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_ai_seo_enabled: e.target.checked }))}
+                        style={{ accentColor: '#8b5cf6' }}
+                      />
+                      Cho phép AI bổ sung SEO
+                    </label>
+                  </div>
+
+                  {parseBool(pSettings.youtube_ai_seo_enabled, true) && (
+                    <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', fontSize: '12px', color: '#c4b5fd', marginTop: '8px' }}>
+                      <span style={{ fontWeight: 'bold' }}>AI được phép bổ sung:</span>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={parseBool(pSettings.youtube_ai_allow_title, true)}
+                          onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_ai_allow_title: e.target.checked }))}
+                          style={{ accentColor: '#8b5cf6' }}
+                        />
+                        Title suggestion
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={parseBool(pSettings.youtube_ai_allow_description, true)}
+                          onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_ai_allow_description: e.target.checked }))}
+                          style={{ accentColor: '#8b5cf6' }}
+                        />
+                        Description
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={parseBool(pSettings.youtube_ai_allow_tags, true)}
+                          onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_ai_allow_tags: e.target.checked }))}
+                          style={{ accentColor: '#8b5cf6' }}
+                        />
+                        Additional Tags
+                      </label>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div style={{ fontSize: '13px', color: '#94a3b8', fontStyle: 'italic', padding: '12px', background: '#0f172a', borderRadius: '6px', border: '1px solid #334155' }}>
+                🚫 YouTube & SEO Defaults hiện đang TẮT. Đánh dấu vào ô ở trên để kích hoạt mẫu tiêu đề, mô tả và tag mặc định.
+              </div>
+            )}
+          </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '20px' }}>
             {/* 1. Language & Input */}
@@ -873,7 +1100,8 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* TAB 3: GLOSSARY */}
       {activeTab === 'glossary' && (

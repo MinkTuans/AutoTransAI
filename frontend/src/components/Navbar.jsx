@@ -34,6 +34,13 @@ export default function Navbar({ activePage, setActivePage, onNavigate }) {
         </button>
         <button
           type="button"
+          className={`nav-link ${activePage === 'merger' ? 'active' : ''}`}
+          onClick={() => handleNavClick('merger')}
+        >
+          🎬 Ghép Video
+        </button>
+        <button
+          type="button"
           className={`nav-link ${activePage === 'dashboard' ? 'active' : ''}`}
           onClick={() => handleNavClick('dashboard')}
         >

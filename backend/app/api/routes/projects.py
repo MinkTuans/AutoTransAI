@@ -31,10 +31,12 @@ from app.models.workflow_engine import ProjectGlossary, ProjectTerminologyMemory
 from app.services.storage_service import storage_service
 from app.schemas.project import (
     ProjectCreate,
+    ProjectUpdate,
     ProjectResponse,
     ProjectListResponse,
     ProjectStatusResponse,
 )
+
 from app.schemas.estimate import EstimateResponse, ResourceEstimate
 from app.schemas.workflow import PreflightResult
 from app.services.estimator import estimate_project
@@ -89,6 +91,17 @@ DEFAULT_PROJECT_SETTINGS = {
     "thumbnail_model": "default",
     "thumbnail_style": "auto",
     "thumbnail_custom_instruction": "",
+
+    # YouTube & SEO Defaults
+    "youtube_enabled": True,
+    "youtube_channel_name": "Xói Xám Content",
+    "youtube_title_template": "Tập {episode} | {project_name} | {channel_name}",
+    "youtube_description_default": "Kênh Xói Xám Content\n\nNội dung video được dịch và lồng tiếng bằng AI.\n\n#ai #dichvideo",
+    "youtube_default_tags": "#xoiXamContent, #ai, #dichvideo",
+    "youtube_ai_seo_enabled": True,
+    "youtube_ai_allow_title": True,
+    "youtube_ai_allow_description": True,
+    "youtube_ai_allow_tags": True,
 }
 
 
@@ -119,6 +132,18 @@ def normalize_project_settings(raw_settings: Optional[dict]) -> dict:
     res["watermark_enabled"] = _parse_bool(res.get("watermark_enabled"), False)
     res["thumbnail_enabled"] = _parse_bool(res.get("thumbnail_enabled"), False)
     res["auto_confirm_translation"] = _parse_bool(res.get("auto_confirm_translation"), True)
+
+    # Normalize YouTube SEO Settings
+    res["youtube_enabled"] = _parse_bool(res.get("youtube_enabled"), True)
+    res["youtube_ai_seo_enabled"] = _parse_bool(res.get("youtube_ai_seo_enabled"), True)
+    res["youtube_ai_allow_title"] = _parse_bool(res.get("youtube_ai_allow_title"), True)
+    res["youtube_ai_allow_description"] = _parse_bool(res.get("youtube_ai_allow_description"), True)
+    res["youtube_ai_allow_tags"] = _parse_bool(res.get("youtube_ai_allow_tags"), True)
+
+    res["youtube_channel_name"] = str(res.get("youtube_channel_name") or "Xói Xám Content").strip()
+    res["youtube_title_template"] = str(res.get("youtube_title_template") or "Tập {episode} | {project_name} | {channel_name}").strip()
+    res["youtube_description_default"] = str(res.get("youtube_description_default") or "").strip()
+    res["youtube_default_tags"] = str(res.get("youtube_default_tags") or "").strip()
 
     valid_positions = {"bottom_right", "bottom_left", "top_right", "top_left", "center"}
     pos_str = str(res.get("watermark_position", "bottom_right")).lower()
@@ -375,6 +400,70 @@ async def delete_project(
     if not ok:
         raise HTTPException(status_code=404, detail="Project or job not found")
     return {"success": True, "data": {"deleted": project_id}}
+
+
+@router.patch("/{project_id}", response_model=dict)
+@router.put("/{project_id}", response_model=dict)
+async def update_project(
+    project_id: str,
+    body: ProjectUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    """Update project title and/or description."""
+    updated = False
+    new_title = body.title.strip() if body.title and body.title.strip() else None
+
+    # 1. Update Project record if it exists
+    res = await session.execute(select(Project).where(Project.id == project_id))
+    project = res.scalar_one_or_none()
+
+    if project:
+        if new_title:
+            project.title = new_title
+        if body.description is not None:
+            project.description = body.description
+        project.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        updated = True
+
+    # 2. Update linked VideoTranslationJob & VideoAsset records
+    job_res = await session.execute(
+        select(VideoTranslationJob)
+        .options(selectinload(VideoTranslationJob.asset))
+        .where((VideoTranslationJob.project_id == project_id) | (VideoTranslationJob.id == project_id))
+    )
+    jobs = job_res.scalars().all()
+    for job in jobs:
+        if new_title and job.asset:
+            job.asset.title = new_title
+            updated = True
+        if not project and new_title:
+            p_id = job.project_id or job.id
+            project = Project(
+                id=p_id,
+                title=new_title,
+                workflow_mode="video_translator",
+                workflow_status=job.status or "created",
+            )
+            session.add(project)
+            job.project_id = p_id
+            updated = True
+
+    if not updated and not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    await session.commit()
+    logger.info("Project title updated", project_id=project_id, new_title=new_title)
+
+    return {
+        "success": True,
+        "data": {
+            "project_id": project_id,
+            "id": project_id,
+            "title": new_title or (project.title if project else ""),
+            "description": body.description if body.description is not None else (project.description if project else ""),
+        },
+    }
+
 
 
 @router.post("/{project_id}/estimate", response_model=dict)

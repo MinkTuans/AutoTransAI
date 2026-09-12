@@ -7,6 +7,7 @@ import pytest
 from httpx import AsyncClient, ASGITransport
 
 from app.main import app
+from app.database import init_db
 from app.models.video_translator import VideoAsset, VideoTranslationJob
 
 
@@ -150,5 +151,37 @@ async def test_list_projects_pagination():
         assert data2["page"] == 1
         assert data2["page_size"] == 8
         assert "total_pages" in data2
+
+
+@pytest.mark.anyio
+async def test_update_project_title_api():
+    """Test POST /api/projects then PATCH /api/projects/{project_id} to rename a project."""
+    await init_db()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+
+        # 1. Create a project
+        create_res = await client.post("/api/projects", json={"title": "Test Title Before Edit", "description": "Test"})
+        assert create_res.status_code == 200
+        res_json = create_res.json()
+        assert res_json["success"] is True
+        created_data = res_json["data"]
+        project_id = created_data["id"]
+        assert created_data["title"] == "Test Title Before Edit"
+
+        # 2. Update title via PATCH
+        new_title = "Tên Dự Án Mới Update Test"
+        patch_res = await client.patch(f"/api/projects/{project_id}", json={"title": new_title})
+        assert patch_res.status_code == 200
+        assert patch_res.json()["data"]["title"] == new_title
+
+
+        # 3. Verify GET returns updated title
+        get_res = await client.get(f"/api/projects/{project_id}")
+        assert get_res.status_code == 200
+        assert get_res.json()["data"]["title"] == new_title
+
+
+
+
 
 

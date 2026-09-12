@@ -1,3 +1,71 @@
+- **Implement Standalone Video Merger Feature (2026-09-12)**:
+  - **Feature Architecture**: Added independent **Video Merger** feature, completely decoupled from the Video Translation workflow (`VideoTranslator.jsx`). Route `?page=merger` (`/video-merger`) accessed via top-level `Navbar.jsx` menu item `🎬 Ghép Video`.
+  - **Database Persistence**: Added ORM models `VideoMergeJob` (`video_merge_jobs`) and `VideoMergeAsset` (`video_merge_assets`) in [video_merger.py](file:///c:/Hack/AutoTransAI/backend/app/models/video_merger.py) and exported them in [__init__.py](file:///c:/Hack/AutoTransAI/backend/app/models/__init__.py).
+  - **Resilient FFmpeg Engine**: Created `VideoMergerService` in [merger_service.py](file:///c:/Hack/AutoTransAI/backend/app/services/video_merger/merger_service.py):
+    - Preflight media inspection (file existence, readability, resolution, FPS, video/audio stream verification via FFprobe).
+    - Fast Concat copy (`-c copy`) for identical video specs.
+    - Complex Filter Normalization (`-filter_complex`) for mixed resolutions, varying FPS, or silent videos (scaling with aspect ratio preservation, black letterboxing, FPS 30 normalization, and silent audio generation via `anullsrc=r=44100:cl=stereo:d={duration}`).
+    - Real-time streaming progress tracking via `run_ffmpeg_with_progress_async`.
+  - **Backend API Router**: Implemented [video_merger.py](file:///c:/Hack/AutoTransAI/backend/app/api/routes/video_merger.py) (`/api/video-merger/upload`, `/assets`, `/jobs`, `/jobs/{id}/start`, `/jobs/{id}`, `/jobs/{id}/retry`, `/jobs/{id}`) and mounted router in [main.py](file:///c:/Hack/AutoTransAI/backend/app/main.py).
+  - **Frontend UI & Page**: Created standalone [VideoMerger.jsx](file:///c:/Hack/AutoTransAI/frontend/src/pages/VideoMerger.jsx) with upload dropzone, system asset picker modal, drag & drop / button reordering, live summary stats, double-click guard action button, progress bar (0-100%), HTML5 output player, download button, and optional YouTube publish modal trigger. Updated [Navbar.jsx](file:///c:/Hack/AutoTransAI/frontend/src/components/Navbar.jsx), [App.jsx](file:///c:/Hack/AutoTransAI/frontend/src/App.jsx), [api.js](file:///c:/Hack/AutoTransAI/frontend/src/api.js), and [App.css](file:///c:/Hack/AutoTransAI/frontend/src/App.css).
+  - **Storage & Download Enhancements**: Updated `download_file` and `get_storage_file` in [storage.py](file:///c:/Hack/AutoTransAI/backend/app/api/routes/storage.py) to seamlessly resolve both absolute disk paths and relative URL prefixes (`api/storage/files/`, `storage/`). Updated [VideoMerger.jsx](file:///c:/Hack/AutoTransAI/frontend/src/pages/VideoMerger.jsx) to use `handleDownloadOutput()` triggering reliable force attachment download.
+  - **YouTube Publisher Compatibility**: Enhanced `publish_youtube_endpoint`, `get_initial_youtube_metadata_endpoint`, and `generate_youtube_seo_endpoint` in [video_editor.py](file:///c:/Hack/AutoTransAI/backend/app/api/routes/video_editor.py) to support both `VideoTranslationJob` and `VideoMergeJob` output targets cleanly.
+  - **Verification**: Verified clean end-to-end FFmpeg merge normalization on synthetic test videos (1280x720 30fps + 1920x1080 24fps silent video merged cleanly to 5s 1920x1080 30fps video), 100% clean Vite build (`npm run build`), and 100% passing backend pytest suite.
+
+- **Add Strict Prohibition of Autonomous Project Deletion Mandate (2026-09-12)**:
+  - **Mandatory Agent Rules Update**: Added `RULE 8: Strict Prohibition of Autonomous Project Deletion` to [AGENTS.md](file:///c:/Hack/AutoTransAI/AGENTS.md).
+  - **Rule Mandate**: Prohibits any AI assistant or automated system from deleting project repositories, codebase directories, database records, or key source files on its own initiative without explicit user authorization.
+
+- **Redesign YouTube / SEO Settings Architecture — Separate Default Template and AI Generator (2026-09-09)**:
+  - **Single Source of Truth & Project Defaults**: Added `youtube_enabled`, `youtube_channel_name`, `youtube_title_template`, `youtube_description_default`, `youtube_default_tags`, `youtube_ai_seo_enabled`, `youtube_ai_allow_title`, `youtube_ai_allow_description`, `youtube_ai_allow_tags` to `DEFAULT_PROJECT_SETTINGS` and updated `normalize_project_settings` in [projects.py](file:///c:/Hack/AutoTransAI/backend/app/api/routes/projects.py).
+  - **Tag Merging & Title Template Engine**:
+    - Implemented `merge_youtube_tags(default_tags, ai_tags)` in [youtube_service.py](file:///c:/Hack/AutoTransAI/backend/app/services/video_editor/youtube_service.py) with case-insensitive duplicate detection (`#AI` vs `#ai`), order preservation (defaults first), and whitespace/comma normalization.
+    - Implemented `render_title_template` with variable substitution (`{episode}`, `{project_name}`, `{channel_name}`, `{video_name}`) and episode zero-padding (e.g. `01`, `02`).
+    - Implemented `calculate_project_video_episode(session, project_id, job_id)` to resolve 1-indexed video sequence order based on `created_at` timestamp without database ID coupling.
+  - **AI SEO Generator Integration**: Refactored `generate_youtube_seo_metadata` in [youtube_service.py](file:///c:/Hack/AutoTransAI/backend/app/services/video_editor/youtube_service.py) so Gemini AI generates only supplementary SEO content while Python code enforces default template, description, and tag precedence.
+  - **Backend API Endpoints**: Added `GET /api/video-editor/jobs/{job_id}/initial-youtube-metadata` and updated `generate_youtube_seo_endpoint` in [video_editor.py](file:///c:/Hack/AutoTransAI/backend/app/api/routes/video_editor.py).
+  - **Frontend UI & Publisher Modal**:
+    - Added **📺 YouTube & SEO Defaults** card in [ProjectDetail.jsx](file:///c:/Hack/AutoTransAI/frontend/src/pages/ProjectDetail.jsx) Settings tab with Channel Name, Title Template + live preview, Default Description, Default Tags, Enable Switch, and AI SEO Generator controls.
+    - Updated [YouTubePublisherModal.jsx](file:///c:/Hack/AutoTransAI/frontend/src/components/YouTubePublisherModal.jsx) to fetch initial rendered defaults on mount and perform AI SEO generation without overwriting project default metadata.
+    - Added `getInitialSEO` to `videoEditorApi` in [api.js](file:///c:/Hack/AutoTransAI/frontend/src/api.js).
+  - **Verification**: Created test suite [test_youtube_seo_architecture.py](file:///c:/Hack/AutoTransAI/backend/tests/unit/test_youtube_seo_architecture.py) and verified 100% passing tests (12/12 passed in `pytest`).
+
+- **Cleanup Job & Project ID Storage Folders (2026-09-09)**:
+  - **Storage Maintenance**: Cleaned up 72 legacy test/execution job and project directories across `storage/projects`, `backend/storage/projects`, `backend/storage/translator/jobs`, and `data/translator/jobs`.
+  - **Preserved Asset Directory**: Preserved active project folder `backend/storage/projects/aa03da8e` as requested.
+
+- **Add Project Title Editing & Persisted Synchronization (2026-09-09)**:
+  - **Backend API Endpoints**: Implemented `PATCH /api/projects/{project_id}` and `PUT /api/projects/{project_id}` (`update_project`) in [projects.py](file:///c:/Hack/AutoTransAI/backend/app/api/routes/projects.py) and added `ProjectUpdate` schema (`title`, `description`) in [project.py](file:///c:/Hack/AutoTransAI/backend/app/schemas/project.py). The endpoint updates both `Project.title` and associated `VideoAsset.title` records in SQLite DB.
+  - **Frontend API Integration**: Added `update: (id, data) => api.patch('/projects/' + id, data).then(...)` to `projectsApi` in [api.js](file:///c:/Hack/AutoTransAI/frontend/src/api.js).
+  - **Frontend Studio UI & Management Views**:
+    - [VideoTranslator.jsx](file:///c:/Hack/AutoTransAI/frontend/src/pages/VideoTranslator.jsx): Added "✏️ Sửa tên" button in header project dropdown and `showEditTitleModal` overlay modal with backend API sync.
+    - [ProjectDetail.jsx](file:///c:/Hack/AutoTransAI/frontend/src/pages/ProjectDetail.jsx): Added inline header title editing and `handleSaveTitle` handler with backend API sync.
+    - [Dashboard.jsx](file:///c:/Hack/AutoTransAI/frontend/src/pages/Dashboard.jsx): Added project action table button and `editModal` overlay modal with backend API sync.
+  - **Rule Compliance**: Enforced strict prohibition of automatic project deletion across the entire codebase.
+  - **Verification**: Verified clean frontend build (`npm run build` succeeded with 0 errors) and 100% passing backend tests (`pytest`).
+
+- **Fix Backend Auto-Confirm Execution & Non-Blocking Hand-off to Phase 2 Render (2026-09-09)**:
+  - **Recursive Lock Deadlock Fix**: Resolved issue where `run_pipeline()` held `get_job_lock(job_id)` while calling `execute_job_render_pipeline(job_id)`, causing Phase 2 to immediately return due to `lock.locked()`. Refactored `run_pipeline` to release job lock prior to scheduling Phase 2 render and implemented `_active_render_jobs` set tracking in `execute_job_render_pipeline`.
+  - **Idempotent Auto-Confirm Helper**: Added `auto_confirm_and_start_render_if_needed(job_id)` in [video_translator.py](file:///c:/Hack/AutoTransAI/backend/app/api/routes/video_translator.py) which marks segments as `confirmed`, transitions job status to `GENERATING_TTS` (`DUB`), and launches Phase 2 rendering. Hooked helper into `GET /jobs/{job_id}`, `GET /projects/{project_id}/workflow-status`, `resume_workflow_api`, and `check_and_mark_stalled_jobs`.
+  - **State Machine Normalization**:
+    - **Auto-Confirm ON**: `TRANSLATE (RUNNING)` → `TRANSLATE (COMPLETED)` → `AUTO CONFIRMING` → `DUB (GENERATING_TTS)`.
+    - **Auto-Confirm OFF**: `TRANSLATE (RUNNING)` → `TRANSLATE (COMPLETED)` → `WAITING FOR USER CONFIRMATION (segment_editing)` (no heartbeat timeout).
+  - **Integration Test Suite**: Expanded [test_auto_confirm_and_stage_sync.py](file:///c:/Hack/AutoTransAI/backend/tests/integration/test_auto_confirm_and_stage_sync.py) to cover segment confirmation, auto-confirm helper execution, and idempotency (100% passed). Verified clean frontend build (`npm run build`).
+
+- **Fix Unified 6-Stage Workflow Lifecycle, Stage State Machine & Auto-Confirm Synchronization (2026-09-09)**:
+  - **Auto-Confirm Worker Heartbeat Persistence**: Resolved `STALLED` job timeout errors during Phase 2 rendering by maintaining active background heartbeat loop (`start_job_heartbeat`) during `execute_job_render_pipeline`, preventing `check_and_mark_stalled_jobs` from falsely marking active jobs as failed after 60s.
+  - **Backend Stage Status Single Source of Truth**: Updated `get_workflow_status_api` in [video_translator.py](file:///c:/Hack/AutoTransAI/backend/app/api/routes/video_translator.py) to dynamically derive real-time lifecycle stages (`INGEST` → `ANALYZE` → `TRANSLATE` → `DUB` → `PRODUCE` → `PUBLISH`) and stage status from `VideoTranslationJob`.
+  - **Frontend Stage Normalization**: Refactored [WorkflowTimeline.jsx](file:///c:/Hack/AutoTransAI/frontend/src/components/WorkflowTimeline.jsx) stage status mapping using `STAGE_ORDER_MAP`, ensuring stage cards update accurately (`Passed`, `Running`, `Needs Review`, `Waiting`) without UI freezing at `INGEST`.
+  - **Auto-Confirm Translation Flow**: Fixed workflow execution when `auto_confirm_translation = True` so completed translated text automatically transitions to `DUB` (`GENERATING_TTS`), bypassing manual prompt while preserving manual confirmation UI when `auto_confirm_translation = False`.
+  - **Integration Verification**: Added comprehensive test suite [test_auto_confirm_and_stage_sync.py](file:///c:/Hack/AutoTransAI/backend/tests/integration/test_auto_confirm_and_stage_sync.py) verifying both Auto-Confirm ON/OFF transitions and 6-stage backend status synchronization (100% passed). Verified clean frontend build (`npm run build`).
+
+- **Rebuild Video Translator (Unified Workflow) Studio UI & Viewport Optimization (2026-09-09)**:
+  - **Unified 6-Stage Workflow Pipeline Integration**: Consolidated the standalone `📊 Tiến Trình Xử Lý Pipeline` card directly inside [WorkflowTimeline.jsx](file:///c:/Hack/AutoTransAI/frontend/src/components/WorkflowTimeline.jsx). Added Job ID, overall progress %, stage progress %, Heartbeat status, FFmpeg process stats, STT/Translation/TTS status, segment counts, debug telemetry toggle, and compact inline error alert.
+  - **2-Column Responsive Studio Layout**: Restructured [VideoTranslator.jsx](file:///c:/Hack/AutoTransAI/frontend/src/pages/VideoTranslator.jsx) into a 2-column Studio Grid (`.translator-studio-grid` in [App.css](file:///c:/Hack/AutoTransAI/frontend/src/App.css)). Primary column holds the Integrated Unified Pipeline and compact Video Input & Translation/Dubbing config card. Auxiliary column holds Watermark (Logo/Text) and AI Auto Thumbnail controls built with progressive disclosure.
+  - **100% Single-Viewport Containment**: Set `ProjectGlossaryManager` to default collapsed state below the main grid, enabling standard desktop viewports (1366x768, 1440x900, 1920x1080) to view all core workflow controls without vertical scrolling.
+  - **Compact Error Handling**: Integrated `❌ Xử Lý Thất Bại` directly inside the Pipeline card footer with working "Xem Log" and "Smart Retry" actions without layout shifting.
+  - **Verification & Compatibility**: Verified 100% clean build via `npm run build` (0 JSX errors) and preserved all backend API contracts, polling, SSE, and DB persistence.
+
 - **Fix `TypeError: render_dubbed_video() got an unexpected keyword argument 'output_path'` (2026-09-08)**:
   - **Parameter Signature Alignment**: Updated invocation of `render_dubbed_video` in [video_translator.py](file:///c:/Hack/AutoTransAI/backend/app/api/routes/video_translator.py#L1556) to match the parameter names expected by `translator_service.py` (`original_audio_mode`, `output_video_path`, `work_dir=job_dir`).
   - **Execution Verification**: Verified via `scratch/test_render_dubbed_video_call.py` targeting Job `92ccc5b3` that TTS synthesis, time-stretching, and video multiplexing rendering proceed cleanly without signature exceptions.

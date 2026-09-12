@@ -24,6 +24,44 @@ export default function Dashboard({ onSelectProject, onCreateNew }) {
     itemsToDelete: [],
   });
 
+  // Edit project title modal state
+  const [editModal, setEditModal] = useState({
+    open: false,
+    projectId: null,
+    currentTitle: '',
+  });
+  const [editingTitleValue, setEditingTitleValue] = useState('');
+  const [savingTitle, setSavingTitle] = useState(false);
+
+  const promptEditTitle = (p, e) => {
+    if (e) e.stopPropagation();
+    setEditModal({
+      open: true,
+      projectId: p.id,
+      currentTitle: p.title || '',
+    });
+    setEditingTitleValue(p.title || '');
+  };
+
+  const handleSaveProjectTitle = async () => {
+    if (!editModal.projectId || !editingTitleValue.trim()) return;
+    setSavingTitle(true);
+    try {
+      const res = await projectsApi.update(editModal.projectId, { title: editingTitleValue.trim() });
+      if (res.success) {
+        setEditModal({ open: false, projectId: null, currentTitle: '' });
+        await loadData();
+      } else {
+        alert('Không thể cập nhật tên dự án: ' + (res.message || 'Lỗi không xác định'));
+      }
+    } catch (err) {
+      alert('Lỗi khi cập nhật tên dự án: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setSavingTitle(false);
+    }
+  };
+
+
   const loadData = async (targetPage = currentPage) => {
     setLoading(true);
     try {
@@ -297,6 +335,14 @@ export default function Dashboard({ onSelectProject, onCreateNew }) {
                         <button
                           className="btn btn-secondary"
                           style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', marginRight: '0.4rem' }}
+                          onClick={(e) => promptEditTitle(p, e)}
+                          title="Đổi tên dự án"
+                        >
+                          ✏️ Sửa tên
+                        </button>
+                        <button
+                          className="btn btn-secondary"
+                          style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', marginRight: '0.4rem' }}
                           onClick={() => onSelectProject(p)}
                         >
                           Open
@@ -308,6 +354,7 @@ export default function Dashboard({ onSelectProject, onCreateNew }) {
                         >
                           Delete
                         </button>
+
                       </td>
                     </tr>
                   );
@@ -392,7 +439,7 @@ export default function Dashboard({ onSelectProject, onCreateNew }) {
             }}
           >
             <h3 style={{ marginTop: 0, color: '#f3f4f6' }}>{confirmModal.title}</h3>
-            <p style={{ color: '#9ca3af', fontSize: '0.9rem', lineHeight: '1.5', margin: '1rem 0 1.5rem 0' }}>
+            <p style={{ color: '#9ca3af', fontSize: '0.95rem', marginBottom: '1.5rem' }}>
               {confirmModal.message}
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
@@ -404,6 +451,79 @@ export default function Dashboard({ onSelectProject, onCreateNew }) {
               </button>
               <button className="btn btn-danger" onClick={executeDelete}>
                 Yes, Delete Permanently
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Project Title Modal */}
+      {editModal.open && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.75)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: '#1f2937',
+              border: '1px solid #374151',
+              borderRadius: '8px',
+              padding: '1.5rem',
+              maxWidth: '480px',
+              width: '90%',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
+            }}
+          >
+            <h3 style={{ marginTop: 0, color: '#f3f4f6' }}>✏️ Chỉnh sửa tên dự án</h3>
+            <p style={{ color: '#9ca3af', fontSize: '0.85rem', margin: '0.5rem 0 1rem 0' }}>
+              Nhập tên mới cho dự án (ID: <code>{editModal.projectId}</code>):
+            </p>
+            <input
+              type="text"
+              value={editingTitleValue}
+              onChange={(e) => setEditingTitleValue(e.target.value)}
+              placeholder="Tên dự án..."
+              autoFocus
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                borderRadius: '6px',
+                border: '1px solid #4b5563',
+                backgroundColor: '#111827',
+                color: '#fff',
+                fontSize: '14px',
+                marginBottom: '1.25rem',
+                boxSizing: 'border-box',
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSaveProjectTitle();
+                if (e.key === 'Escape') setEditModal({ open: false, projectId: null, currentTitle: '' });
+              }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setEditModal({ open: false, projectId: null, currentTitle: '' })}
+                disabled={savingTitle}
+              >
+                Hủy
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={handleSaveProjectTitle}
+                disabled={savingTitle || !editingTitleValue.trim()}
+              >
+                {savingTitle ? '⏳ Đang lưu...' : '💾 Lưu tên mới'}
               </button>
             </div>
           </div>

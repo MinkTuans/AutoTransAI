@@ -63,6 +63,10 @@ Before declaring any task complete, verify each checklist item:
 [ ] Ensured 100% backward compatibility
 ```
 
+### RULE 8: Strict Prohibition of Autonomous Project Deletion
+- **NEVER** delete the project repository, codebase directories, database, or key source files on your own initiative without explicit user instruction.
+- Workspace cleanup commands or deletions must strictly target only authorized temporary/scratch files, and must never touch active project files or project root directories.
+
 ---
 
 ## 🔄 STANDARD AGENT EXECUTION WORKFLOW

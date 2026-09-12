@@ -13,7 +13,9 @@ export const projectsApi = {
   list: (page, pageSize = 8) => api.get('/projects', { params: page ? { page, page_size: pageSize } : {} }).then(res => res.data),
   get: (id) => api.get(`/projects/${id}`).then(res => res.data),
   create: (data) => api.post('/projects', data).then(res => res.data),
+  update: (id, data) => api.patch(`/projects/${id}`, data).then(res => res.data),
   delete: (id) => api.delete(`/projects/${id}`).then(res => res.data),
+
   batchDelete: (ids) => api.post('/projects/batch-delete', { ids }).then(res => res.data),
   estimate: (id) => api.post(`/projects/${id}/estimate`).then(res => res.data),
   getSettings: (id) => api.get(`/projects/${id}/settings`).then(res => res.data),
@@ -141,6 +143,7 @@ export const videoEditorApi = {
     }).then(res => res.data);
   },
   runQC: (jobId) => api.post(`/video-editor/jobs/${jobId}/run-qc`).then(res => res.data),
+  getInitialSEO: (jobId) => api.get(`/video-editor/jobs/${jobId}/initial-youtube-metadata`).then(res => res.data),
   generateSEO: (jobId) => api.post(`/video-editor/jobs/${jobId}/generate-seo`).then(res => res.data),
   publishYouTube: (data) => api.post('/video-editor/jobs/' + data.job_id + '/publish-youtube', data).then(res => res.data),
 };
@@ -160,6 +163,23 @@ export const youtubeApi = {
   listAccounts: () => api.get('/youtube/accounts').then(res => res.data),
   disconnectAccount: (id) => api.delete(`/youtube/accounts/${id}`).then(res => res.data),
   getUploadStatus: (uploadId) => api.get(`/youtube/upload/${uploadId}/status`).then(res => res.data),
+};
+
+export const videoMergerApi = {
+  upload: (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post('/video-merger/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }).then(res => res.data);
+  },
+  listAssets: () => api.get('/video-merger/assets').then(res => res.data),
+  createJob: (data) => api.post('/video-merger/jobs', data).then(res => res.data),
+  startJob: (jobId) => api.post(`/video-merger/jobs/${jobId}/start`).then(res => res.data),
+  getJobStatus: (jobId) => api.get(`/video-merger/jobs/${jobId}`).then(res => res.data),
+  listJobs: () => api.get('/video-merger/jobs').then(res => res.data),
+  retryJob: (jobId) => api.post(`/video-merger/jobs/${jobId}/retry`).then(res => res.data),
+  deleteJob: (jobId) => api.delete(`/video-merger/jobs/${jobId}`).then(res => res.data),
 };
 
 

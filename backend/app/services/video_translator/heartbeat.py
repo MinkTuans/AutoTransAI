@@ -73,6 +73,17 @@ async def check_and_mark_stalled_jobs(stalled_threshold_seconds: int = 60) -> li
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     async with async_session_factory() as session:
+        # Auto-confirm any pending SEGMENT_EDITING jobs if auto_confirm_translation is True
+        seg_res = await session.execute(
+            select(VideoTranslationJob).where(
+                VideoTranslationJob.status == TranslationJobStatus.SEGMENT_EDITING.value
+            )
+        )
+        for sjob in seg_res.scalars().all():
+            if sjob.auto_confirm_translation:
+                from app.api.routes.video_translator import auto_confirm_and_start_render_if_needed
+                asyncio.create_task(auto_confirm_and_start_render_if_needed(sjob.id))
+
         res = await session.execute(
             select(VideoTranslationJob).where(
                 VideoTranslationJob.status.in_([
@@ -86,6 +97,7 @@ async def check_and_mark_stalled_jobs(stalled_threshold_seconds: int = 60) -> li
             )
         )
         running_jobs = res.scalars().all()
+
 
         for job in running_jobs:
             if not job.last_heartbeat:

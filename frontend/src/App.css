@@ -717,3 +717,73 @@ textarea:focus {
   animation: spinIcon 2s linear infinite;
 }
 
+/* Video Translator Studio Grid & Layout System */
+.video-translator-studio {
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 16px 20px;
+  box-sizing: border-box;
+}
+
+.translator-studio-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 350px;
+  gap: 20px;
+  align-items: start;
+}
+
+.studio-left-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.studio-right-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+@media (max-width: 1120px) {
+  .translator-studio-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.compact-card {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.compact-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #334155;
+}
+
+.compact-card-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #f8fafc;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 900px) {
+  .merger-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+

@@ -19,6 +19,113 @@ logger = get_logger(__name__)
 settings = get_settings()
 
 
+def merge_youtube_tags(
+    default_tags: Optional[Any],
+    ai_tags: Optional[Any],
+) -> List[str]:
+    """
+    Merge default tags and AI tags with case-insensitive duplicate detection,
+    preserving default tags order and ensuring clean string/array formatting.
+    """
+    def parse_to_list(val: Optional[Any]) -> List[str]:
+        if not val:
+            return []
+        if isinstance(val, list):
+            raw_list = val
+        else:
+            cleaned_str = str(val).replace("\n", ",")
+            raw_list = cleaned_str.split(",")
+        
+        result = []
+        for item in raw_list:
+            tag = item.strip()
+            if tag:
+                result.append(tag)
+        return result
+
+    def_list = parse_to_list(default_tags)
+    ai_list = parse_to_list(ai_tags)
+
+    merged: List[str] = []
+    seen_lower = set()
+
+    for tag in def_list:
+        tag_lower = tag.lower()
+        if tag_lower not in seen_lower:
+            seen_lower.add(tag_lower)
+            merged.append(tag)
+
+    for tag in ai_list:
+        tag_lower = tag.lower()
+        if tag_lower not in seen_lower:
+            seen_lower.add(tag_lower)
+            merged.append(tag)
+
+    return merged
+
+
+def render_title_template(
+    template: str,
+    episode_num: int = 1,
+    project_name: str = "Project",
+    channel_name: str = "",
+    video_name: str = "",
+) -> str:
+    """
+    Render video title using configurable template variables safely.
+    Episode is zero-padded (e.g., 1 -> '01', 12 -> '12').
+    """
+    if not template:
+        template = "Tập {episode} | {project_name} | {channel_name}"
+    
+    ep_str = f"{int(episode_num):02d}" if episode_num > 0 else "01"
+    
+    replacements = {
+        "{episode}": ep_str,
+        "{project_name}": project_name or "",
+        "{channel_name}": channel_name or "",
+        "{video_name}": video_name or "",
+    }
+    
+    res = template
+    for key, val in replacements.items():
+        res = res.replace(key, val)
+    
+    res = re.sub(r"\s+\|\s+(?=\||$)", "", res).strip()
+    return res
+
+
+async def calculate_project_video_episode(
+    session: Any,
+    project_id: Optional[str],
+    job_id: str,
+) -> int:
+    """
+    Determine 1-indexed video episode sequence number within a project based on created_at timestamp order.
+    """
+    if not project_id or not session:
+        return 1
+    
+    try:
+        from sqlalchemy import select
+        from app.models.video_translator import VideoTranslationJob
+        
+        result = await session.execute(
+            select(VideoTranslationJob)
+            .where(VideoTranslationJob.project_id == project_id)
+            .order_by(VideoTranslationJob.created_at.asc())
+        )
+        jobs = result.scalars().all()
+        
+        for index, job in enumerate(jobs, start=1):
+            if job.id == job_id or (job.project_id and job.id == job_id):
+                return index
+    except Exception as err:
+        logger.warning(f"Failed to calculate episode number for job {job_id}: {err}")
+    
+    return 1
+
+
 class YouTubePublishingService:
     """Service for generating YouTube SEO metadata and uploading video via YouTube Data API v3."""
 
@@ -27,16 +134,53 @@ class YouTubePublishingService:
         transcript_text: str,
         target_language: str = "vi",
         job_id: str = "VT-YT",
+        project_settings: Optional[Dict[str, Any]] = None,
+        project_name: str = "Project",
+        video_name: str = "",
+        episode_num: int = 1,
         model_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Generate SEO-optimized YouTube Title, Description, Hashtags, Tags, and Category ID using Gemini AI Studio.
+        Generate SEO-optimized YouTube Title, Description, Hashtags, Tags, and Category ID using Gemini AI Studio,
+        strictly respecting Project YouTube Defaults and tag merging rules.
         """
-        if not settings.GEMINI_API_KEY:
+        p_settings = project_settings or {}
+        yt_enabled = p_settings.get("youtube_enabled", True)
+        channel_name = p_settings.get("youtube_channel_name", "Xói Xám Content")
+        title_template = p_settings.get("youtube_title_template", "Tập {episode} | {project_name} | {channel_name}")
+        desc_default = p_settings.get("youtube_description_default", "")
+        default_tags = p_settings.get("youtube_default_tags", "")
+        ai_seo_enabled = p_settings.get("youtube_ai_seo_enabled", True)
+        ai_allow_desc = p_settings.get("youtube_ai_allow_description", True)
+        ai_allow_tags = p_settings.get("youtube_ai_allow_tags", True)
+
+        # Render default title template
+        rendered_title = render_title_template(
+            template=title_template if yt_enabled else "{video_name}",
+            episode_num=episode_num,
+            project_name=project_name,
+            channel_name=channel_name,
+            video_name=video_name or f"Video {job_id}",
+        )
+
+        # Render default description (replacing template variables)
+        rendered_desc = render_title_template(
+            template=desc_default,
+            episode_num=episode_num,
+            project_name=project_name,
+            channel_name=channel_name,
+            video_name=video_name or f"Video {job_id}",
+        ) if desc_default else ""
+
+        # Default tags parsed as list
+        base_tags = merge_youtube_tags(default_tags if yt_enabled else [], [])
+
+        # If Gemini API key is missing or AI SEO is disabled, return default rendered metadata
+        if not settings.GEMINI_API_KEY or not ai_seo_enabled:
             return {
-                "title": "Video lồng tiếng AI chất lượng cao",
-                "description": "Video được tự động lồng tiếng và xử lý bằng công nghệ AI WorkflowVdAi.",
-                "tags": ["AI", "VideoDubbing", "WorkflowVdAi"],
+                "title": rendered_title or f"Video {episode_num}",
+                "description": rendered_desc,
+                "tags": base_tags,
                 "category_id": "22",
             }
 
@@ -52,18 +196,19 @@ class YouTubePublishingService:
 
         prompt = (
             "Bạn là một chuyên gia SEO YouTube hàng đầu.\n"
-            f"Hãy tự động tạo tiêu đề, mô tả và từ khóa tối ưu SEO YouTube bằng ngôn ngữ {target_language} dựa trên nội dung video bên dưới.\n"
+            f"Dự án đã có các giá trị SEO mặc định. Bạn chỉ được tạo nội dung bổ sung, KHÔNG được xóa hay thay thế các giá trị mặc định của người dùng.\n"
+            f"Hãy sinh thêm nội dung SEO bổ sung bằng ngôn ngữ {target_language} dựa trên nội dung transcript video bên dưới.\n"
             "Yêu cầu:\n"
-            "1. Title (Tiêu đề): Dưới 90 ký tự, thu hút clickbait văn minh, chứa từ khóa chính.\n"
-            "2. Description (Mô tả): Khoảng 150-300 từ, tóm tắt nội dung hấp dẫn, chứa 3-5 hashtag ở cuối.\n"
-            "3. Tags: Mảng 10-15 từ khóa phổ biến.\n"
+            "1. Title Suggestion (Gợi ý tiêu đề): Dưới 90 ký tự, thu hút clickbait văn minh.\n"
+            "2. Additional Description (Mô tả bổ sung): Tóm tắt nội dung hấp dẫn 100-200 từ, kèm 3-5 hashtag.\n"
+            "3. Additional Tags (Từ khóa bổ sung): Mảng 5-10 từ khóa liên quan đến nội dung video. DO NOT remove, replace, or modify default tags. Only provide additional relevant tags.\n"
             "4. Category ID: '22' (People & Blogs), '27' (Education), '24' (Entertainment).\n\n"
-            f"NỘI DUNG SẢN XUẤT:\n{transcript_text[:3000]}\n\n"
-            "Trả về JSON thuần túy (không markdown) với cấu trúc:\n"
+            f"NỘI DUNG TRANSCRIPT:\n{transcript_text[:3000]}\n\n"
+            "Trả về JSON thuần túy (không markdown):\n"
             "{\n"
-            '  "title": "Tiêu đề hấp dẫn...",\n'
-            '  "description": "Nội dung mô tả...",\n'
-            '  "tags": ["tag1", "tag2", "tag3"],\n'
+            '  "title": "Tiêu đề gợi ý...",\n'
+            '  "description": "Mô tả bổ sung...",\n'
+            '  "tags": ["tag1", "tag2"],\n'
             '  "category_id": "22"\n'
             "}"
         )
@@ -74,6 +219,7 @@ class YouTubePublishingService:
         }
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={settings.GEMINI_API_KEY}"
+        ai_res = {}
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 res = await client.post(url, json=payload)
@@ -84,15 +230,27 @@ class YouTubePublishingService:
                         raw_text = parts[0].get("text", "").strip()
                         json_str = re.sub(r"^```json\s*", "", raw_text, flags=re.MULTILINE)
                         json_str = re.sub(r"```$", "", json_str, flags=re.MULTILINE).strip()
-                        return json.loads(json_str)
+                        ai_res = json.loads(json_str)
             except Exception as ex:
                 logger.warning("Gemini YouTube SEO generation exception", error=str(ex), model=target_model)
 
+        ai_desc = ai_res.get("description", "") if ai_allow_desc else ""
+        ai_tags = ai_res.get("tags", []) if ai_allow_tags else []
+
+        # Merge Description: Default + AI Description
+        if rendered_desc and ai_desc:
+            final_description = f"{rendered_desc}\n\n{ai_desc}".strip()
+        else:
+            final_description = rendered_desc or ai_desc
+
+        # Merge Tags: Code-level enforcement
+        final_tags = merge_youtube_tags(default_tags if yt_enabled else [], ai_tags)
+
         return {
-            "title": "Video lồng tiếng AI tự động",
-            "description": "Video được tạo tự động bởi hệ thống lồng tiếng AI WorkflowVdAi.",
-            "tags": ["AI", "VideoDubbing"],
-            "category_id": "22",
+            "title": rendered_title or ai_res.get("title", f"Video {episode_num}"),
+            "description": final_description,
+            "tags": final_tags,
+            "category_id": ai_res.get("category_id", "22"),
         }
 
     @classmethod
@@ -230,12 +388,23 @@ class YouTubePublishingService:
                 
                 request = await asyncio.to_thread(_do_create_request)
                 
-                def _step_upload(req):
-                    return req.next_chunk()
+                def _step_upload_with_retry(req, max_retries=3):
+                    import time
+                    for attempt in range(max_retries):
+                        try:
+                            return req.next_chunk()
+                        except Exception as chunk_err:
+                            err_msg = str(chunk_err)
+                            if any(k in err_msg for k in ("Unable to find the server", "gaierror", "ConnectionResetError", "timed out", "503", "500")):
+                                if attempt < max_retries - 1:
+                                    logger.warning("YouTube chunk upload connection drop, retrying", attempt=attempt+1, error=err_msg)
+                                    time.sleep(2 * (attempt + 1))
+                                    continue
+                            raise chunk_err
                 
                 response = None
                 while response is None:
-                    status, response = await asyncio.to_thread(_step_upload, request)
+                    status, response = await asyncio.to_thread(_step_upload_with_retry, request)
                     if status:
                         pct = int(status.progress() * 100)
                         pub.progress = min(pct, 99)
@@ -248,7 +417,13 @@ class YouTubePublishingService:
                 await db.commit()
                 
             except Exception as e:
-                logger.error("Async YouTube Upload failed", error=str(e), publication_id=publication_id)
+                err_text = str(e)
+                if "Unable to find the server" in err_text or "gaierror" in err_text or "getaddrinfo failed" in err_text:
+                    clean_err = "❌ Không thể kết nối tới máy chủ Google YouTube (youtube.googleapis.com). Vui lòng kiểm tra kết nối Internet, DNS hoặc tạm thời tắt VPN/Proxy trên máy tính."
+                else:
+                    clean_err = f"❌ Lỗi đăng YouTube: {err_text}"
+                
+                logger.error("Async YouTube Upload failed", error=clean_err, publication_id=publication_id)
                 pub.status = PublishStatusEnum.FAILED.value
-                pub.error_message = str(e)
+                pub.error_message = clean_err
                 await db.commit()

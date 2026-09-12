@@ -23,6 +23,11 @@ from app.models.video_editor import (
     YouTubeChannel,
     YouTubePublication,
 )
+from app.models.video_merger import (
+    VideoMergeJob,
+    VideoMergeAsset,
+    MergeJobStatus,
+)
 from app.models.workflow_engine import (
     ProjectGlossary,
     ProjectTerminologyMemory,
@@ -59,6 +64,9 @@ __all__ = [
     "QCReport",
     "YouTubeChannel",
     "YouTubePublication",
+    "VideoMergeJob",
+    "VideoMergeAsset",
+    "MergeJobStatus",
     "ProjectGlossary",
     "ProjectTerminologyMemory",
     "SpeakerVoiceMapping",

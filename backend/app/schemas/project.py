@@ -16,6 +16,13 @@ class ProjectCreate(BaseModel):
     settings_json: dict | None = Field(None, description="Project workflow configuration settings")
 
 
+class ProjectUpdate(BaseModel):
+    """Request body for updating project metadata (title, description)."""
+    title: str | None = Field(None, max_length=250)
+    description: str | None = Field(None, description="Optional project description")
+
+
+
 class SegmentSummary(BaseModel):
     """Lightweight segment info for project responses."""
     number: int

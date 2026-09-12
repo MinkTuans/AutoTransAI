@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard';
 import ProjectDetail from './pages/ProjectDetail';
 import Settings from './pages/Settings';
 import VideoTranslator from './pages/VideoTranslator';
+import VideoMerger from './pages/VideoMerger';
 import './App.css';
 
 const getInitialStateFromUrl = () => {
@@ -159,6 +160,8 @@ export default function App() {
             onProcessingStateChange={setIsTranslatorProcessing}
           />
         )}
+
+        {activePage === 'merger' && <VideoMerger />}
 
         {activePage === 'settings' && <Settings />}
       </main>

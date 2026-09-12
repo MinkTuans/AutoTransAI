@@ -72,6 +72,8 @@ router = APIRouter(prefix="/api/video-translator", tags=["video-translator"])
 
 _job_sse_queues: Dict[str, asyncio.Queue] = {}
 _job_cancellation_events: Dict[str, asyncio.Event] = {}
+_active_render_jobs: set[str] = set()
+
 
 
 def get_job_cancellation_event(job_id: str) -> asyncio.Event:
@@ -513,7 +515,45 @@ async def create_translation_job(
     }
 
 
+async def auto_confirm_and_start_render_if_needed(job_id: str) -> bool:
+    """
+    Idempotent helper: Automatically confirms translation text segments and launches
+    Phase 2 rendering (TTS Dubbing -> Audio Sync -> FFmpeg Render) if a job is in
+    SEGMENT_EDITING / TRANSLATE stage awaiting review and auto_confirm_translation is True.
+    """
+    async with async_session_factory() as session:
+        res = await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))
+        job = res.scalar_one_or_none()
+        if not job:
+            return False
+
+        is_waiting = (
+            job.status in [TranslationJobStatus.SEGMENT_EDITING.value, "segment_editing"]
+            or job.stage == "TRANSLATE"
+        )
+        if is_waiting and job.auto_confirm_translation and job.status != TranslationJobStatus.FAILED.value:
+            # Mark segments as confirmed
+            await session.execute(
+                update(VideoTranslationSegment)
+                .where(VideoTranslationSegment.job_id == job_id)
+                .values(status="confirmed")
+            )
+            job.status = TranslationJobStatus.GENERATING_TTS.value
+            job.stage = "DUB"
+            job.current_step = "Bản dịch đã hoàn tất. Tự động chuyển sang Phase 2 (TTS & Dubbing)..."
+            job.studio_state_json = json.dumps({"active_step": "dubbing", "active_tab": "editor"})
+            job.pid = None
+            job.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            await session.commit()
+
+            log_job_event(job_id, "AUTO_CONFIRM", "Auto-confirmed translated segments. Launching Phase 2 TTS & Dubbing pipeline.")
+            asyncio.create_task(execute_job_render_pipeline(job_id))
+            return True
+        return False
+
+
 @router.post("/jobs/{job_id}/start", response_model=dict)
+
 async def start_translation_pipeline(
     job_id: str,
     background_tasks: BackgroundTasks,
@@ -661,9 +701,10 @@ async def start_translation_pipeline(
                         bg_session.add(db_seg)
 
                     now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
-                    b_job.status = TranslationJobStatus.SEGMENT_EDITING.value
-                    b_job.stage = "SEGMENT_EDITING"
-                    b_job.current_step = "Bản dịch đã hoàn tất"
+                    auto_confirm = getattr(b_job, "auto_confirm_translation", True)
+                    if auto_confirm is None:
+                        auto_confirm = True
+
                     b_job.stage_progress_pct = 100.0
                     b_job.overall_progress_pct = 60.0
                     b_job.total_segments_count = len(translated_segs)
@@ -671,29 +712,40 @@ async def start_translation_pipeline(
                     b_job.pid = None
                     b_job.last_checkpoint_stage = "TRANSLATION_DONE"
                     b_job.last_checkpoint_at = now_dt
-                    b_job.studio_state_json = json.dumps({"active_step": "segment_editing", "active_tab": "editor"})
-                    auto_confirm = getattr(b_job, "auto_confirm_translation", True)
-                    if auto_confirm is None:
-                        auto_confirm = True
-                    await bg_session.commit()
-                    
+
+                    should_launch_render = False
                     if auto_confirm:
+                        for db_seg in bg_session.new:
+                            if isinstance(db_seg, VideoTranslationSegment):
+                                db_seg.status = "confirmed"
+
+                        b_job.status = TranslationJobStatus.GENERATING_TTS.value
+                        b_job.stage = "DUB"
+                        b_job.current_step = "Bản dịch đã hoàn tất. Tự động chuyển sang Phase 2 (TTS & Dubbing)..."
+                        b_job.studio_state_json = json.dumps({"active_step": "dubbing", "active_tab": "editor"})
+                        await bg_session.commit()
+
                         snapshot_str = (
                             f"Phase 1 completed. Auto-confirming translated text segments for Phase 2 render (TTS & Dubbing)...\n"
                             f"[STATE SNAPSHOT] Job: {job_id} | status={b_job.status} | stage={b_job.stage} | "
                             f"progress={b_job.overall_progress_pct}% | segments={len(translated_segs)}"
                         )
-                        log_job_event(job_id, "SEGMENT_EDITING", snapshot_str)
-                        stop_job_heartbeat(job_id)
-                        await execute_job_render_pipeline(job_id)
-                        return
+                        log_job_event(job_id, "TRANSLATE", snapshot_str)
+                        should_launch_render = True
                     else:
+                        b_job.status = TranslationJobStatus.SEGMENT_EDITING.value
+                        b_job.stage = "TRANSLATE"
+                        b_job.current_step = "Bản dịch đã hoàn tất (Chờ xác nhận thủ công)"
+                        b_job.studio_state_json = json.dumps({"active_step": "segment_editing", "active_tab": "editor"})
+                        await bg_session.commit()
+
                         snapshot_str = (
                             f"Phase 1 completed. Awaiting user segment confirmation.\n"
                             f"[STATE SNAPSHOT] Job: {job_id} | status={b_job.status} | stage={b_job.stage} | "
                             f"progress={b_job.overall_progress_pct}% | heartbeat=INACTIVE | segments={len(translated_segs)}"
                         )
-                        log_job_event(job_id, "SEGMENT_EDITING", snapshot_str)
+                        log_job_event(job_id, "TRANSLATE", snapshot_str)
+                        stop_job_heartbeat(job_id)
 
             except Exception as e:
                 tb_str = traceback.format_exc()
@@ -710,25 +762,31 @@ async def start_translation_pipeline(
                 logger.exception("Translation pipeline failed", job_id=job_id)
                 log_job_event(job_id, "FAILED", f"Unhandled pipeline exception:\n{full_err_log}")
 
-                async with async_session_factory() as bg_session:
-                    await bg_session.execute(
-                        update(VideoTranslationJob)
-                        .where(VideoTranslationJob.id == job_id)
-                        .values(
-                            status=TranslationJobStatus.FAILED.value,
-                            stage="FAILED",
-                            current_step=f"Lỗi tại stage {current_stage}: {err_name}",
-                            error_message=db_err_detail[:1000],
-                            pid=None,
-                            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                try:
+                    async with async_session_factory() as err_session:
+                        await err_session.execute(
+                            update(VideoTranslationJob)
+                            .where(VideoTranslationJob.id == job_id)
+                            .values(
+                                status=TranslationJobStatus.FAILED.value,
+                                stage="FAILED",
+                                error_message=f"❌ {db_err_detail}",
+                                pid=None,
+                            )
                         )
-                    )
-                    await bg_session.commit()
-            finally:
+                        await err_session.commit()
+                except Exception as db_save_err:
+                    logger.error("Failed to write pipeline failure status to DB", job_id=job_id, error=str(db_save_err))
+
                 stop_job_heartbeat(job_id)
+
+        # Outside async with lock: launch Phase 2 render cleanly if auto_confirm is True
+        if should_launch_render:
+            asyncio.create_task(execute_job_render_pipeline(job_id))
 
     background_tasks.add_task(run_pipeline)
     return {"success": True, "data": {"started": True, "job_id": job_id}}
+
 
 
 STAGE_ORDER_MAP = {
@@ -810,8 +868,9 @@ async def get_translation_job(
     session: AsyncSession = Depends(get_session),
 ):
     """Get job status, heartbeat, FFmpeg stats, and segment list."""
-    # Check for stalled jobs
+    await auto_confirm_and_start_render_if_needed(job_id)
     await check_and_mark_stalled_jobs(stalled_threshold_seconds=60)
+
 
     res = await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))
     job = res.scalar_one_or_none()
@@ -890,6 +949,7 @@ async def get_translation_job(
             "llm_provider_id": job.llm_provider_id or "gemini",
             "voice_id": job.voice_id,
             "original_audio_mode": job.original_audio_mode,
+            "auto_confirm_translation": job.auto_confirm_translation,
             "status": job.status,
             "stage": job.stage or "QUEUED",
             "stage_progress_pct": job.stage_progress_pct or 0.0,
@@ -1301,17 +1361,17 @@ async def update_job_segments(
 
 async def execute_job_render_pipeline(job_id: str) -> None:
     """Execute Phase 2 (TTS Generation -> Audio Sync -> FFmpeg Render Final Video)."""
-    lock = get_job_lock(job_id)
-    if lock.locked():
+    if job_id in _active_render_jobs:
         logger.warning(f"Job {job_id} render already running in another task.")
         return
 
-    async with lock:
-        start_job_heartbeat(job_id)
-        current_stage = "GENERATING_TTS"
-        cancel_evt = reset_job_cancellation(job_id)
+    _active_render_jobs.add(job_id)
+    start_job_heartbeat(job_id)
+    current_stage = "GENERATING_TTS"
+    cancel_evt = reset_job_cancellation(job_id)
 
     try:
+
         async with async_session_factory() as init_session:
             job_res = await init_session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))
             b_job = job_res.scalar_one_or_none()
@@ -1676,7 +1736,9 @@ async def execute_job_render_pipeline(job_id: str) -> None:
             )
             await fail_session.commit()
     finally:
+        _active_render_jobs.discard(job_id)
         stop_job_heartbeat(job_id)
+
 
 
 @router.post("/jobs/{job_id}/render", response_model=dict)
@@ -1817,9 +1879,95 @@ async def get_workflow_status_api(project_id: str, session: AsyncSession = Depen
     """Get complete 6-stage workflow execution status, current stage, steps, and QC reports."""
     await _validate_project_exists(project_id, session)
 
+    # 1. Query latest active VideoTranslationJob for single-source-of-truth runtime status
+    job_stmt = (
+        select(VideoTranslationJob)
+        .where((VideoTranslationJob.project_id == project_id) | (VideoTranslationJob.id == project_id))
+        .order_by(VideoTranslationJob.created_at.desc())
+    )
+    job_res = await session.execute(job_stmt)
+    job = job_res.scalars().first()
+
     stmt = select(WorkflowExecution).where(WorkflowExecution.project_id == project_id)
     res = await session.execute(stmt)
     wf_exec = res.scalars().first()
+
+    STAGE_MAP = {
+        "CREATED": ("INGEST", 1),
+        "QUEUED": ("INGEST", 1),
+        "INGEST": ("INGEST", 1),
+        "EXTRACTING_AUDIO": ("INGEST", 1),
+        "ANALYZE": ("ANALYZE", 2),
+        "TRANSCRIBING": ("ANALYZE", 2),
+        "STT": ("ANALYZE", 2),
+        "TRANSLATE": ("TRANSLATE", 3),
+        "TRANSLATING": ("TRANSLATE", 3),
+        "SEGMENT_EDITING": ("TRANSLATE", 3),
+        "DUB": ("DUB", 4),
+        "GENERATING_TTS": ("DUB", 4),
+        "SYNTHESIZING": ("DUB", 4),
+        "SYNCING_AUDIO": ("DUB", 4),
+        "PRODUCE": ("PRODUCE", 5),
+        "RENDERING": ("PRODUCE", 5),
+        "RENDER_DONE": ("PRODUCE", 5),
+        "PUBLISH": ("PUBLISH", 6),
+        "PUBLISHING": ("PUBLISH", 6),
+        "COMPLETED": ("PUBLISH", 6),
+    }
+
+    if job:
+        await auto_confirm_and_start_render_if_needed(job.id)
+        cur_stage_name, cur_stage_idx = STAGE_MAP.get(job.stage, ("INGEST", 1))
+
+        if job.status == "completed":
+            cur_stage_idx = 6
+            cur_stage_name = "PUBLISH"
+
+        all_stages = ["INGEST", "ANALYZE", "TRANSLATE", "DUB", "PRODUCE", "PUBLISH"]
+        stages_data = []
+        for idx, s_name in enumerate(all_stages, start=1):
+            if job.status == "completed":
+                st_status = "passed"
+            elif idx < cur_stage_idx:
+                st_status = "passed"
+            elif idx == cur_stage_idx:
+                if job.status == "failed":
+                    st_status = "failed"
+                elif job.status == "segment_editing":
+                    st_status = "needs_review"
+                elif job.status == "paused":
+                    st_status = "paused"
+                elif job.status == "cancelled":
+                    st_status = "cancelled"
+                else:
+                    st_status = "running"
+            else:
+                st_status = "pending"
+
+            stages_data.append({
+                "name": s_name,
+                "status": st_status,
+                "error": job.error_message if idx == cur_stage_idx and job.status == "failed" else None,
+                "steps": [],
+            })
+
+        overall_status = "running" if job.status in [
+            "extracting_audio", "stt", "translating", "generating_tts", "syncing_audio", "rendering"
+        ] else job.status
+
+        return {
+            "success": True,
+            "data": {
+                "execution_id": wf_exec.id if wf_exec else job.id,
+                "status": overall_status,
+                "current_stage": cur_stage_name,
+                "current_step": job.current_step or "Processing",
+                "overall_progress_pct": job.overall_progress_pct or 0,
+                "error_message": job.error_message,
+                "stages": stages_data,
+                "context": {"job_id": job.id},
+            },
+        }
 
     if not wf_exec:
         return {

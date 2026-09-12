@@ -14,21 +14,34 @@ export default function YouTubePublisherModal({ jobId, onClose }) {
   const pollingRef = useRef(null);
 
   useEffect(() => {
+    // Fetch initial YouTube metadata populated from Project Defaults + Title Template + Episode calculation
+    if (jobId) {
+      videoEditorApi.getInitialSEO(jobId)
+        .then((res) => {
+          if (res.success && res.data) {
+            if (res.data.title) setTitle(res.data.title);
+            if (res.data.description) setDescription(res.data.description);
+            if (res.data.tags) setTags(Array.isArray(res.data.tags) ? res.data.tags.join(', ') : res.data.tags);
+          }
+        })
+        .catch((err) => console.warn('Failed to load initial YouTube defaults:', err));
+    }
+
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
-  }, []);
+  }, [jobId]);
 
   const handleGenerateSEO = async () => {
     setLoadingSeo(true);
     setStatusMsg(null);
     try {
       const res = await videoEditorApi.generateSEO(jobId);
-      if (res.success) {
+      if (res.success && res.data) {
         setTitle(res.data.title || '');
         setDescription(res.data.description || '');
-        setTags(Array.isArray(res.data.tags) ? res.data.tags.join(', ') : '');
-        setStatusMsg('✅ Đã tự động tạo SEO Title & Description bằng AI Gemini!');
+        setTags(Array.isArray(res.data.tags) ? res.data.tags.join(', ') : (res.data.tags || ''));
+        setStatusMsg('✨ Đã tự động sinh và bổ sung SEO bằng AI Gemini (giữ nguyên cấu hình mặc định)!');
       }
     } catch (err) {
       setStatusMsg(`❌ Lỗi tạo SEO: ${err.message}`);
@@ -59,14 +72,23 @@ export default function YouTubePublisherModal({ jobId, onClose }) {
             try {
               const statusRes = await youtubeApi.getUploadStatus(uploadId);
               if (statusRes) {
+                const currentStatus = (statusRes.status || '').toUpperCase();
                 setUploadProgress(statusRes.progress || 0);
-                if (statusRes.status === 'PUBLISHED') {
+
+                if (statusRes.error_message) {
+                  clearInterval(pollingRef.current);
+                  setStatusMsg(`❌ ${statusRes.error_message}`);
+                  setPublishing(false);
+                  return;
+                }
+
+                if (currentStatus === 'PUBLISHED') {
                   clearInterval(pollingRef.current);
                   setUploadProgress(100);
                   setPublishedUrl(statusRes.youtube_url);
                   setStatusMsg('🎉 Đã xuất bản video lên YouTube thành công!');
                   setPublishing(false);
-                } else if (statusRes.status === 'FAILED') {
+                } else if (currentStatus === 'FAILED') {
                   clearInterval(pollingRef.current);
                   setStatusMsg(`❌ Lỗi đăng YouTube: ${statusRes.error_message || 'Thất bại'}`);
                   setPublishing(false);
@@ -115,7 +137,20 @@ export default function YouTubePublisherModal({ jobId, onClose }) {
 
         <div className="modal-body">
           {statusMsg && (
-            <div className={`banner ${statusMsg.startsWith('✅') || statusMsg.startsWith('🎉') ? 'banner-success' : 'banner-danger'}`} style={{ marginBottom: '1rem' }}>
+            <div
+              className={`banner ${statusMsg.startsWith('✅') || statusMsg.startsWith('🎉') || statusMsg.startsWith('✨') ? 'banner-success' : 'banner-danger'}`}
+              style={{
+                marginBottom: '1rem',
+                padding: '0.8rem 1rem',
+                borderRadius: '8px',
+                background: statusMsg.startsWith('✅') || statusMsg.startsWith('🎉') || statusMsg.startsWith('✨') ? '#064e3b' : '#450a0a',
+                border: `1px solid ${statusMsg.startsWith('✅') || statusMsg.startsWith('🎉') || statusMsg.startsWith('✨') ? '#10b981' : '#ef4444'}`,
+                color: statusMsg.startsWith('✅') || statusMsg.startsWith('🎉') || statusMsg.startsWith('✨') ? '#6ee7b7' : '#fca5a5',
+                fontWeight: 600,
+                fontSize: '0.9rem',
+                wordBreak: 'break-word',
+              }}
+            >
               <span>{statusMsg}</span>
             </div>
           )}

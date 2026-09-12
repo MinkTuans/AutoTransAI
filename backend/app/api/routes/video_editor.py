@@ -171,12 +171,99 @@ async def run_ai_qc_endpoint(
     return {"success": True, "data": report_data}
 
 
+from sqlalchemy.orm import selectinload
+from app.models.project import Project
+from app.api.routes.projects import normalize_project_settings
+from app.services.video_editor.youtube_service import (
+    YouTubePublishingService,
+    calculate_project_video_episode,
+    render_title_template,
+    merge_youtube_tags,
+)
+
+
+@router.get("/jobs/{job_id}/initial-youtube-metadata", response_model=dict)
+async def get_initial_youtube_metadata_endpoint(
+    job_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Get initial YouTube metadata populated from Project Defaults + Title Template + Episode calculation.
+    """
+    job_res = await session.execute(
+        select(VideoTranslationJob)
+        .options(selectinload(VideoTranslationJob.asset))
+        .where(VideoTranslationJob.id == job_id)
+    )
+    job = job_res.scalar_one_or_none()
+    
+    project_settings = None
+    project_name = "Project"
+    video_name = ""
+    episode_num = 1
+    
+    if job:
+        video_name = job.asset.title if job.asset and job.asset.title else f"Video {job.id}"
+        if job.project_id:
+            proj_res = await session.execute(select(Project).where(Project.id == job.project_id))
+            proj = proj_res.scalar_one_or_none()
+            if proj:
+                project_name = proj.title or "Project"
+                project_settings = normalize_project_settings(proj.settings_json or {})
+            episode_num = await calculate_project_video_episode(session, job.project_id, job.id)
+    else:
+        from app.models.video_merger import VideoMergeJob
+        mjob_res = await session.execute(select(VideoMergeJob).where(VideoMergeJob.id == job_id))
+        mjob = mjob_res.scalar_one_or_none()
+        if mjob:
+            video_name = mjob.title or f"Video {mjob.id}"
+
+    if not project_settings:
+        project_settings = normalize_project_settings({})
+
+    yt_enabled = project_settings.get("youtube_enabled", True)
+    channel_name = project_settings.get("youtube_channel_name", "Xói Xám Content")
+    title_template = project_settings.get("youtube_title_template", "Tập {episode} | {project_name} | {channel_name}")
+    desc_default = project_settings.get("youtube_description_default", "")
+    default_tags = project_settings.get("youtube_default_tags", "")
+
+    rendered_title = render_title_template(
+        template=title_template if yt_enabled else "{video_name}",
+        episode_num=episode_num,
+        project_name=project_name,
+        channel_name=channel_name,
+        video_name=video_name or f"Video {job_id}",
+    )
+
+    rendered_desc = render_title_template(
+        template=desc_default,
+        episode_num=episode_num,
+        project_name=project_name,
+        channel_name=channel_name,
+        video_name=video_name or f"Video {job_id}",
+    ) if desc_default else ""
+
+    base_tags = merge_youtube_tags(default_tags if yt_enabled else [], [])
+
+    return {
+        "success": True,
+        "data": {
+            "title": rendered_title,
+            "description": rendered_desc,
+            "tags": base_tags,
+            "episode": episode_num,
+            "project_name": project_name,
+            "channel_name": channel_name,
+        }
+    }
+
+
 @router.post("/jobs/{job_id}/generate-seo", response_model=dict)
 async def generate_youtube_seo_endpoint(
     job_id: str,
     session: AsyncSession = Depends(get_session),
 ):
-    """Auto-generate YouTube SEO Title, Description, Hashtags, Tags via Gemini."""
+    """Auto-generate YouTube SEO Title, Description, Hashtags, Tags via Gemini + Project Defaults."""
     seg_res = await session.execute(
         select(VideoTranslationSegment)
         .where(VideoTranslationSegment.job_id == job_id)
@@ -185,14 +272,48 @@ async def generate_youtube_seo_endpoint(
     segments = seg_res.scalars().all()
     transcript_text = " ".join([s.translated_text or s.original_text for s in segments])
 
-    job_res = await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))
+    job_res = await session.execute(
+        select(VideoTranslationJob)
+        .options(selectinload(VideoTranslationJob.asset))
+        .where(VideoTranslationJob.id == job_id)
+    )
     job = job_res.scalar_one_or_none()
     target_lang = job.target_language if job else "vi"
+
+    project_settings = None
+    project_name = "Project"
+    video_name = ""
+    episode_num = 1
+
+    if job:
+        video_name = job.asset.title if job.asset and job.asset.title else f"Video {job.id}"
+        if job.project_id:
+            proj_res = await session.execute(select(Project).where(Project.id == job.project_id))
+            proj = proj_res.scalar_one_or_none()
+            if proj:
+                project_name = proj.title or "Project"
+                project_settings = normalize_project_settings(proj.settings_json or {})
+            episode_num = await calculate_project_video_episode(session, job.project_id, job.id)
+    else:
+        from app.models.video_merger import VideoMergeJob
+        mjob_res = await session.execute(select(VideoMergeJob).where(VideoMergeJob.id == job_id))
+        mjob = mjob_res.scalar_one_or_none()
+        if mjob:
+            video_name = mjob.title or f"Video {mjob.id}"
+            if not transcript_text:
+                transcript_text = f"Video ghép {mjob.title}"
+
+    if not project_settings:
+        project_settings = normalize_project_settings({})
 
     seo_data = await YouTubePublishingService.generate_youtube_seo_metadata(
         transcript_text=transcript_text,
         target_language=target_lang,
         job_id=job_id,
+        project_settings=project_settings,
+        project_name=project_name,
+        video_name=video_name,
+        episode_num=episode_num,
     )
 
     return {"success": True, "data": seo_data}
@@ -205,10 +326,31 @@ async def publish_youtube_endpoint(
     session: AsyncSession = Depends(get_session),
 ):
     """Publish dubbed video to YouTube via YouTube Data API v3 with encrypted OAuth credential enforcement and real-time progress tracking."""
+    video_path = None
+    target_job_id = body.job_id
+    project_id = "default_project"
+
+    # 1. Check VideoTranslationJob
     job_res = await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == body.job_id))
     job = job_res.scalar_one_or_none()
-    if not job or not job.output_video_path or not Path(job.output_video_path).exists():
-        raise HTTPException(status_code=400, detail="❌ Video thành phẩm chưa ready để upload.")
+    if job and job.output_video_path and Path(job.output_video_path).exists():
+        video_path = str(job.output_video_path)
+        project_id = job.project_id or "default_project"
+
+    # 2. Check VideoMergeJob fallback
+    if not video_path:
+        from app.models.video_merger import VideoMergeJob
+        mjob_res = await session.execute(select(VideoMergeJob).where(VideoMergeJob.id == body.job_id))
+        mjob = mjob_res.scalar_one_or_none()
+        if mjob and mjob.output_video_path and Path(mjob.output_video_path).exists():
+            video_path = str(mjob.output_video_path)
+            project_id = "merger_project"
+
+    if not video_path:
+        raise HTTPException(
+            status_code=400,
+            detail="❌ Video thành phẩm chưa ready để upload. (Lỗi: Video chưa được render hoàn tất hoặc không tìm thấy file thành phẩm trên hệ thống. Vui lòng kiểm tra lại tiến trình render/merge)."
+        )
 
     # Fetch active YouTube OAuth channel from database
     channel_res = await session.execute(
@@ -239,8 +381,8 @@ async def publish_youtube_endpoint(
 
     pub = YouTubePublication(
         id=str(uuid.uuid4()),
-        job_id=job.id,
-        project_id=job.project_id or "default_project",
+        job_id=target_job_id,
+        project_id=project_id,
         channel_id=active_channel.id,
         title=title,
         description=description,
@@ -257,7 +399,7 @@ async def publish_youtube_endpoint(
     background_tasks.add_task(
         YouTubePublishingService.execute_async_upload,
         publication_id=pub.id,
-        video_path=str(job.output_video_path),
+        video_path=video_path,
     )
 
     return {
