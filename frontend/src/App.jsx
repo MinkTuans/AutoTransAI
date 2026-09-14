@@ -140,14 +140,14 @@ export default function App() {
               }}
             />
           ) : (
-            <div className="card" style={{ padding: '2rem', textAlign: 'center', color: '#cbd5e1' }}>
-              <h3 style={{ color: '#f87171', marginBottom: '0.5rem' }}>⚠️ Chưa chọn dự án</h3>
-              <p style={{ color: '#94a3b8', marginBottom: '1.5rem' }}>Vui lòng chọn một dự án từ danh sách Dashboard để xem chi tiết.</p>
+            <div className="card empty-state">
+              <h3 style={{ color: 'var(--danger)', marginBottom: '0.5rem' }}>Chưa chọn dự án</h3>
+              <p className="page-subtitle" style={{ marginBottom: '1.5rem' }}>Chọn một dự án trong danh sách để xem chi tiết.</p>
               <button
                 className="btn btn-secondary"
                 onClick={() => handleNavigatePage('dashboard')}
               >
-                ← Quay lại Dashboard
+                ← Về danh sách dự án
               </button>
             </div>
           )

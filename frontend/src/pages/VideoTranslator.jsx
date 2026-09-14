@@ -11,32 +11,18 @@ function CollapsibleCard({ title, icon, defaultOpen = true, children, extraHeade
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
   return (
-    <div className="card" style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '12px', marginBottom: '20px', overflow: 'hidden' }}>
-      <div
-        onClick={() => setIsOpen(!isOpen)}
-        style={{
-          padding: '14px 18px',
-          background: '#0f172a',
-          cursor: 'pointer',
-          display: 'flex',
-          justify: 'space-between',
-          alignItems: 'center',
-          userSelect: 'none',
-          borderBottom: isOpen ? '1px solid #334155' : 'none',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ fontSize: '18px' }}>{icon}</span>
-          <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 'bold', color: '#f8fafc' }}>{title}</h3>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+    <div className={`collapse-card ${isOpen ? 'is-open' : ''}`}>
+      <button type="button" className="collapse-card-header" onClick={() => setIsOpen(!isOpen)}>
+        <h3 className="collapse-card-title">
+          <span>{icon}</span>
+          {title}
+        </h3>
+        <div className="inline-row">
           {extraHeaderRight && <div onClick={(e) => e.stopPropagation()}>{extraHeaderRight}</div>}
-          <span style={{ fontSize: '12px', color: '#94a3b8', background: '#1e293b', padding: '4px 8px', borderRadius: '6px', fontWeight: 'bold', border: '1px solid #334155' }}>
-            {isOpen ? '▲ Thu gọn' : '▼ Mở rộng'}
-          </span>
+          <span className="collapse-chip">{isOpen ? 'Thu gọn' : 'Mở rộng'}</span>
         </div>
-      </div>
-      {isOpen && <div style={{ padding: '16px 18px' }}>{children}</div>}
+      </button>
+      {isOpen && <div className="collapse-card-body">{children}</div>}
     </div>
   );
 }
@@ -1130,24 +1116,20 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
 
   return (
     <div className="video-translator-studio">
-      {/* Studio Header Bar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+      <div className="studio-header">
         <div>
-          <h1 style={{ fontSize: '22px', fontWeight: 'bold', margin: 0, color: '#818cf8', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            🎬 Video Translator – Studio Dịch & Lồng Tiếng
-          </h1>
-          <p style={{ color: '#94a3b8', margin: '2px 0 0 0', fontSize: '13px' }}>
-            Tự động dịch giọng nói trong video với Unified 6-Stage Engine, realtime tracking & AI controls.
+          <h1 className="studio-title">Studio dịch & lồng tiếng</h1>
+          <p className="page-subtitle">
+            Pipeline 6 bước, theo dõi realtime, glossary và xuất YouTube trong một màn hình.
           </p>
         </div>
 
-        {/* Project Selector Compact Dropdown */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#1e1b4b', border: '1px solid #4338ca', padding: '6px 12px', borderRadius: '8px' }}>
-          <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#fff', whiteSpace: 'nowrap' }}>Dự án:</span>
+        <div className="project-picker">
+          <span style={{ fontSize: '13px', fontWeight: 700, color: '#fff', whiteSpace: 'nowrap' }}>Dự án</span>
           <select
             value={selectedProjectId || ''}
             onChange={(e) => handleProjectSelectAttempt(e.target.value || null)}
-            style={{ padding: '6px 10px', borderRadius: '6px', background: '#0f1117', color: '#fff', border: '1px solid #4338ca', fontSize: '13px', minWidth: '180px' }}
+            style={{ minWidth: '180px' }}
           >
             <option value="">-- Chọn dự án --</option>
             {projectsList.map((p) => (
@@ -1157,43 +1139,26 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
             ))}
           </select>
           {selectedProjectId && (
-            <button
-              onClick={handleOpenEditTitleModal}
-              title="Đổi tên dự án hiện tại"
-              style={{ background: '#3730a3', color: '#e0e7ff', border: '1px solid #6366f1', padding: '6px 10px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px', whiteSpace: 'nowrap' }}
-            >
-              ✏️ Sửa tên
+            <button type="button" className="btn btn-secondary btn-sm" onClick={handleOpenEditTitleModal} title="Đổi tên dự án hiện tại">
+              Sửa tên
             </button>
           )}
-          <button
-            onClick={() => setShowCreateProjectModal(true)}
-            style={{ background: '#4f46e5', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px', whiteSpace: 'nowrap' }}
-          >
-            ➕ Tạo mới
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => setShowCreateProjectModal(true)}>
+            Tạo mới
           </button>
-
         </div>
       </div>
 
       {/* Dirty Settings Warning Banner */}
       {isSettingsDirty && selectedProjectId && (
-        <div style={{ background: '#1e3a8a', border: '1px solid #3b82f6', borderRadius: '8px', padding: '10px 16px', marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#fff', flexWrap: 'wrap', gap: '10px', fontSize: '13px' }}>
-          <span style={{ color: '#93c5fd', fontWeight: 'bold' }}>
-            ⚠️ Bạn có thay đổi cấu hình dự án chưa lưu.
-          </span>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button
-              onClick={handleSaveSettingsToProject}
-              disabled={isSavingSettings}
-              style={{ background: '#2563eb', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
-            >
-              {isSavingSettings ? 'Đang lưu DB...' : '💾 Lưu DB'}
+        <div className="dirty-banner">
+          <span>Bạn có thay đổi cấu hình dự án chưa lưu.</span>
+          <div className="inline-row">
+            <button type="button" className="btn btn-primary btn-sm" onClick={handleSaveSettingsToProject} disabled={isSavingSettings}>
+              {isSavingSettings ? 'Đang lưu...' : 'Lưu'}
             </button>
-            <button
-              onClick={handleDiscardChanges}
-              style={{ background: '#475569', color: '#f8fafc', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
-            >
-              ↩️ Hủy
+            <button type="button" className="btn btn-secondary btn-sm" onClick={handleDiscardChanges}>
+              Hủy
             </button>
           </div>
         </div>
@@ -1257,75 +1222,32 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
             </div>
 
             {/* Mode Selector */}
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
-              <button
-                onClick={() => setInputMode('url')}
-                style={{
-                  flex: 1,
-                  padding: '8px 12px',
-                  borderRadius: '6px',
-                  border: inputMode === 'url' ? '2px solid #818cf8' : '1px solid #334155',
-                  background: inputMode === 'url' ? '#312e81' : '#0f172a',
-                  color: '#fff',
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                }}
-              >
-                🔗 Dán Link/URL Video
+            <div className="segmented">
+              <button type="button" className={`segmented-btn ${inputMode === 'url' ? 'active' : ''}`} onClick={() => setInputMode('url')}>
+                Dán link video
               </button>
-              <button
-                onClick={() => setInputMode('upload')}
-                style={{
-                  flex: 1,
-                  padding: '8px 12px',
-                  borderRadius: '6px',
-                  border: inputMode === 'upload' ? '2px solid #818cf8' : '1px solid #334155',
-                  background: inputMode === 'upload' ? '#312e81' : '#0f172a',
-                  color: '#fff',
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                }}
-              >
-                📁 Upload File từ Máy
+              <button type="button" className={`segmented-btn ${inputMode === 'upload' ? 'active' : ''}`} onClick={() => setInputMode('upload')}>
+                Tải file từ máy
               </button>
             </div>
 
             {inputMode === 'url' ? (
               <div style={{ marginBottom: '14px' }}>
-                <div style={{ display: 'flex', gap: '8px' }}>
+                <div className="inline-row" style={{ alignItems: 'stretch' }}>
                   <input
                     type="text"
                     placeholder="https://www.bilibili.com/video/BVxxxx hoặc YouTube URL"
                     value={videoUrl}
                     onChange={(e) => setVideoUrl(e.target.value)}
-                    style={{
-                      flex: 1,
-                      padding: '8px 12px',
-                      borderRadius: '6px',
-                      border: '1px solid #475569',
-                      background: '#0f172a',
-                      color: '#fff',
-                      fontSize: '13px',
-                    }}
+                    style={{ flex: 1 }}
                   />
                   <button
+                    type="button"
+                    className="btn btn-primary"
                     onClick={handleCheckUrl}
                     disabled={isCheckingUrl || !videoUrl}
-                    style={{
-                      padding: '8px 14px',
-                      borderRadius: '6px',
-                      background: '#4f46e5',
-                      color: '#fff',
-                      border: 'none',
-                      fontWeight: 'bold',
-                      fontSize: '12px',
-                      cursor: isCheckingUrl ? 'not-allowed' : 'pointer',
-                      whiteSpace: 'nowrap',
-                    }}
                   >
-                    {isCheckingUrl ? <><ButtonSpinner /> Kiểm tra...</> : '🔍 Kiểm tra URL'}
+                    {isCheckingUrl ? <><ButtonSpinner /> Kiểm tra...</> : 'Kiểm tra URL'}
                   </button>
                 </div>
                 {checkError && <div style={{ color: '#ef4444', fontSize: '12px', marginTop: '4px' }}>{checkError}</div>}

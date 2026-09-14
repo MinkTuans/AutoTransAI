@@ -279,54 +279,35 @@ export default function VideoMerger() {
   };
 
   return (
-    <div className="video-merger-page" style={{ maxWidth: '1280px', margin: '0 auto', padding: '1.5rem 1rem' }}>
-      {/* Header Banner */}
-      <div className="merger-header-card card" style={{ padding: '1.5rem', marginBottom: '1.5rem', borderRadius: '12px', background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)', border: '1px solid #334155' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+    <div className="video-merger-page">
+      <div className="merger-header-card card">
+        <div className="page-header" style={{ marginBottom: 0 }}>
           <div>
-            <h1 style={{ margin: 0, fontSize: '1.6rem', color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-              🎬 Video Merger — Ghép Video Độc Lập
-            </h1>
-            <p style={{ margin: '0.4rem 0 0 0', color: '#94a3b8', fontSize: '0.95rem' }}>
-              Nối nhiều video thành một video duy nhất theo thứ tự mong muốn với công nghệ FFmpeg tự động normalize resolution, fps và âm thanh.
+            <h1 className="page-title">Ghép video</h1>
+            <p className="page-subtitle">
+              Nối nhiều clip thành một file. FFmpeg tự chuẩn hóa độ phân giải, fps và âm thanh.
             </p>
           </div>
           {activeJob && activeJob.status === 'completed' && (
-            <button className="btn btn-secondary" onClick={handleResetNewMerge} style={{ padding: '0.5rem 1rem' }}>
-              🔄 Ghép Video Mới
+            <button type="button" className="btn btn-secondary" onClick={handleResetNewMerge}>
+              Ghép video mới
             </button>
           )}
         </div>
       </div>
 
-      {/* Main Grid Layout */}
-      <div className="merger-grid" style={{ display: 'grid', gridTemplateColumns: activeJob && activeJob.status === 'completed' ? '1fr 1fr' : '1fr 1.2fr', gap: '1.5rem' }}>
-        
-        {/* Left Column: Source Selection & Reordering List */}
-        <div className="merger-left-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+      <div className={`merger-grid ${activeJob && activeJob.status === 'completed' ? 'is-complete' : ''}`}>
+        <div className="merger-col">
           
           {/* Upload & Select Section */}
-          <div className="card" style={{ padding: '1.2rem', borderRadius: '12px', background: '#1e293b', border: '1px solid #334155' }}>
-            <h3 style={{ margin: '0 0 0.8rem 0', fontSize: '1.1rem', color: '#38bdf8', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              📥 Nguồn Video Input
-            </h3>
-            
-            {/* Dropzone */}
+          <div className="card">
+            <h3 className="compact-card-title" style={{ marginBottom: '0.8rem' }}>Nguồn video</h3>
             <div
               className="upload-dropzone"
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => {
                 e.preventDefault();
                 handleFileUpload(e.dataTransfer.files);
-              }}
-              style={{
-                border: '2px dashed #475569',
-                borderRadius: '10px',
-                padding: '1.5rem',
-                textAlign: 'center',
-                background: '#0f172a',
-                cursor: 'pointer',
-                transition: 'border-color 0.2s',
               }}
               onClick={() => document.getElementById('merger-file-input').click()}
             >
@@ -338,9 +319,8 @@ export default function VideoMerger() {
                 style={{ display: 'none' }}
                 onChange={(e) => handleFileUpload(e.target.files)}
               />
-              <div style={{ fontSize: '2.2rem', marginBottom: '0.5rem' }}>📁</div>
-              <p style={{ margin: 0, fontWeight: 600, color: '#f1f5f9' }}>
-                Kéo thả nhiều video vào đây hoặc <span style={{ color: '#38bdf8', textDecoration: 'underline' }}>Duyệt file từ máy</span>
+              <p style={{ margin: 0, fontWeight: 700, fontSize: '0.95rem', color: '#f1f5f9' }}>
+                Kéo thả video vào đây hoặc <span style={{ color: '#22d3ee', textDecoration: 'underline' }}>duyệt file từ máy</span>
               </p>
               <p style={{ margin: '0.4rem 0 0 0', fontSize: '0.8rem', color: '#64748b' }}>
                 Hỗ trợ MP4, MOV, AVI, MKV, WEBM (Nối trực tiếp hoặc tự động normalize)
@@ -351,11 +331,10 @@ export default function VideoMerger() {
             <div style={{ marginTop: '0.8rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <button
                 type="button"
-                className="btn btn-secondary"
+                className="btn btn-secondary btn-block"
                 onClick={handleOpenAssetModal}
-                style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', background: '#334155', border: 'none', color: '#f8fafc', padding: '0.6rem 1rem', borderRadius: '8px', cursor: 'pointer' }}
               >
-                📂 Chọn từ Dự án / Asset có sẵn
+                Chọn từ dự án / asset có sẵn
               </button>
             </div>
 
@@ -368,17 +347,15 @@ export default function VideoMerger() {
           </div>
 
           {/* Selected Video Sequence List */}
-          <div className="card" style={{ padding: '1.2rem', borderRadius: '12px', background: '#1e293b', border: '1px solid #334155' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.8rem' }}>
-              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#f8fafc' }}>
-                📋 Danh sách Ghép ({selectedVideos.length} video)
-              </h3>
+          <div className="card">
+            <div className="inline-row" style={{ justifyContent: 'space-between', marginBottom: '0.8rem' }}>
+              <h3 className="compact-card-title">Danh sách ghép ({selectedVideos.length})</h3>
               {selectedVideos.length > 0 && (
                 <button
                   type="button"
+                  className="btn btn-ghost btn-sm"
                   onClick={() => setSelectedVideos([])}
                   disabled={isMerging}
-                  style={{ background: 'transparent', border: 'none', color: '#ef4444', fontSize: '0.82rem', cursor: 'pointer', textDecoration: 'underline' }}
                 >
                   Xóa tất cả
                 </button>
@@ -398,22 +375,11 @@ export default function VideoMerger() {
                     onDragStart={(e) => handleDragStart(e, idx)}
                     onDragOver={(e) => handleDragOver(e, idx)}
                     onDrop={(e) => handleDrop(e, idx)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.8rem',
-                      padding: '0.6rem 0.8rem',
-                      borderRadius: '8px',
-                      background: draggedIndex === idx ? '#334155' : '#0f172a',
-                      border: '1px solid #334155',
-                      cursor: isMerging ? 'default' : 'grab',
-                      transition: 'background 0.2s',
-                    }}
+                    className={`merge-item ${draggedIndex === idx ? 'is-dragging' : ''}`}
+                    style={{ cursor: isMerging ? 'default' : 'grab' }}
                   >
                     {/* Order Badge */}
-                    <div style={{ minWidth: '28px', height: '28px', borderRadius: '50%', background: '#0284c7', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.85rem' }}>
-                      {idx + 1}
-                    </div>
+                    <div className="merge-order">{idx + 1}</div>
 
                     {/* Thumbnail Preview */}
                     {video.thumbnail_url ? (
@@ -449,7 +415,8 @@ export default function VideoMerger() {
                           disabled={idx === 0}
                           onClick={() => moveVideoItem(idx, idx - 1)}
                           title="Lên trên"
-                          style={{ background: '#1e293b', border: '1px solid #475569', color: '#cbd5e1', borderRadius: '4px', padding: '2px 6px', cursor: idx === 0 ? 'not-allowed' : 'pointer' }}
+                          className="icon-btn"
+                          style={{ cursor: idx === 0 ? 'not-allowed' : 'pointer' }}
                         >
                           ▲
                         </button>
@@ -458,7 +425,7 @@ export default function VideoMerger() {
                           disabled={idx === selectedVideos.length - 1}
                           onClick={() => moveVideoItem(idx, idx + 1)}
                           title="Xuống dưới"
-                          style={{ background: '#1e293b', border: '1px solid #475569', color: '#cbd5e1', borderRadius: '4px', padding: '2px 6px', cursor: idx === selectedVideos.length - 1 ? 'not-allowed' : 'pointer' }}
+                          className="icon-btn"
                         >
                           ▼
                         </button>
@@ -489,7 +456,7 @@ export default function VideoMerger() {
         </div>
 
         {/* Right Column: Execution Controls, Progress & Result Studio */}
-        <div className="merger-right-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+        <div className="merger-col">
           
           {/* Controls & Action Card */}
           <div className="card" style={{ padding: '1.2rem', borderRadius: '12px', background: '#1e293b', border: '1px solid #334155' }}>
@@ -640,20 +607,15 @@ export default function VideoMerger() {
 
       {/* Asset Selection Modal */}
       {showAssetModal && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.75)', zIndex: 999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-          <div className="card" style={{ width: '100%', maxWidth: '640px', maxHeight: '80vh', display: 'flex', flexDirection: 'column', borderRadius: '12px', background: '#1e293b', border: '1px solid #475569', padding: '1.2rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#f8fafc' }}>
-                📂 Chọn Video có sẵn trong Hệ Thống
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowAssetModal(false)}
-                style={{ background: 'transparent', border: 'none', color: '#94a3b8', fontSize: '1.4rem', cursor: 'pointer' }}
-              >
+        <div className="modal-backdrop">
+          <div className="modal-dialog" style={{ maxWidth: 640 }}>
+            <div className="modal-header">
+              <h3>Chọn video có sẵn</h3>
+              <button type="button" className="modal-close-btn" onClick={() => setShowAssetModal(false)}>
                 ✕
               </button>
             </div>
+            <div className="modal-body">
 
             {isLoadingAssets ? (
               <div style={{ padding: '3rem', textAlign: 'center' }}>
@@ -706,6 +668,7 @@ export default function VideoMerger() {
                 ))}
               </div>
             )}
+            </div>
           </div>
         </div>
       )}

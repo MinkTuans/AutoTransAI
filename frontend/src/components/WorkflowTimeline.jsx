@@ -87,25 +87,25 @@ export default function WorkflowTimeline({
       case 'passed':
       case 'completed':
       case 'success':
-        return <span style={{ background: '#10B981', color: '#fff', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }}>🟢 Passed</span>;
+        return <span className="wf-chip ok">Passed</span>;
       case 'running':
       case 'processing':
         return (
-          <span style={{ background: '#2563EB', color: '#fff', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-            <span className="spinner-icon">⚙️</span> Running...
+          <span className="wf-chip run">
+            <span className="spinner-icon">⚙</span> Running
           </span>
         );
       case 'paused':
-        return <span style={{ background: '#D97706', color: '#fff', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }}>⏸ Paused</span>;
+        return <span className="wf-chip warn">Paused</span>;
       case 'needs_review':
       case 'segment_editing':
-        return <span style={{ background: '#F59E0B', color: '#fff', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }}>🟡 Chờ xác nhận</span>;
+        return <span className="wf-chip warn">Chờ xác nhận</span>;
       case 'failed':
-        return <span style={{ background: '#EF4444', color: '#fff', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }}>🔴 Failed</span>;
+        return <span className="wf-chip err">Failed</span>;
       case 'cancelled':
-        return <span style={{ background: '#6B7280', color: '#fff', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }}>⚪ Cancelled</span>;
+        return <span className="wf-chip idle">Cancelled</span>;
       default:
-        return <span style={{ background: '#334155', color: '#94a3b8', padding: '2px 8px', borderRadius: '12px', fontSize: '11px' }}>⚪ Waiting</span>;
+        return <span className="wf-chip idle">Waiting</span>;
     }
   };
 
@@ -143,182 +143,80 @@ export default function WorkflowTimeline({
   const isFailed = currentStatus === 'failed' || Boolean(pipelineError);
 
   return (
-    <div style={{ background: '#0f172a', border: `1px solid ${isFailed ? '#ef4444' : '#334155'}`, borderRadius: '12px', padding: '16px 20px', color: '#F3F4F6' }}>
-      
-      {/* Top Bar: Title & Main Control Buttons */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '10px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ fontSize: '20px' }}>🚀</span>
-          <div>
-            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold', color: isFailed ? '#fca5a5' : '#818cf8', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              Unified 6-Stage Workflow Pipeline
-              {job?.id && <span style={{ fontSize: '12px', color: '#94a3b8', background: '#1e293b', padding: '2px 8px', borderRadius: '6px', border: '1px solid #334155' }}>Job: {job.id}</span>}
-            </h3>
-            <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-              <span>Trạng thái: {getStatusBadge(currentStatus)}</span>
-              <span>•</span>
-              <span>Tiến độ: <strong style={{ color: isFailed ? '#fca5a5' : '#60a5fa' }}>{overallProgress}%</strong></span>
-              <span>•</span>
-              <span>Stage: <strong style={{ color: '#60a5fa' }}>{currentStageName}</strong></span>
-            </div>
+    <div className={`wf-panel ${isFailed ? 'is-failed' : ''}`}>
+      <div className="wf-panel-head">
+        <div>
+          <h3 className="compact-card-title" style={{ color: isFailed ? '#fca5a5' : undefined }}>
+            Pipeline 6 bước
+            {job?.id && <span className="collapse-chip">Job {job.id}</span>}
+          </h3>
+          <div className="page-subtitle" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: 4 }}>
+            <span>{getStatusBadge(currentStatus)}</span>
+            <span>Tiến độ <strong>{overallProgress}%</strong></span>
+            <span>Stage <strong>{currentStageName}</strong></span>
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <div className="wf-actions">
           {onOpenLogs && (
-            <button
-              onClick={onOpenLogs}
-              style={{
-                padding: '6px 12px',
-                background: '#1e293b',
-                color: '#93c5fd',
-                border: '1px solid #3b82f6',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontWeight: '600',
-                fontSize: '12px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-              }}
-            >
-              📜 Xem Log
+            <button type="button" className="btn btn-secondary btn-sm" onClick={onOpenLogs}>
+              Log
             </button>
           )}
-
           {!isRunning && !isPaused && (
-            <button
-              onClick={onStart}
-              disabled={loadingAction}
-              style={{
-                padding: '6px 14px',
-                background: 'linear-gradient(90deg, #2563eb 0%, #4f46e5 100%)',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: loadingAction ? 'not-allowed' : 'pointer',
-                fontWeight: 'bold',
-                fontSize: '12px',
-                opacity: loadingAction ? 0.7 : 1,
-              }}
-            >
-              {loadingAction === 'start' ? '⏳ Starting...' : '▶ Start Workflow'}
+            <button type="button" className="btn btn-primary btn-sm" onClick={onStart} disabled={loadingAction}>
+              {loadingAction === 'start' ? 'Starting...' : 'Start'}
             </button>
           )}
-
           {isRunning && (
-            <button
-              onClick={onPause}
-              disabled={loadingAction}
-              style={{
-                padding: '6px 14px',
-                background: '#d97706',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: loadingAction ? 'not-allowed' : 'pointer',
-                fontWeight: 'bold',
-                fontSize: '12px',
-                opacity: loadingAction ? 0.7 : 1,
-              }}
-            >
-              {loadingAction === 'pause' ? '⏳ Pausing...' : '⏸ Pause'}
+            <button type="button" className="btn btn-secondary btn-sm" onClick={onPause} disabled={loadingAction}>
+              {loadingAction === 'pause' ? 'Pausing...' : 'Pause'}
             </button>
           )}
-
           {isPaused && (
-            <button
-              onClick={onResume}
-              disabled={loadingAction}
-              style={{
-                padding: '6px 14px',
-                background: '#059669',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: loadingAction ? 'not-allowed' : 'pointer',
-                fontWeight: 'bold',
-                fontSize: '12px',
-                opacity: loadingAction ? 0.7 : 1,
-              }}
-            >
-              {loadingAction === 'resume' ? '⏳ Resuming...' : '▶ Resume'}
+            <button type="button" className="btn btn-primary btn-sm" onClick={onResume} disabled={loadingAction}>
+              {loadingAction === 'resume' ? 'Resuming...' : 'Resume'}
             </button>
           )}
-
           {(isRunning || isPaused) && onCancel && (
-            <button
-              onClick={onCancel}
-              disabled={loadingAction}
-              style={{
-                padding: '6px 12px',
-                background: '#dc2626',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: loadingAction ? 'not-allowed' : 'pointer',
-                fontWeight: '600',
-                fontSize: '12px',
-                opacity: loadingAction ? 0.7 : 1,
-              }}
-            >
-              {loadingAction === 'cancel' ? '⏳ Cancelling...' : '🛑 Cancel'}
+            <button type="button" className="btn btn-danger btn-sm" onClick={onCancel} disabled={loadingAction}>
+              {loadingAction === 'cancel' ? 'Cancelling...' : 'Cancel'}
             </button>
           )}
-
           {isFailed && onRetryJob && (
-            <button
-              onClick={onRetryJob}
-              disabled={loadingAction === 'retry'}
-              style={{
-                padding: '6px 12px',
-                background: loadingAction === 'retry' ? '#78350f' : '#d97706',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: loadingAction === 'retry' ? 'not-allowed' : 'pointer',
-                fontWeight: 'bold',
-                fontSize: '12px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-              }}
-            >
-              {loadingAction === 'retry' ? '⏳ Retrying...' : '🔄 Smart Retry'}
+            <button type="button" className="btn btn-secondary btn-sm" onClick={onRetryJob} disabled={loadingAction === 'retry'}>
+              {loadingAction === 'retry' ? 'Retrying...' : 'Retry'}
             </button>
           )}
         </div>
       </div>
 
-      {/* Overall Progress Bar */}
-      <div style={{ marginBottom: '14px' }}>
-        <div style={{ background: '#1e293b', borderRadius: '6px', height: '10px', width: '100%', overflow: 'hidden', border: '1px solid #334155' }}>
+      <div className="progress-container">
+        <div className="progress-bar-bg">
           <div
+            className={`progress-bar-fill ${isFailed ? 'warning' : ''}`}
             style={{
               width: `${overallProgress}%`,
-              height: '100%',
-              background: isFailed ? '#ef4444' : 'linear-gradient(90deg, #3b82f6, #8b5cf6)',
-              transition: 'width 0.3s ease',
+              background: isFailed ? '#ef4444' : undefined,
             }}
           />
         </div>
         {transferProgress && (
-          <div style={{ marginTop: '8px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#cbd5e1', marginBottom: '4px', gap: '8px', flexWrap: 'wrap' }}>
-              <span>📡 {transferKind}: <strong>{transferProgress.message || `${transferPct.toFixed(0)}%`}</strong></span>
+          <div style={{ marginTop: 8 }}>
+            <div className="progress-label" style={{ fontSize: 11 }}>
+              <span>{transferKind}: <strong>{transferProgress.message || `${transferPct.toFixed(0)}%`}</strong></span>
               <span>
                 {formatBytes(transferProgress.downloaded_bytes)} / {formatBytes(transferProgress.total_bytes)}
                 {transferProgress.speed ? ` · ${transferProgress.speed}` : ''}
                 {transferProgress.eta ? ` · ETA ${transferProgress.eta}` : ''}
               </span>
             </div>
-            <div style={{ background: '#0f172a', borderRadius: '6px', height: '8px', width: '100%', overflow: 'hidden', border: '1px solid #334155' }}>
+            <div className="progress-bar-bg">
               <div
+                className="progress-bar-fill success"
                 style={{
                   width: `${transferPct}%`,
-                  height: '100%',
-                  background: transferProgress.status === 'failed' ? '#ef4444' : 'linear-gradient(90deg, #22c55e, #38bdf8)',
-                  transition: 'width 0.2s ease',
+                  background: transferProgress.status === 'failed' ? '#ef4444' : undefined,
                 }}
               />
             </div>
@@ -326,8 +224,7 @@ export default function WorkflowTimeline({
         )}
       </div>
 
-      {/* 6 Stage Grid Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '8px', marginBottom: '14px' }}>
+      <div className="wf-stages">
         {STAGES.map((st, idx) => {
           const stIdx = idx + 1;
           const isSelected = activeStage === st.id;
@@ -352,52 +249,36 @@ export default function WorkflowTimeline({
           const isStageFailed = stDataStatus === 'failed';
           const isNeedsReview = stDataStatus === 'needs_review';
 
-          let cardBorder = '1px solid #334155';
-          let cardBg = isSelected ? '#1e293b' : '#0f172a';
-
-          if (isStageRunning) {
-            cardBorder = '2px solid #3b82f6';
-            cardBg = isSelected ? '#1e3a8a' : '#1e293b';
-          } else if (isPassed) {
-            cardBorder = '1px solid #10b981';
-            cardBg = isSelected ? '#064e3b' : '#062c22';
-          } else if (isStageFailed) {
-            cardBorder = '1px solid #ef4444';
-            cardBg = isSelected ? '#7f1d1d' : '#450a0a';
-          } else if (isNeedsReview) {
-            cardBorder = '2px solid #f59e0b';
-            cardBg = isSelected ? '#78350f' : '#451a03';
-          }
+          const stageClass = [
+            'wf-stage',
+            isSelected ? 'is-selected' : '',
+            isStageRunning ? 'is-running stage-card-running' : '',
+            isPassed ? 'is-passed' : '',
+            isStageFailed ? 'is-failed' : '',
+            isNeedsReview ? 'is-review' : '',
+          ].filter(Boolean).join(' ');
 
           return (
-            <div
+            <button
+              type="button"
               key={st.id}
               onClick={() => setSelectedStageOverride(st.id)}
-              className={isStageRunning ? 'stage-card-running' : ''}
-              style={{
-                background: cardBg,
-                border: cardBorder,
-                borderRadius: '8px',
-                padding: '8px 10px',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-              }}
+              className={stageClass}
             >
-              <div style={{ fontSize: '16px', marginBottom: '2px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div className="inline-row" style={{ justifyContent: 'space-between', marginBottom: 2 }}>
                 <span>{st.icon}</span>
-                {isStageRunning && <span className="spinner-icon" style={{ fontSize: '12px' }}>⏳</span>}
+                {isStageRunning && <span className="spinner-icon">⏳</span>}
               </div>
-              <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{st.label}</div>
-              <div style={{ fontSize: '10px', color: '#94a3b8', marginBottom: '4px', height: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{st.desc}</div>
+              <div className="wf-stage-label">{st.label}</div>
+              <div className="wf-stage-desc">{st.desc}</div>
               <div>{getStatusBadge(stDataStatus)}</div>
-            </div>
+            </button>
           );
         })}
       </div>
 
-      {/* Integrated Processing Telemetry Sub-Panel */}
-      <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '8px', padding: '12px 14px', fontSize: '12px' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
+      <div className="wf-telemetry">
+        <div className="wf-telemetry-grid">
           <div>
             <span style={{ color: '#94a3b8' }}>Bước hiện tại:</span>
             <div style={{ fontWeight: 'bold', color: isFailed ? '#fca5a5' : '#e2e8f0', marginTop: '2px' }}>
@@ -534,7 +415,7 @@ export default function WorkflowTimeline({
             </div>
           ) : (
             <div style={{ fontSize: '11px', color: '#94a3b8', fontStyle: 'italic', marginTop: '4px' }}>
-              Trạng thái Stage: <strong>{getStatusBadge(STAGES.find(s => s.id === activeStage) ? (curStageIdx > (STAGES.findIndex(s => s.id === activeStage) + 1) ? 'passed' : (curStageIdx === (STAGES.findIndex(s => s.id === activeStage) + 1) ? (currentStatus === 'failed' ? 'failed' : (currentStatus === 'segment_editing' ? 'needs_review' : 'running')) : 'pending')) : 'pending')}</strong>
+              Trạng thái Stage: <strong>{getStatusBadge(STAGES.find(s => s.id === activeStage) ? (curStageIdx > (STAGES.findIndex(s => s.id === activeStage) + 1) ? 'passed' : (curStageIdx === (STAGES.findIndex(s => s.id === activeStage) + 1) ? (currentStatus === 'failed' ? 'failed' : (currentStatus === 'segment_editing' ? 'needs_review' : (isRunning ? 'running' : (isPaused ? 'paused' : 'pending')))) : 'pending')) : 'pending')}</strong>
             </div>
           )}
         </div>

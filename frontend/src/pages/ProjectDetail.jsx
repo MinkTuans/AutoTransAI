@@ -252,16 +252,15 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
   };
 
   return (
-    <div style={{ padding: '20px 0', maxWidth: '1100px', margin: '0 auto' }}>
-      {/* Header Bar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
+    <div className="page-shell">
+      <div className="page-header" style={{ alignItems: 'flex-start' }}>
         <div>
           <button
-            className="btn btn-secondary"
+            className="btn btn-secondary btn-sm"
             onClick={onBack}
-            style={{ marginBottom: '10px', padding: '6px 14px', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+            style={{ marginBottom: '10px' }}
           >
-            ← Quay lại Dashboard
+            ← Dự án
           </button>
           {isEditingTitle ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
@@ -284,44 +283,33 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
               </button>
             </div>
           ) : (
-            <h1 style={{ fontSize: '26px', fontWeight: 'bold', color: '#f8fafc', margin: '0 0 6px 0', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              📁 {project.title}
+            <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {project.title}
               <button
+                type="button"
+                className="btn btn-secondary btn-sm"
                 onClick={handleStartEditingTitle}
                 title="Sửa tên dự án"
-                style={{ background: '#1e293b', border: '1px solid #475569', color: '#cbd5e1', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', cursor: 'pointer' }}
               >
-                ✏️ Sửa tên
+                Đổi tên
               </button>
             </h1>
           )}
 
-          <p style={{ color: '#94a3b8', fontSize: '13px', margin: 0 }}>
-            ID: <code style={{ background: '#1e293b', padding: '2px 8px', borderRadius: '4px', color: '#818cf8' }}>{project.id}</code>
-            {' | '} Tạo lúc: {formatDate(project.created_at)}
+          <p className="page-subtitle">
+            ID: <code>{project.id}</code>
+            {' · '} Tạo lúc: {formatDate(project.created_at)}
           </p>
         </div>
 
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+        <div className="inline-row">
           {onEditInTranslator && (
             <button
+              type="button"
+              className="btn btn-primary"
               onClick={() => onEditInTranslator(project.id, videos.length > 0 ? (videos[0].id || videos[0].job_id) : null)}
-              style={{
-                background: '#4f46e5',
-                color: '#fff',
-                border: 'none',
-                padding: '10px 18px',
-                borderRadius: '8px',
-                fontWeight: 'bold',
-                cursor: 'pointer',
-                fontSize: '14px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                boxShadow: '0 4px 12px rgba(79, 70, 229, 0.3)',
-              }}
             >
-              ⚙️ Chỉnh sửa Studio & Dịch Video
+              Mở Studio
             </button>
           )}
         </div>
@@ -339,56 +327,16 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
         </div>
       )}
 
-      {/* Tabs Navigation */}
-      <div style={{ display: 'flex', borderBottom: '1px solid #334155', marginBottom: '24px' }}>
-        <button
-          onClick={() => setActiveTab('overview')}
-          style={{
-            padding: '12px 20px',
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'overview' ? '3px solid #6366f1' : '3px solid transparent',
-            color: activeTab === 'overview' ? '#818cf8' : '#94a3b8',
-            fontWeight: 'bold',
-            fontSize: '15px',
-            cursor: 'pointer',
-          }}
-        >
-          📊 Tổng quan & Videos ({totalVideos})
+      <div className="tab-bar">
+        <button type="button" className={`tab-btn ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => setActiveTab('overview')}>
+          Tổng quan ({totalVideos})
         </button>
-        <button
-          onClick={() => setActiveTab('settings')}
-          style={{
-            padding: '12px 20px',
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'settings' ? '3px solid #6366f1' : '3px solid transparent',
-            color: activeTab === 'settings' ? '#818cf8' : '#94a3b8',
-            fontWeight: 'bold',
-            fontSize: '15px',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-          }}
-        >
-          ⚙️ Cấu hình Dự án (Project Settings)
-          {isTabDirty && <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#f59e0b' }} />}
+        <button type="button" className={`tab-btn ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>
+          Cấu hình
+          {isTabDirty && <span className="tab-dot" />}
         </button>
-        <button
-          onClick={() => setActiveTab('glossary')}
-          style={{
-            padding: '12px 20px',
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'glossary' ? '3px solid #6366f1' : '3px solid transparent',
-            color: activeTab === 'glossary' ? '#818cf8' : '#94a3b8',
-            fontWeight: 'bold',
-            fontSize: '15px',
-            cursor: 'pointer',
-          }}
-        >
-          📖 Thuật ngữ & Glossary ({project.glossary_count || 0})
+        <button type="button" className={`tab-btn ${activeTab === 'glossary' ? 'active' : ''}`} onClick={() => setActiveTab('glossary')}>
+          Glossary ({project.glossary_count || 0})
         </button>
       </div>
 
@@ -396,22 +344,22 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
       {activeTab === 'overview' && (
         <div>
           {/* Project Metrics Overview */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '24px' }}>
-            <div style={{ background: '#1e293b', padding: '16px', borderRadius: '10px', border: '1px solid #334155' }}>
-              <div style={{ fontSize: '12px', color: '#94a3b8' }}>Tổng Video</div>
-              <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f8fafc', marginTop: '4px' }}>{totalVideos}</div>
+          <div className="stat-grid">
+            <div className="stat-card">
+              <div className="stat-label">Tổng video</div>
+              <div className="stat-value">{totalVideos}</div>
             </div>
-            <div style={{ background: '#1e293b', padding: '16px', borderRadius: '10px', border: '1px solid #334155' }}>
-              <div style={{ fontSize: '12px', color: '#94a3b8' }}>Hoàn thành</div>
-              <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#4ade80', marginTop: '4px' }}>{completedVideos}</div>
+            <div className="stat-card">
+              <div className="stat-label">Hoàn thành</div>
+              <div className="stat-value" style={{ color: 'var(--success)' }}>{completedVideos}</div>
             </div>
-            <div style={{ background: '#1e293b', padding: '16px', borderRadius: '10px', border: '1px solid #334155' }}>
-              <div style={{ fontSize: '12px', color: '#94a3b8' }}>Đang chạy</div>
-              <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#60a5fa', marginTop: '4px' }}>{runningVideos}</div>
+            <div className="stat-card">
+              <div className="stat-label">Đang chạy</div>
+              <div className="stat-value" style={{ color: 'var(--info)' }}>{runningVideos}</div>
             </div>
-            <div style={{ background: '#1e293b', padding: '16px', borderRadius: '10px', border: '1px solid #334155' }}>
-              <div style={{ fontSize: '12px', color: '#94a3b8' }}>Thất bại</div>
-              <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f87171', marginTop: '4px' }}>{failedVideos}</div>
+            <div className="stat-card">
+              <div className="stat-label">Thất bại</div>
+              <div className="stat-value" style={{ color: 'var(--danger)' }}>{failedVideos}</div>
             </div>
           </div>
 

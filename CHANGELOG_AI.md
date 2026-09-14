@@ -1,3 +1,9 @@
+- **Remaster frontend visual system across all pages (2026-09-14)**:
+  - **Scope**: Visual/layout only. 6-stage Studio flow, APIs, and pipeline unchanged.
+  - **Design system**: New tokens, Plus Jakarta Sans, glass navbar pills, cards, buttons, tabs, forms, modals, hover/press motion in [App.css](frontend/src/App.css).
+  - **Layout**: Studio header + segmented URL/upload; Dashboard project cards; Merger 2-column dropzone; Settings/ProjectDetail pill tabs.
+  - **Nav labels**: Studio, Ghép Video, Dự án, Cài đặt.
+
 - **Persist AI Terminology Memory and allow library thumbnails (2026-09-14)**:
   - **Terminology**: TRANSLATE `extract_entities` was a stub (`return True`) so Auto Memory stayed at 0. Extract repeated CJK/Latin names, optionally enrich via LLM, and upsert `project_terminology_memory`. UI refetches when job status changes.
   - **Thumbnails**: New source `library` uses images in `storage/projects/{id}/default_thumbnails`. Upload/list/delete via `/api/thumbnails/library/{project_id}`. Produce copies the selected file instead of generating (saves tokens).

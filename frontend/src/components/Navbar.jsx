@@ -30,29 +30,28 @@ export default function Navbar({ activePage, setActivePage, onNavigate }) {
           className={`nav-link ${activePage === 'translator' ? 'active' : ''}`}
           onClick={() => handleNavClick('translator')}
         >
-          🌐 Dịch Video (Unified Workflow)
+          Studio
         </button>
         <button
           type="button"
           className={`nav-link ${activePage === 'merger' ? 'active' : ''}`}
           onClick={() => handleNavClick('merger')}
         >
-          🎬 Ghép Video
+          Ghép Video
         </button>
         <button
           type="button"
-          className={`nav-link ${activePage === 'dashboard' ? 'active' : ''}`}
+          className={`nav-link ${activePage === 'dashboard' || activePage === 'detail' ? 'active' : ''}`}
           onClick={() => handleNavClick('dashboard')}
         >
-          📁 Quản lý Dự án
+          Dự án
         </button>
-
         <button
           type="button"
           className={`nav-link ${activePage === 'settings' ? 'active' : ''}`}
           onClick={() => handleNavClick('settings')}
         >
-          ⚙️ Cài đặt
+          Cài đặt
         </button>
       </div>
     </nav>

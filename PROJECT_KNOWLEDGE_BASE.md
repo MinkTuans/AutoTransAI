@@ -41,7 +41,7 @@ The central engine (`app.workflow.workflow_engine.WorkflowEngine`) orchestrates 
 - `VideoMergeAsset` (`video_merge_assets`): Storage asset model for video merger uploads tracking `id`, `original_filename`, `file_path`, `file_size`, `duration`, `width`, `height`, `fps`, `has_audio`, `thumbnail_url`, and timestamps.
 
 ### Standalone Video Merger Architecture
-- **Complete Decoupling**: Completely standalone workflow, page (`VideoMerger.jsx`), and routing (`?page=merger` / `/video-merger`) accessed directly via top-level `Navbar.jsx` menu item `🎬 Ghép Video`. Zero dependency on Video Translator workflow state.
+- **Complete Decoupling**: Completely standalone workflow, page (`VideoMerger.jsx`), and routing (`?page=merger` / `/video-merger`) accessed directly via top-level `Navbar.jsx` menu item `Ghép Video`. Zero dependency on Video Translator workflow state.
 - **Resilient FFmpeg Concat & Normalization Engine (`VideoMergerService`)**:
   - Preflight Inspection: Probe each input file via `probe_media_info_async` for file existence, readability, resolution, duration, FPS, codecs, and audio presence.
   - Fast Concat (`-c copy`): Automatically used if all video inputs share identical resolution, frame rate, aspect ratio, codecs, and audio presence.
@@ -101,12 +101,17 @@ The central engine (`app.workflow.workflow_engine.WorkflowEngine`) orchestrates 
 - **Enhanced Debug & Log Traceability**:
   - Raw Gemini response snippets (first 1000 characters) are logged to `logger.error` and `log_job_event` when parsing exceptions occur.
 
+### Frontend Visual System
+- Dark studio theme in `frontend/src/App.css`: Plus Jakarta Sans, indigo/cyan accent, glass navbar pills, cards, tabs, forms, modals.
+- Top nav (`Navbar.jsx`): Studio, Ghép Video, Dự án, Cài đặt. Active item is a filled pill.
+- Dashboard lists projects as cards (not a dense table). Settings and Project Detail use a shared pill tab bar.
+
 ### Frontend Workflow UI Controls & Smart Retry Flow
 - **Button State Machine**:
-  - `not_started`, `completed`, `cancelled`, `failed`: Displays only `▶ Start Workflow` button.
-  - `running`: Displays `⏸ Pause` and `🛑 Cancel` buttons.
-  - `paused`: Replaces `Pause` with `▶ Resume` button while retaining `🛑 Cancel`.
-  - **Optimistic State Transition**: Clicking `▶ Start Workflow` immediately triggers optimistic frontend status set (`status: 'running'`), ensuring instant visual action response without lag.
+  - `not_started`, `completed`, `cancelled`, `failed`: Displays only `Start` button.
+  - `running`: Displays `Pause` and `Cancel` buttons.
+  - `paused`: Replaces `Pause` with `Resume` button while retaining `Cancel`.
+  - **Optimistic State Transition**: Clicking `Start` immediately triggers optimistic frontend status set (`status: 'running'`), ensuring instant visual action response without lag.
 - **Unified Workflow Layout Hierarchy (2-Column Responsive Studio Layout)**:
   1. `Studio Header Bar`: Compact project selector dropdown and settings dirty warning banner.
   2. `Main Studio Grid` (`.translator-studio-grid`):

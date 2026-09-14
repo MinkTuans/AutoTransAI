@@ -180,19 +180,18 @@ export default function Dashboard({ onSelectProject, onCreateNew }) {
   };
 
   return (
-    <div>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+    <div className="page-shell">
+      <div className="page-header">
         <div>
-          <h1 className="page-title">Projects Dashboard</h1>
-          <p className="page-subtitle">Laragon MySQL Database & Persistent Local Media Storage</p>
+          <h1 className="page-title">Dự án</h1>
+          <p className="page-subtitle">Mở studio, theo dõi tiến độ, đổi tên hoặc xóa dự án đã lưu.</p>
         </div>
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
+        <div className="inline-row">
           {selectedIds.length > 0 && (
             <button className="btn btn-danger" onClick={promptDeleteSelected}>
-              🗑️ Delete Selected ({selectedIds.length})
+              Xóa {selectedIds.length} mục đã chọn
             </button>
           )}
-
         </div>
       </div>
 
@@ -219,191 +218,127 @@ export default function Dashboard({ onSelectProject, onCreateNew }) {
         </div>
       )}
 
-      {/* Projects List */}
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--border-color)', margin: 0 }}>
-          <span>All Projects ({projects.length})</span>
-          {selectedIds.length > 0 && (
-            <span style={{ fontSize: '0.85rem', color: 'var(--accent-color)' }}>
-              {selectedIds.length} of {projects.length} selected
-            </span>
-          )}
+        <div className="card-header" style={{ margin: 0, padding: '1rem 1.2rem' }}>
+          <h2 className="card-title">Tất cả dự án ({totalCount})</h2>
+          <label className="inline-row" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+            <input
+              type="checkbox"
+              checked={isCurrentPageAllSelected}
+              onChange={handleSelectAllCurrentPage}
+              title="Chọn tất cả trên trang này"
+              style={{ width: 'auto' }}
+            />
+            Chọn trang này
+            {selectedIds.length > 0 && <span>· {selectedIds.length} đã chọn</span>}
+          </label>
         </div>
 
         {loading ? (
           <div style={{ padding: '1.5rem 1rem' }}>
-            <LoadingSpinner size="md" label="Đang tải danh sách dự án..." sublabel="Đang đồng bộ từ MySQL & Local Disk Storage..." />
+            <LoadingSpinner size="md" label="Đang tải danh sách dự án..." sublabel="Đồng bộ từ database và ổ đĩa local..." />
             <div style={{ marginTop: '1.5rem' }}>
               <SkeletonLoader type="card" rows={3} />
             </div>
           </div>
         ) : projects.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '3rem 1rem' }}>
-            <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-              No projects in database. Start by creating a project or translating a video!
-            </p>
-
+          <div className="empty-state">
+            <p>Chưa có dự án. Vào Studio để dịch video hoặc tạo dự án mới.</p>
           </div>
         ) : (
           <>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th style={{ width: '40px' }}>
-                    <input
-                      type="checkbox"
-                      checked={isCurrentPageAllSelected}
-                      onChange={handleSelectAllCurrentPage}
-                      title="Select All Projects on Current Page"
-                    />
-                  </th>
-                  <th>Title / Name</th>
-                  <th>Type</th>
-                  <th>Job ID</th>
-                  <th>Segments</th>
-                  <th>Status & Progress</th>
-                  <th>Created</th>
-                  <th style={{ textAlign: 'right' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {currentProjects.map((p) => {
-                  const isSelected = selectedIds.includes(p.id);
-                  return (
-                    <tr
-                      key={p.id}
-                      onClick={() => onSelectProject(p)}
-                      style={{
-                        cursor: 'pointer',
-                        backgroundColor: isSelected ? 'rgba(99, 102, 241, 0.1)' : 'transparent',
-                      }}
-                    >
-                      <td onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={(e) => handleToggleSelect(p.id, e)}
-                        />
-                      </td>
-                      <td style={{ fontWeight: '600' }}>
-                        {p.title}
-                        {p.output_video_url && (
-                          <div style={{ fontSize: '0.75rem', color: '#10b981', marginTop: '2px' }}>
-                            🎥 Final Media Ready
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        {p.type === 'video_translator' ? (
-                          <span className="badge" style={{ backgroundColor: 'rgba(139, 92, 246, 0.2)', color: '#a78bfa' }}>
-                            🌐 Video Translator
-                          </span>
-                        ) : (
-                          <span className="badge" style={{ backgroundColor: 'rgba(59, 130, 246, 0.2)', color: '#60a5fa' }}>
-                            🎬 Script to Video
-                          </span>
-                        )}
-                      </td>
-                      <td style={{ fontFamily: 'monospace', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                        {p.id}
-                      </td>
-                      <td>{p.segment_count || 0}</td>
-                      <td>
-                        <div>{getStatusBadge(p)}</div>
-                        {p.progress > 0 && p.progress < 100 && (
-                          <div style={{ width: '100px', height: '4px', backgroundColor: '#374151', borderRadius: '2px', marginTop: '4px', overflow: 'hidden' }}>
-                            <div style={{ width: `${p.progress}%`, height: '100%', backgroundColor: '#6366f1' }} />
-                          </div>
-                        )}
-                      </td>
-                      <td style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                        {p.created_at ? new Date(p.created_at).toLocaleDateString() : 'N/A'}
-                      </td>
-                      <td style={{ textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
-                        {p.output_video_url && (
-                          <a
-                            href={p.output_video_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="btn btn-secondary"
-                            style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', marginRight: '0.4rem', textDecoration: 'none' }}
-                            title="View / Download Final Video"
-                          >
-                            🎥 View
-                          </a>
-                        )}
-                        <button
-                          className="btn btn-secondary"
-                          style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', marginRight: '0.4rem' }}
-                          onClick={(e) => promptEditTitle(p, e)}
-                          title="Đổi tên dự án"
+            <div className="project-grid">
+              {currentProjects.map((p) => {
+                const isSelected = selectedIds.includes(p.id);
+                return (
+                  <article
+                    key={p.id}
+                    className={`project-card ${isSelected ? 'is-selected' : ''}`}
+                    onClick={() => onSelectProject(p)}
+                  >
+                    <div className="project-card-top">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={(e) => handleToggleSelect(p.id, e)}
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ width: 'auto' }}
+                      />
+                      {p.type === 'video_translator' ? (
+                        <span className="badge badge-purple">Dịch video</span>
+                      ) : (
+                        <span className="badge badge-info">Script</span>
+                      )}
+                    </div>
+                    <h3 className="project-card-title">{p.title}</h3>
+                    {p.output_video_url && <div className="project-card-ready">Video đã sẵn sàng</div>}
+                    <div className="project-card-meta">{p.id}</div>
+                    <div className="inline-row">
+                      {getStatusBadge(p)}
+                      <span className="project-card-meta">{p.segment_count || 0} đoạn</span>
+                      <span className="project-card-meta">
+                        {p.created_at ? new Date(p.created_at).toLocaleDateString('vi-VN') : ''}
+                      </span>
+                    </div>
+                    {p.progress > 0 && p.progress < 100 && (
+                      <div className="progress-bar-bg">
+                        <div className="progress-bar-fill" style={{ width: `${p.progress}%` }} />
+                      </div>
+                    )}
+                    <div className="project-card-actions" onClick={(e) => e.stopPropagation()}>
+                      <button type="button" className="btn btn-primary btn-sm" onClick={() => onSelectProject(p)}>
+                        Mở
+                      </button>
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={(e) => promptEditTitle(p, e)}>
+                        Đổi tên
+                      </button>
+                      {p.output_video_url && (
+                        <a
+                          href={p.output_video_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn btn-secondary btn-sm"
                         >
-                          ✏️ Sửa tên
-                        </button>
-                        <button
-                          className="btn btn-secondary"
-                          style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', marginRight: '0.4rem' }}
-                          onClick={() => onSelectProject(p)}
-                        >
-                          Open
-                        </button>
-                        <button
-                          className="btn btn-danger"
-                          style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}
-                          onClick={(e) => promptDeleteSingle(p, e)}
-                        >
-                          Delete
-                        </button>
+                          Xem
+                        </a>
+                      )}
+                      <button type="button" className="btn btn-danger btn-sm" onClick={(e) => promptDeleteSingle(p, e)}>
+                        Xóa
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
 
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-
-            {/* Pagination Controls Bar */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.875rem 1.5rem', borderTop: '1px solid var(--border-color)', backgroundColor: 'var(--bg-secondary)' }}>
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                Hiển thị <strong>{startIndex}</strong> - <strong>{endIndex}</strong> trong tổng số <strong>{totalCount}</strong> dự án (8 dự án/trang)
+            <div className="pagination-bar">
+              <div className="page-subtitle" style={{ margin: 0 }}>
+                {startIndex}–{endIndex} / {totalCount}
               </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <div className="inline-row">
                 <button
-                  className="btn btn-secondary"
-                  style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
+                  className="btn btn-secondary btn-sm"
                   disabled={validCurrentPage === 1}
                   onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
                 >
-                  ◀ Trang trước
+                  Trước
                 </button>
-
                 {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
                   <button
                     key={pageNum}
+                    type="button"
+                    className={`page-num ${pageNum === validCurrentPage ? 'active' : ''}`}
                     onClick={() => setCurrentPage(pageNum)}
-                    style={{
-                      padding: '0.35rem 0.7rem',
-                      fontSize: '0.8rem',
-                      borderRadius: '6px',
-                      border: pageNum === validCurrentPage ? '1px solid #6366f1' : '1px solid #374151',
-                      backgroundColor: pageNum === validCurrentPage ? '#6366f1' : '#1f2937',
-                      color: '#fff',
-                      fontWeight: pageNum === validCurrentPage ? 'bold' : 'normal',
-                      cursor: 'pointer',
-                    }}
                   >
                     {pageNum}
                   </button>
                 ))}
-
                 <button
-                  className="btn btn-secondary"
-                  style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
+                  className="btn btn-secondary btn-sm"
                   disabled={validCurrentPage === totalPages}
                   onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
                 >
-                  Trang sau ▶
+                  Sau
                 </button>
               </div>
             </div>
@@ -413,45 +348,24 @@ export default function Dashboard({ onSelectProject, onCreateNew }) {
 
       {/* Confirmation Modal */}
       {confirmModal.open && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.75)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 9999,
-          }}
-        >
-          <div
-            style={{
-              backgroundColor: '#1f2937',
-              border: '1px solid #374151',
-              borderRadius: '8px',
-              padding: '1.5rem',
-              maxWidth: '480px',
-              width: '90%',
-              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
-            }}
-          >
-            <h3 style={{ marginTop: 0, color: '#f3f4f6' }}>{confirmModal.title}</h3>
-            <p style={{ color: '#9ca3af', fontSize: '0.95rem', marginBottom: '1.5rem' }}>
-              {confirmModal.message}
-            </p>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-              <button
-                className="btn btn-secondary"
-                onClick={() => setConfirmModal((prev) => ({ ...prev, open: false }))}
-              >
-                Cancel
-              </button>
-              <button className="btn btn-danger" onClick={executeDelete}>
-                Yes, Delete Permanently
-              </button>
+        <div className="modal-backdrop">
+          <div className="modal-dialog">
+            <div className="modal-header">
+              <h3>{confirmModal.title}</h3>
+            </div>
+            <div className="modal-body">
+              <p className="page-subtitle">{confirmModal.message}</p>
+              <div className="modal-footer">
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setConfirmModal((prev) => ({ ...prev, open: false }))}
+                >
+                  Hủy
+                </button>
+                <button className="btn btn-danger" onClick={executeDelete}>
+                  Xóa vĩnh viễn
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -459,72 +373,42 @@ export default function Dashboard({ onSelectProject, onCreateNew }) {
 
       {/* Edit Project Title Modal */}
       {editModal.open && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.75)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 9999,
-          }}
-        >
-          <div
-            style={{
-              backgroundColor: '#1f2937',
-              border: '1px solid #374151',
-              borderRadius: '8px',
-              padding: '1.5rem',
-              maxWidth: '480px',
-              width: '90%',
-              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
-            }}
-          >
-            <h3 style={{ marginTop: 0, color: '#f3f4f6' }}>✏️ Chỉnh sửa tên dự án</h3>
-            <p style={{ color: '#9ca3af', fontSize: '0.85rem', margin: '0.5rem 0 1rem 0' }}>
-              Nhập tên mới cho dự án (ID: <code>{editModal.projectId}</code>):
-            </p>
-            <input
-              type="text"
-              value={editingTitleValue}
-              onChange={(e) => setEditingTitleValue(e.target.value)}
-              placeholder="Tên dự án..."
-              autoFocus
-              style={{
-                width: '100%',
-                padding: '10px 12px',
-                borderRadius: '6px',
-                border: '1px solid #4b5563',
-                backgroundColor: '#111827',
-                color: '#fff',
-                fontSize: '14px',
-                marginBottom: '1.25rem',
-                boxSizing: 'border-box',
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSaveProjectTitle();
-                if (e.key === 'Escape') setEditModal({ open: false, projectId: null, currentTitle: '' });
-              }}
-            />
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-              <button
-                className="btn btn-secondary"
-                onClick={() => setEditModal({ open: false, projectId: null, currentTitle: '' })}
-                disabled={savingTitle}
-              >
-                Hủy
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={handleSaveProjectTitle}
-                disabled={savingTitle || !editingTitleValue.trim()}
-              >
-                {savingTitle ? '⏳ Đang lưu...' : '💾 Lưu tên mới'}
-              </button>
+        <div className="modal-backdrop">
+          <div className="modal-dialog">
+            <div className="modal-header">
+              <h3>Đổi tên dự án</h3>
+            </div>
+            <div className="modal-body">
+              <p className="page-subtitle">
+                ID: <code>{editModal.projectId}</code>
+              </p>
+              <input
+                type="text"
+                value={editingTitleValue}
+                onChange={(e) => setEditingTitleValue(e.target.value)}
+                placeholder="Tên dự án..."
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSaveProjectTitle();
+                  if (e.key === 'Escape') setEditModal({ open: false, projectId: null, currentTitle: '' });
+                }}
+              />
+              <div className="modal-footer">
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setEditModal({ open: false, projectId: null, currentTitle: '' })}
+                  disabled={savingTitle}
+                >
+                  Hủy
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleSaveProjectTitle}
+                  disabled={savingTitle || !editingTitleValue.trim()}
+                >
+                  {savingTitle ? 'Đang lưu...' : 'Lưu tên'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

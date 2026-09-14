@@ -531,15 +531,12 @@ export default function Settings() {
 
 
   return (
-    <div style={{ paddingBottom: '3rem' }}>
-      {/* Header */}
-      <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+    <div className="page-shell" style={{ paddingBottom: '3rem' }}>
+      <div className="page-header">
         <div>
-          <h1 style={{ fontSize: '1.8rem', fontWeight: '700', margin: 0, color: '#f8fafc' }}>
-            ⚙️ Settings Studio & AI Management
-          </h1>
-          <p style={{ color: '#94a3b8', fontSize: '0.9rem', marginTop: '0.25rem' }}>
-            Configure AI Providers, API Keys, Function Routing, Model Catalog, Social Channels & Infrastructure
+          <h1 className="page-title">Cài đặt</h1>
+          <p className="page-subtitle">
+            Nhà cung cấp AI, API key, model, kênh YouTube và hạ tầng lưu trữ.
           </p>
         </div>
       </div>
@@ -552,22 +549,21 @@ export default function Settings() {
         </div>
       )}
 
-      {/* Navigation Tabs */}
-      <div className="tabs-container" style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '0.5rem', marginBottom: '1.5rem', overflowX: 'auto' }}>
+      <div className="tab-bar">
         {[
-          { id: 'providers', label: '🤖 AI & API Providers' },
-          { id: 'functions', label: '⚡ AI Function Config' },
-          { id: 'models', label: '🧠 AI Models' },
-          { id: 'social', label: '📱 Social Accounts' },
-          { id: 'storage', label: '☁️ Storage' },
-          { id: 'processing', label: '⚙️ Processing' },
-          { id: 'workflow_defaults', label: '🎯 Workflow Defaults' },
-          { id: 'advanced', label: '🛠️ Advanced' },
+          { id: 'providers', label: 'AI & API' },
+          { id: 'functions', label: 'Function' },
+          { id: 'models', label: 'Models' },
+          { id: 'social', label: 'Social' },
+          { id: 'storage', label: 'Storage' },
+          { id: 'processing', label: 'Processing' },
+          { id: 'workflow_defaults', label: 'Workflow' },
+          { id: 'advanced', label: 'Advanced' },
         ].map(tab => (
           <button
             key={tab.id}
-            className={`btn ${activeTab === tab.id ? 'btn-primary' : 'btn-secondary'}`}
-            style={{ padding: '0.5rem 1rem', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
+            type="button"
+            className={`tab-btn ${activeTab === tab.id ? 'active' : ''}`}
             onClick={() => { setActiveTab(tab.id); setMessage(null); }}
           >
             {tab.label}
@@ -599,13 +595,7 @@ export default function Settings() {
                 ].map(p => (
                   <div
                     key={p.id}
-                    style={{
-                      border: selectedProviderForKeys === p.id ? '2px solid #3b82f6' : '1px solid rgba(255,255,255,0.1)',
-                      borderRadius: '8px',
-                      padding: '1rem',
-                      background: 'rgba(30, 41, 59, 0.5)',
-                      cursor: 'pointer',
-                    }}
+                    className={`provider-tile ${selectedProviderForKeys === p.id ? 'is-selected' : ''}`}
                     onClick={() => setSelectedProviderForKeys(p.id)}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
