@@ -17,11 +17,23 @@ from app.models.workflow_engine import ProjectTerminologyMemory
 logger = get_logger(__name__)
 
 _CJK_RUN_RE = re.compile(r"[\u4e00-\u9fff]+")
-_LATIN_NAME_RE = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b")
 
 _CJK_STOP = {
     "一个", "我们", "他们", "什么", "不是", "可以", "因为", "所以", "这个", "那个",
     "没有", "已经", "现在", "自己", "知道", "出来", "起来", "时候", "这样", "那样",
+}
+
+# Function words that look title-case in Vietnamese/English subtitles but are not names.
+_NAME_STOP = {
+    "tôi", "anh", "em", "bạn", "hắn", "nàng", "ta", "y", "gã", "lão", "thị",
+    "người", "ông", "bà", "cô", "chú", "bác", "thầy", "cậu",
+    "không", "có", "và", "hoặc", "nhưng", "nếu", "khi", "để", "được",
+    "của", "trong", "ngoài", "một", "này", "đó", "đây", "rồi", "thì", "là",
+    "bị", "vì", "do", "từ", "đến", "với", "cho", "về", "như", "sẽ", "đã",
+    "đang", "rất", "nhiều", "ít", "hơn", "nhất", "vậy", "thế", "nên", "cũng",
+    "nói", "làm", "đi", "lại", "ra", "vào", "lên", "xuống",
+    "the", "a", "an", "and", "or", "but", "if", "when", "this", "that",
+    "he", "she", "they", "we", "you", "i", "it", "his", "her", "their",
 }
 
 
@@ -29,14 +41,26 @@ def normalize_extracted_terms(raw: Iterable[dict[str, Any]]) -> list[dict[str, A
     seen: set[str] = set()
     out: list[dict[str, Any]] = []
     for item in raw or []:
-        source = str(item.get("source_term") or "").strip()
+        source = str(
+            item.get("source_term")
+            or item.get("source")
+            or item.get("name")
+            or item.get("term")
+            or ""
+        ).strip()
         if len(source) < 2:
             continue
-        key = source.lower()
+        key = source.casefold()
         if key in seen:
             continue
         seen.add(key)
-        suggested = str(item.get("suggested_term") or source).strip() or source
+        suggested = str(
+            item.get("suggested_term")
+            or item.get("translation")
+            or item.get("translated_term")
+            or item.get("target")
+            or source
+        ).strip() or source
         term_type = str(item.get("term_type") or "other").strip().lower() or "other"
         try:
             confidence = float(item.get("confidence") or 0.8)
@@ -52,6 +76,25 @@ def normalize_extracted_terms(raw: Iterable[dict[str, Any]]) -> list[dict[str, A
             }
         )
     return out
+
+
+def _title_case_runs(text: str) -> list[str]:
+    """Unicode title-case spans: 'Lý Tiêu Dao', 'Thanh Vân Thành', 'John Smith'."""
+    runs: list[str] = []
+    clauses = re.split(r"[.!?。！？;；,，、\n]+", text or "")
+    for clause in clauses:
+        tokens = re.findall(r"[^\W\d_]+", clause, flags=re.UNICODE)
+        current: list[str] = []
+        for tok in tokens:
+            if tok and tok[0].isupper() and not tok.isupper():
+                current.append(tok)
+            else:
+                if current:
+                    runs.append(" ".join(current))
+                    current = []
+        if current:
+            runs.append(" ".join(current))
+    return runs
 
 
 def heuristic_extract_terms(text: str, target_lang: str = "vi") -> list[dict[str, Any]]:
@@ -81,16 +124,20 @@ def heuristic_extract_terms(text: str, target_lang: str = "vi") -> list[dict[str
                 "source_context": f"appeared {n} times",
             }
         )
-    latin_counts = Counter(_LATIN_NAME_RE.findall(blob))
-    for term, n in latin_counts.items():
-        if n < 2 or len(term) < 3:
+    title_counts = Counter(_title_case_runs(blob))
+    for term, n in title_counts.items():
+        key = term.casefold()
+        words = term.split()
+        if key in _NAME_STOP:
+            continue
+        if len(words) == 1 and (len(term) < 3 or key in _NAME_STOP):
             continue
         raw.append(
             {
                 "source_term": term,
                 "suggested_term": term,
-                "term_type": "character",
-                "confidence": min(0.5 + 0.05 * n, 0.8),
+                "term_type": "character" if len(words) >= 2 else "other",
+                "confidence": min(0.55 + 0.08 * n + (0.12 if len(words) >= 2 else 0), 0.9),
                 "source_context": f"appeared {n} times",
             }
         )
@@ -115,7 +162,14 @@ def _parse_llm_terms(payload: str) -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             return []
     if isinstance(data, dict):
-        data = data.get("terms") or data.get("entities") or []
+        data = (
+            data.get("terms")
+            or data.get("entities")
+            or data.get("names")
+            or data.get("glossary")
+            or data.get("items")
+            or []
+        )
     if not isinstance(data, list):
         return []
     return normalize_extracted_terms([x for x in data if isinstance(x, dict)])
@@ -134,15 +188,19 @@ async def llm_extract_terms(text: str, target_lang: str = "vi") -> list[dict[str
             return []
         prompt = (
             "Extract named entities (characters, locations, organizations, skills, titles) "
-            f"from this transcript for a {target_lang} translation glossary.\n"
-            "Return ONLY a JSON array of objects with keys: "
-            "source_term, suggested_term, term_type, confidence.\n"
-            "suggested_term must be the translation in the target language.\n"
+            f"from these subtitle lines for a {target_lang} translation glossary.\n"
+            "Lines may include source transcript and the translation (names appear in either).\n"
+            'Return ONLY JSON: {{"terms":[{{"source_term":"...","suggested_term":"...","term_type":"character","confidence":0.9}}]}}\n'
+            "source_term is the original-language name; suggested_term is the form used in the "
+            f"{target_lang} translation (keep diacritics). "
             "term_type one of: character, location, organization, skill, title, other.\n\n"
-            f"Transcript:\n{blob[:6000]}"
+            f"Subtitles:\n{blob[:6000]}"
         )
-        raw = await llm.generate_text(prompt)
-        return _parse_llm_terms(raw if isinstance(raw, str) else str(raw))
+        model = getattr(llm, "_resolved_model_id", None)
+        raw = await llm.generate_text(prompt, model=model)
+        parsed = _parse_llm_terms(raw if isinstance(raw, str) else str(raw))
+        logger.info("LLM terminology extraction parsed terms", count=len(parsed))
+        return parsed
     except Exception as exc:
         logger.warning("LLM terminology extraction failed", error=str(exc))
         return []
@@ -182,21 +240,31 @@ async def persist_terminology_memory(
             row.term_type = item["term_type"] or row.term_type
             row.confidence = max(row.confidence or 0, item["confidence"])
             saved += 1
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     return saved
+
+
+def _segment_source_text(seg: dict[str, Any]) -> str:
+    return str(seg.get("text") or seg.get("original_text") or "").strip()
+
+
+def _segment_translated_text(seg: dict[str, Any]) -> str:
+    return str(seg.get("translated_text") or "").strip()
 
 
 def segments_transcript_blob(segments: Optional[Iterable[dict[str, Any]]]) -> str:
     parts: list[str] = []
     for seg in segments or []:
-        txt = (
-            seg.get("text")
-            or seg.get("original_text")
-            or seg.get("translated_text")
-            or ""
-        )
-        if txt:
-            parts.append(str(txt))
+        src = _segment_source_text(seg)
+        tgt = _segment_translated_text(seg)
+        if src:
+            parts.append(src)
+        if tgt and tgt != src:
+            parts.append(tgt)
     return "\n".join(parts)
 
 
@@ -209,11 +277,23 @@ async def extract_and_persist_from_segments(
     """Used by the Studio Auto job pipeline (startJob), which never hits TranslateStage."""
     blob = segments_transcript_blob(segments)
     if len(blob.strip()) < 4:
+        logger.info(
+            "Terminology extract skipped: empty transcript",
+            project_id=project_id,
+        )
         return 0
     heuristic = heuristic_extract_terms(blob, target_lang)
     llm_terms = await llm_extract_terms(blob, target_lang)
-    llm_keys = {t["source_term"].lower() for t in llm_terms}
-    merged = llm_terms + [t for t in heuristic if t["source_term"].lower() not in llm_keys]
+    llm_keys = {t["source_term"].casefold() for t in llm_terms}
+    merged = llm_terms + [t for t in heuristic if t["source_term"].casefold() not in llm_keys]
+    logger.info(
+        "Terminology extract merged terms",
+        project_id=project_id,
+        merged=len(merged),
+        heuristic=len(heuristic),
+        llm=len(llm_terms),
+        blob_chars=len(blob),
+    )
     return await persist_terminology_memory(db, project_id, merged)
 
 
@@ -221,8 +301,9 @@ def transcript_blob(ctx: Any) -> str:
     parts: list[str] = []
     if getattr(ctx, "raw_transcript", None):
         parts.append(str(ctx.raw_transcript))
-    for seg in getattr(ctx, "source_segments", None) or []:
-        txt = seg.get("text") or seg.get("original_text") or seg.get("translated_text") or ""
-        if txt:
-            parts.append(str(txt))
+    segs = list(getattr(ctx, "source_segments", None) or [])
+    segs.extend(getattr(ctx, "translated_segments", None) or [])
+    blob = segments_transcript_blob(segs)
+    if blob:
+        parts.append(blob)
     return "\n".join(parts)

@@ -1,3 +1,8 @@
+- **Record proper names from the Vietnamese translation in Auto Memory (2026-09-14)**:
+  - **Symptom**: Glossary tab `AI Auto Terminology Memory (0)` after Translate, even though the segment editor showed names like `Lý Tiêu Dao`.
+  - **Root cause**: Extractor only read source `text` (skipped `translated_text` when source existed). Latin heuristic was ASCII `[A-Z][a-z]+` and required 2 hits, so Vietnamese diacritics never matched. LLM parse was also too strict and failed silently.
+  - **Fix**: Join source + translation into the extract blob. Unicode title-case runs (`Lý Tiêu Dao`, `Thanh Vân Thành`, `John Smith`) are saved even once. LLM accepts `{terms|entities|names}` and `name`/`translation` aliases. Persist rolls back on DB error so the job session stays usable. TranslateStage also extracts after translation.
+
 - **Save AI Terminology Memory on the Studio Auto job path (2026-09-14)**:
   - **Root cause**: Auto uses `POST /jobs/{id}/start`, not TranslateStage. Entity extract never ran, so the UI stayed at (0).
   - **Fix**: After STT/translate, `extract_and_persist_from_segments` writes `project_terminology_memory`. Glossary panel opens and refetches on job progress.

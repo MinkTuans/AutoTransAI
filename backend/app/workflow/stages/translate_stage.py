@@ -37,7 +37,7 @@ class TranslateStage:
         elif step_name == "detect_names_locations":
             return await self._detect_names_locations(ctx, db)
         elif step_name == "translate_transcript":
-            return await self._translate_transcript(ctx)
+            return await self._translate_transcript(ctx, db)
         elif step_name == "validate_segment_ids":
             return await self._validate_segment_ids(ctx)
         elif step_name == "check_consistency":
@@ -127,7 +127,11 @@ class TranslateStage:
         text = transcript_blob(ctx)
         heuristic = heuristic_extract_terms(text, ctx.target_language)
         llm_terms = await llm_extract_terms(text, ctx.target_language)
-        merged = llm_terms + [t for t in heuristic if t["source_term"].lower() not in {x["source_term"].lower() for x in llm_terms}]
+        merged = llm_terms + [
+            t
+            for t in heuristic
+            if t["source_term"].casefold() not in {x["source_term"].casefold() for x in llm_terms}
+        ]
         saved = await persist_terminology_memory(db, ctx.project_id, merged)
         ctx.extracted_terms = merged
         return {"entities_extracted": True, "term_count": len(merged), "saved": saved}
@@ -143,7 +147,7 @@ class TranslateStage:
         saved = await persist_terminology_memory(db, ctx.project_id, extra)
         return {"names_locations_detected": True, "saved": saved}
 
-    async def _translate_transcript(self, ctx: WorkflowContext) -> dict[str, Any]:
+    async def _translate_transcript(self, ctx: WorkflowContext, db: Any = None) -> dict[str, Any]:
         from app.services.video_translator.translator_service import VideoTranslatorService
         svc = VideoTranslatorService()
 
@@ -161,6 +165,27 @@ class TranslateStage:
         )
 
         ctx.translated_segments = translated
+
+        saved = 0
+        if db is not None:
+            try:
+                from app.services.terminology_memory import extract_and_persist_from_segments
+
+                pairs = []
+                sources = ctx.source_segments or []
+                for idx, tgt in enumerate(ctx.translated_segments or []):
+                    src = sources[idx] if idx < len(sources) else {}
+                    pairs.append(
+                        {
+                            "text": src.get("text") or src.get("original_text") or tgt.get("text") or "",
+                            "translated_text": tgt.get("translated_text") or tgt.get("text") or "",
+                        }
+                    )
+                saved = await extract_and_persist_from_segments(
+                    db, ctx.project_id, pairs, ctx.target_language or "vi"
+                )
+            except Exception as exc:
+                logger.warning("Post-translate terminology extract failed: %s", exc)
         
         if ctx.progress_callback:
             await ctx.progress_callback(
@@ -171,7 +196,7 @@ class TranslateStage:
                 "Translation completed, validating..."
             )
             
-        return {"translated_count": len(ctx.translated_segments)}
+        return {"translated_count": len(ctx.translated_segments), "terminology_saved": saved}
 
     async def _validate_segment_ids(self, ctx: WorkflowContext) -> dict[str, Any]:
         from app.services.video_translator.translator_service import VideoTranslatorService
