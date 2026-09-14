@@ -51,6 +51,33 @@ def test_ssrf_validation_valid_url(monkeypatch):
     assert result == valid_url
 
 
+def test_nat64_of_public_ipv4_is_not_blocked():
+    """DNS64/NAT64 of a public IPv4 (Bilibili CDN) is not an internal address."""
+    # 64:ff9b::a434:13e embeds 164.52.1.62 (RFC 6052 well-known prefix)
+    assert is_ip_private_or_blocked("64:ff9b::a434:13e") is False
+    assert is_ip_private_or_blocked("164.52.1.62") is False
+
+
+def test_nat64_of_private_and_metadata_ipv4_is_blocked():
+    """NAT64 must not be a bypass for RFC1918 or cloud metadata."""
+    assert is_ip_private_or_blocked("64:ff9b::c0a8:101") is True  # 192.168.1.1
+    assert is_ip_private_or_blocked("64:ff9b::7f00:1") is True  # 127.0.0.1
+    assert is_ip_private_or_blocked("64:ff9b::a9fe:a9fe") is True  # 169.254.169.254
+
+
+def test_ssrf_allows_bilibili_resolved_via_nat64(monkeypatch):
+    """www.bilibili.com via DNS64 must pass SSRF (the HTTP 400 the Studio showed)."""
+    nat64 = "64:ff9b::a434:13e"
+
+    def fake_getaddrinfo(host, port):
+        assert host == "www.bilibili.com"
+        return [(10, 1, 6, "", (nat64, 0, 0, 0))]
+
+    monkeypatch.setattr("socket.getaddrinfo", fake_getaddrinfo)
+    url = "https://www.bilibili.com/video/BV1dRMP68Ehp?t=40.9"
+    assert validate_url_security(url) == url
+
+
 
 def test_adapter_can_handle_direct_url():
     """Test DirectURLAdapter matching."""

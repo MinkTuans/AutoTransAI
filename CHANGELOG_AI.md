@@ -1,3 +1,8 @@
+- **Allow Bilibili (and other public hosts) resolved via DNS64/NAT64 (2026-09-14)**:
+  - **Symptom**: `POST /import` HTTP 400 `Tên miền www.bilibili.com phân giải về địa chỉ nội bộ (64:ff9b::a434:13e) bị cấm truy cập.`
+  - **Root cause**: SSRF treated `ip.is_reserved` as internal. NAT64 well-known prefix `64:ff9b::/96` sits in `::/8`, so Python marks it reserved even when it embeds a public IPv4 (here `164.52.1.62`).
+  - **Fix**: Unwrap NAT64 / IPv4-mapped / 6to4 and SSRF-check the embedded IPv4. Public CDN still allowed; RFC1918, loopback, and link-local metadata stay blocked.
+
 - **Record proper names from the Vietnamese translation in Auto Memory (2026-09-14)**:
   - **Symptom**: Glossary tab `AI Auto Terminology Memory (0)` after Translate, even though the segment editor showed names like `Lý Tiêu Dao`.
   - **Root cause**: Extractor only read source `text` (skipped `translated_text` when source existed). Latin heuristic was ASCII `[A-Z][a-z]+` and required 2 hits, so Vietnamese diacritics never matched. LLM parse was also too strict and failed silently.

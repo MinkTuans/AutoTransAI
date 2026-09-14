@@ -41,16 +41,37 @@ BLOCKED_NETWORKS = [
     ipaddress.ip_network("fe80::/10"),
 ]
 
+# RFC 6052 well-known NAT64 prefix. Python marks ::/8 (which contains this) as
+# reserved, so DNS64 answers look "internal" even when they embed a public IPv4.
+_NAT64_WELL_KNOWN = ipaddress.ip_network("64:ff9b::/96")
+_SIXTO4 = ipaddress.ip_network("2002::/16")
+
 
 class SSRFValidationError(ValueError):
     """Raised when a URL violates SSRF safety rules."""
     pass
 
 
+def _embedded_ipv4(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
+    """Unwrap IPv4 from NAT64 / IPv4-mapped / 6to4 so SSRF checks the real host."""
+    if not isinstance(ip, ipaddress.IPv6Address):
+        return None
+    if ip.ipv4_mapped is not None:
+        return ip.ipv4_mapped
+    if ip in _NAT64_WELL_KNOWN:
+        return ipaddress.IPv4Address(ip.packed[-4:])
+    if ip in _SIXTO4:
+        return ipaddress.IPv4Address(ip.packed[2:6])
+    return None
+
+
 def is_ip_private_or_blocked(ip_str: str) -> bool:
     """Check whether an IP address is private, loopback, link-local, or reserved."""
     try:
         ip = ipaddress.ip_address(ip_str)
+        embedded = _embedded_ipv4(ip)
+        if embedded is not None:
+            return is_ip_private_or_blocked(str(embedded))
         if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
             return True
         for net in BLOCKED_NETWORKS:
