@@ -193,6 +193,25 @@ class ProduceStage:
         if not enabled:
             return {"generated": False, "reason": "Thumbnail disabled in project settings"}
 
+        source = (getattr(ctx, "thumbnail_source", None) or snapshot.get("thumbnail_source") or "ai").strip().lower()
+        library_path = getattr(ctx, "thumbnail_library_path", None) or snapshot.get("thumbnail_library_path")
+        if source == "library":
+            from pathlib import Path as _Path
+            from app.config import get_settings as _get_settings
+
+            picked = _Path(str(library_path or ""))
+            if not picked.is_file():
+                return {"generated": False, "error": "Chưa chọn ảnh có sẵn trong thư mục dự án."}
+            settings = _get_settings()
+            root = settings.STORAGE_ROOT.resolve()
+            try:
+                rel = picked.resolve().relative_to(root)
+                url = f"/api/storage/files/{rel.as_posix()}"
+            except Exception:
+                url = f"/api/storage/files/{picked.as_posix()}"
+            ctx.thumbnail_url = url
+            return {"generated": True, "source": "library", "thumbnail_url": url}
+
         from app.services.thumbnail_service import ThumbnailService
         from app.database import async_session_factory
 

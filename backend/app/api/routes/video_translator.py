@@ -1965,6 +1965,8 @@ class StartWorkflowRequest(BaseModel):
     thumbnail_provider: Optional[str] = Field("pollinations", description="Image provider id")
     thumbnail_style: Optional[str] = Field("auto", description="Thumbnail visual style")
     thumbnail_custom_instruction: Optional[str] = Field(None, description="Extra thumbnail prompt")
+    thumbnail_source: Optional[str] = Field("ai", description="ai or library")
+    thumbnail_library_path: Optional[str] = Field(None, description="Selected default thumbnail file path")
 
 
 async def _validate_project_exists(project_id: str, session: AsyncSession) -> Project:

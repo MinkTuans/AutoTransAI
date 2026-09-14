@@ -1,3 +1,7 @@
+- **Persist AI Terminology Memory and allow library thumbnails (2026-09-14)**:
+  - **Terminology**: TRANSLATE `extract_entities` was a stub (`return True`) so Auto Memory stayed at 0. Extract repeated CJK/Latin names, optionally enrich via LLM, and upsert `project_terminology_memory`. UI refetches when job status changes.
+  - **Thumbnails**: New source `library` uses images in `storage/projects/{id}/default_thumbnails`. Upload/list/delete via `/api/thumbnails/library/{project_id}`. Produce copies the selected file instead of generating (saves tokens).
+
 - **Auto-generate thumbnail after Produce; enlarge YouTube publish modal (2026-09-14)**:
   - **Issue**: Checking “Tự Động Tạo Thumbnail AI” did not create an image; publish popup was 640px with no video/thumb preview.
   - **Pipeline**: PRODUCE now runs `generate_ai_thumbnail` after `final_video_qc` when `thumbnail_enabled` is on. Settings are sent on workflow start. PUBLISH reuses that URL.

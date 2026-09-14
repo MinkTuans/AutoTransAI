@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { videoTranslatorApi, providersApi, projectsApi } from '../api';
+import { videoTranslatorApi, providersApi, projectsApi, thumbnailApi } from '../api';
 import VideoEditorStudio from '../components/VideoEditorStudio';
 import AIQCScorecard from '../components/AIQCScorecard';
 import YouTubePublisherModal from '../components/YouTubePublisherModal';
@@ -86,6 +86,10 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   const [thumbnailModel, setThumbnailModel] = useState('default');
   const [thumbnailStyle, setThumbnailStyle] = useState('auto');
   const [thumbnailInstruction, setThumbnailInstruction] = useState('');
+  const [thumbnailSource, setThumbnailSource] = useState('ai');
+  const [thumbnailLibraryPath, setThumbnailLibraryPath] = useState('');
+  const [libraryThumbs, setLibraryThumbs] = useState([]);
+  const [isUploadingLibraryThumb, setIsUploadingLibraryThumb] = useState(false);
 
   // Project Management & Pre-flight State
   const [projectsList, setProjectsList] = useState([]);
@@ -172,6 +176,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     thumbnail_model: thumbnailModel,
     thumbnail_style: thumbnailStyle,
     thumbnail_custom_instruction: thumbnailInstruction,
+    thumbnail_source: thumbnailSource,
+    thumbnail_library_path: thumbnailLibraryPath,
   });
 
   const handleLogoUpload = async (e) => {
@@ -257,6 +263,13 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
 
   const activeProjectId = selectedProjectId || job?.project_id || asset?.project_id || (job?.id && job.id !== 'default_project' ? job.id : null);
 
+  useEffect(() => {
+    if (!activeProjectId || !thumbnailEnabled) return;
+    thumbnailApi.listLibrary(activeProjectId)
+      .then((res) => setLibraryThumbs(res.data || []))
+      .catch(() => setLibraryThumbs([]));
+  }, [activeProjectId, thumbnailEnabled]);
+
   // Load Projects List
   const fetchProjectsList = async () => {
     try {
@@ -321,6 +334,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     setThumbnailModel(cfg.thumbnail_model || 'default');
     setThumbnailStyle(cfg.thumbnail_style || 'auto');
     setThumbnailInstruction(cfg.thumbnail_custom_instruction || '');
+    setThumbnailSource(cfg.thumbnail_source || 'ai');
+    setThumbnailLibraryPath(cfg.thumbnail_library_path || '');
 
     setIsSettingsDirty(false);
   };
@@ -350,7 +365,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       'watermark_enabled', 'watermark_type', 'watermark_image_path', 'watermark_text',
       'watermark_position', 'watermark_scale', 'watermark_opacity', 'watermark_margin',
       'watermark_font_size', 'thumbnail_enabled', 'thumbnail_provider', 'thumbnail_model',
-      'thumbnail_style', 'thumbnail_custom_instruction'
+      'thumbnail_style', 'thumbnail_custom_instruction', 'thumbnail_source', 'thumbnail_library_path'
     ];
 
     let isDifferent = false;
@@ -516,6 +531,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         thumbnail_provider: thumbnailProvider,
         thumbnail_style: thumbnailStyle,
         thumbnail_custom_instruction: thumbnailInstruction,
+        thumbnail_source: thumbnailSource,
+        thumbnail_library_path: thumbnailLibraryPath,
       };
 
       const res = await videoTranslatorApi.preflightWorkflow(projId, payload);
@@ -631,6 +648,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         thumbnail_provider: thumbnailProvider,
         thumbnail_style: thumbnailStyle,
         thumbnail_custom_instruction: thumbnailInstruction,
+        thumbnail_source: thumbnailSource,
+        thumbnail_library_path: thumbnailLibraryPath,
       };
 
       await videoTranslatorApi.startWorkflow(activeProjectId, payload);
@@ -1010,6 +1029,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         thumbnail_provider: thumbnailProvider,
         thumbnail_style: thumbnailStyle,
         thumbnail_custom_instruction: thumbnailInstruction,
+        thumbnail_source: thumbnailSource,
+        thumbnail_library_path: thumbnailLibraryPath,
       });
 
       const newJobId = jobRes.data.job_id || jobRes.data.id;
@@ -1608,6 +1629,72 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
             {thumbnailEnabled ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 <div>
+                  <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '3px' }}>Nguồn ảnh:</label>
+                  <select
+                    value={thumbnailSource}
+                    onChange={(e) => setThumbnailSource(e.target.value)}
+                    style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
+                  >
+                    <option value="ai">🤖 Tạo bằng AI (tốn token)</option>
+                    <option value="library">🖼️ Chọn ảnh có sẵn trong dự án</option>
+                  </select>
+                </div>
+
+                {thumbnailSource === 'library' ? (
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '6px' }}>
+                      Ảnh mặc định (storage/projects/.../default_thumbnails)
+                    </label>
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      disabled={!activeProjectId || isUploadingLibraryThumb}
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = '';
+                        if (!file || !activeProjectId) return;
+                        setIsUploadingLibraryThumb(true);
+                        try {
+                          const res = await thumbnailApi.uploadLibrary(activeProjectId, file);
+                          const item = res.data;
+                          if (item) {
+                            setLibraryThumbs((prev) => [item, ...prev.filter((x) => x.filename !== item.filename)]);
+                            setThumbnailLibraryPath(item.path);
+                          }
+                        } catch (err) {
+                          alert('Không upload được ảnh: ' + (err.response?.data?.detail || err.message));
+                        } finally {
+                          setIsUploadingLibraryThumb(false);
+                        }
+                      }}
+                      style={{ fontSize: '12px', color: '#cbd5e1', marginBottom: '8px' }}
+                    />
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(88px, 1fr))', gap: '8px' }}>
+                      {libraryThumbs.map((img) => (
+                        <button
+                          key={img.path}
+                          type="button"
+                          onClick={() => setThumbnailLibraryPath(img.path)}
+                          style={{
+                            padding: 0,
+                            border: thumbnailLibraryPath === img.path ? '2px solid #818cf8' : '1px solid #334155',
+                            borderRadius: '8px',
+                            overflow: 'hidden',
+                            background: '#020617',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <img src={img.url} alt={img.filename} style={{ width: '100%', height: '64px', objectFit: 'cover', display: 'block' }} />
+                        </button>
+                      ))}
+                    </div>
+                    {libraryThumbs.length === 0 && (
+                      <div style={{ fontSize: '11px', color: '#94a3b8' }}>Chưa có ảnh. Upload vào thư mục dự án để dùng làm thumbnail mặc định.</div>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                <div>
                   <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '3px' }}>Phong cách (Style):</label>
                   <select
                     value={thumbnailStyle}
@@ -1646,6 +1733,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                     style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '11px', resize: 'vertical' }}
                   />
                 </div>
+                  </>
+                )}
               </div>
             ) : (
               <div style={{ fontSize: '12px', color: '#94a3b8', fontStyle: 'italic' }}>
@@ -1661,7 +1750,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       {/* BELOW VIEWPORT SECTION: GLOSSARY MANAGER (DEFAULT CLOSED) */}
       <div style={{ marginTop: '20px' }}>
         <CollapsibleCard title="📖 Quản Lý Thuật Ngữ Dự Án (Glossary & Terminology Memory)" icon="📖" defaultOpen={false}>
-          <ProjectGlossaryManager projectId={activeProjectId} />
+          <ProjectGlossaryManager projectId={activeProjectId} refreshKey={job?.status} />
         </CollapsibleCard>
       </div>
 

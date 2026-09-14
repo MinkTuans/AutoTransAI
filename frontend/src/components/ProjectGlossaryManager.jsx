@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-export default function ProjectGlossaryManager({ projectId }) {
+export default function ProjectGlossaryManager({ projectId, refreshKey }) {
   const [activeTab, setActiveTab] = useState('manual');
   const [terms, setTerms] = useState([]);
   const [memoryTerms, setMemoryTerms] = useState([]);
@@ -39,7 +39,7 @@ export default function ProjectGlossaryManager({ projectId }) {
       fetchGlossary();
       fetchMemory();
     }
-  }, [projectId]);
+  }, [projectId, refreshKey]);
 
   const handleAddTerm = async (e) => {
     e.preventDefault();

@@ -171,6 +171,14 @@ export const thumbnailApi = {
   regenerate: (id, data) => api.post(`/thumbnails/${id}/regenerate`, data).then(res => res.data),
   setActive: (id) => api.post(`/thumbnails/${id}/set-active`).then(res => res.data),
   delete: (id) => api.delete(`/thumbnails/${id}`).then(res => res.data),
+  listLibrary: (projectId) => api.get(`/thumbnails/library/${projectId}`).then(res => res.data),
+  uploadLibrary: (projectId, file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post(`/thumbnails/library/${projectId}`, formData).then(res => res.data);
+  },
+  deleteLibrary: (projectId, filename) =>
+    api.delete(`/thumbnails/library/${projectId}/${encodeURIComponent(filename)}`).then(res => res.data),
 };
 
 export const youtubeApi = {

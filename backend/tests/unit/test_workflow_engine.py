@@ -64,6 +64,24 @@ async def test_generate_ai_thumbnail_skipped_when_disabled():
 
 
 @pytest.mark.asyncio
+async def test_generate_thumbnail_uses_library_file(tmp_path):
+    from app.config import get_settings
+    settings = get_settings()
+    img = settings.STORAGE_ROOT / "projects" / "p-lib" / "default_thumbnails" / "cover.png"
+    img.parent.mkdir(parents=True, exist_ok=True)
+    img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 200)
+    stage = ProduceStage()
+    ctx = WorkflowContext(project_id="p-lib")
+    ctx.thumbnail_enabled = True
+    ctx.thumbnail_source = "library"
+    ctx.thumbnail_library_path = str(img)
+    res = await stage._generate_ai_thumbnail(ctx)
+    assert res["generated"] is True
+    assert res["source"] == "library"
+    assert ctx.thumbnail_url and "default_thumbnails" in ctx.thumbnail_url
+
+
+@pytest.mark.asyncio
 async def test_publish_stage_blocked_without_oauth():
     stage = PublishStage()
     ctx = WorkflowContext(project_id="test_pub")

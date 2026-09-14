@@ -65,6 +65,8 @@ class WorkflowContext:
     thumbnail_style: str = "auto"
     thumbnail_custom_instruction: Optional[str] = None
     thumbnail_url: Optional[str] = None
+    thumbnail_source: str = "ai"
+    thumbnail_library_path: Optional[str] = None
     settings_snapshot: dict[str, Any] = field(default_factory=dict)
 
     # QC Reports per stage
@@ -112,6 +114,8 @@ class WorkflowContext:
             "thumbnail_style": self.thumbnail_style,
             "thumbnail_custom_instruction": self.thumbnail_custom_instruction,
             "thumbnail_url": self.thumbnail_url,
+            "thumbnail_source": self.thumbnail_source,
+            "thumbnail_library_path": self.thumbnail_library_path,
             "settings_snapshot": self.settings_snapshot,
             "qc_reports": self.qc_reports,
             "seo_metadata": self.seo_metadata,
@@ -172,6 +176,8 @@ class WorkflowContext:
             or snapshot.get("thumbnail_custom_instruction")
         )
         ctx.thumbnail_url = data.get("thumbnail_url")
+        ctx.thumbnail_source = data.get("thumbnail_source") or snapshot.get("thumbnail_source") or "ai"
+        ctx.thumbnail_library_path = data.get("thumbnail_library_path") or snapshot.get("thumbnail_library_path")
 
         ctx.qc_reports = data.get("qc_reports", {})
         ctx.seo_metadata = data.get("seo_metadata", {})

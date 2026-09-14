@@ -7,7 +7,10 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from pathlib import Path
+
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from app.config import get_settings
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +25,55 @@ from app.core import get_logger
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/thumbnails", tags=["thumbnails"])
+settings = get_settings()
+_LIBRARY_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+def _library_dir(project_id: str) -> Path:
+    path = settings.PROJECTS_DIR / project_id / "default_thumbnails"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _library_item(project_id: str, file_path: Path) -> Dict[str, Any]:
+    rel = file_path.resolve().relative_to(settings.STORAGE_ROOT.resolve()).as_posix()
+    return {
+        "filename": file_path.name,
+        "path": str(file_path),
+        "url": f"/api/storage/files/{rel}",
+        "size": file_path.stat().st_size,
+    }
+
+
+@router.get("/library/{project_id}", response_model=Dict[str, Any])
+async def list_default_thumbnails(project_id: str):
+    folder = _library_dir(project_id)
+    items = [
+        _library_item(project_id, p)
+        for p in sorted(folder.iterdir())
+        if p.is_file() and p.suffix.lower() in _LIBRARY_EXTS
+    ]
+    return {"success": True, "data": items}
+
+
+@router.post("/library/{project_id}", response_model=Dict[str, Any])
+async def upload_default_thumbnail(project_id: str, file: UploadFile = File(...)):
+    ext = Path(file.filename or "cover.png").suffix.lower()
+    if ext not in _LIBRARY_EXTS:
+        raise HTTPException(status_code=400, detail="❌ Chỉ nhận PNG, JPG, JPEG, WEBP.")
+    safe_name = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in (file.filename or f"thumb{ext}"))
+    dest = _library_dir(project_id) / safe_name
+    dest.write_bytes(await file.read())
+    return {"success": True, "data": _library_item(project_id, dest)}
+
+
+@router.delete("/library/{project_id}/{filename}", response_model=Dict[str, Any])
+async def delete_default_thumbnail(project_id: str, filename: str):
+    dest = _library_dir(project_id) / Path(filename).name
+    if dest.exists():
+        dest.unlink()
+    return {"success": True, "data": {"deleted": True}}
+
 
 
 class GenerateThumbnailRequest(BaseModel):

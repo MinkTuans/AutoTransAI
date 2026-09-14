@@ -33,9 +33,9 @@ class TranslateStage:
         if step_name == "create_load_glossary":
             return await self._create_load_glossary(ctx, db)
         elif step_name == "extract_entities":
-            return await self._extract_entities(ctx)
+            return await self._extract_entities(ctx, db)
         elif step_name == "detect_names_locations":
-            return await self._detect_names_locations(ctx)
+            return await self._detect_names_locations(ctx, db)
         elif step_name == "translate_transcript":
             return await self._translate_transcript(ctx)
         elif step_name == "validate_segment_ids":
@@ -116,12 +116,32 @@ class TranslateStage:
         ctx.glossary = glossary_list
         return {"glossary_count": len(ctx.glossary)}
 
-    async def _extract_entities(self, ctx: WorkflowContext) -> dict[str, Any]:
-        # Simple entity extraction heuristic or Gemini entity scan if transcript is available
-        return {"entities_extracted": True}
+    async def _extract_entities(self, ctx: WorkflowContext, db: Any) -> dict[str, Any]:
+        from app.services.terminology_memory import (
+            heuristic_extract_terms,
+            llm_extract_terms,
+            persist_terminology_memory,
+            transcript_blob,
+        )
 
-    async def _detect_names_locations(self, ctx: WorkflowContext) -> dict[str, Any]:
-        return {"names_locations_detected": True}
+        text = transcript_blob(ctx)
+        heuristic = heuristic_extract_terms(text, ctx.target_language)
+        llm_terms = await llm_extract_terms(text, ctx.target_language)
+        merged = llm_terms + [t for t in heuristic if t["source_term"].lower() not in {x["source_term"].lower() for x in llm_terms}]
+        saved = await persist_terminology_memory(db, ctx.project_id, merged)
+        ctx.extracted_terms = merged
+        return {"entities_extracted": True, "term_count": len(merged), "saved": saved}
+
+    async def _detect_names_locations(self, ctx: WorkflowContext, db: Any) -> dict[str, Any]:
+        from app.services.terminology_memory import persist_terminology_memory
+
+        extra = [
+            t
+            for t in (getattr(ctx, "extracted_terms", None) or [])
+            if t.get("term_type") in ("location", "character", "organization")
+        ]
+        saved = await persist_terminology_memory(db, ctx.project_id, extra)
+        return {"names_locations_detected": True, "saved": saved}
 
     async def _translate_transcript(self, ctx: WorkflowContext) -> dict[str, Any]:
         from app.services.video_translator.translator_service import VideoTranslatorService
