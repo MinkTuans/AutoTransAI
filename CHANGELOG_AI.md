@@ -1,8 +1,3 @@
-- **Remove white fill from navbar T-wolf logo (2026-09-14)**:
-  - **Symptom**: Navbar still showed a white wolf-face patch; the chosen mark is cyan-only.
-  - **Root cause**: `Navbar.jsx` imports `frontend/src/assets/app-logo.png`, which kept the JPEG’s interior white. `public/app-logo.png` was a different file.
-  - **Fix**: Recolor that white to cyan, then sync public PNG/favicon/ICO to the same asset.
-
 - **Refresh Windows Search/Start shortcut icon (2026-09-14)**:
   - **Symptom**: Search still showed the old hoodie wolf after the T-wolf logo landed.
   - **Root cause**: Start Menu uses `AutoTransAI Studio.lnk` + Windows icon cache, not the in-app PNG.
