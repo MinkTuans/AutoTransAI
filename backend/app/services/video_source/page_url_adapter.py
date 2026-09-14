@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shutil
 from pathlib import Path
 from typing import Callable, Optional, Dict, Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
+
+import httpx
 
 from app.config import get_settings
 from app.core import get_logger
@@ -87,6 +90,87 @@ def raise_yt_dlp_download_error(source_display: str, stderr: str | None, returnc
     raise ValueError(f"Không thể download video từ {source_display}{code}: {snippet}")
 
 
+_BVID_RE = re.compile(r"(BV[0-9A-Za-z]+)")
+
+
+def parse_bilibili_video_ref(url: str) -> dict[str, Any] | None:
+    """Extract BVID and 1-indexed part. Query `t` is a timestamp, not a page."""
+    if not url or not isinstance(url, str):
+        return None
+    parsed = urlparse(url.strip())
+    match = _BVID_RE.search(parsed.path) or _BVID_RE.search(url)
+    if not match:
+        return None
+    query = parse_qs(parsed.query)
+    page = 1
+    if "p" in query:
+        try:
+            page = max(1, int(query["p"][0]))
+        except (TypeError, ValueError):
+            page = 1
+    return {"bvid": match.group(1), "page": page}
+
+
+def metadata_from_bilibili_pagelist(
+    pages: list[dict[str, Any]],
+    page: int,
+    bvid: str,
+) -> dict[str, Any]:
+    """Map Bilibili pagelist JSON to check-url metadata. Duration is seconds."""
+    if not pages:
+        raise ValueError("Bilibili không trả về danh sách phần video.")
+    entry = next((p for p in pages if int(p.get("page") or 0) == page), None)
+    if entry is None:
+        entry = pages[0]
+        page = int(entry.get("page") or 1)
+    duration = float(entry.get("duration") or 0.0)
+    if duration <= 0:
+        raise ValueError("Bilibili không trả về thời lượng video.")
+    dim = entry.get("dimension") or {}
+    title = (entry.get("part") or "").strip() or f"Bilibili {bvid}"
+    return {
+        "source": "Bilibili",
+        "domain": "www.bilibili.com",
+        "title": title,
+        "duration": round(duration, 2),
+        "width": int(dim.get("width") or 0),
+        "height": int(dim.get("height") or 0),
+        "format": "mp4",
+        "file_size": None,
+        "audio_available": True,
+        "url": f"https://www.bilibili.com/video/{bvid}?p={page}",
+        "mime_type": "video/mp4",
+        "bvid": bvid,
+        "page": page,
+        "page_count": len(pages),
+    }
+
+
+async def fetch_bilibili_page_metadata(url: str) -> dict[str, Any]:
+    """Fetch title/duration from Bilibili pagelist API (works when view API is 412)."""
+    ref = parse_bilibili_video_ref(url)
+    if not ref:
+        raise ValueError("Không nhận diện được mã video Bilibili từ URL.")
+    api = f"https://api.bilibili.com/x/player/pagelist?bvid={ref['bvid']}"
+    timeout = httpx.Timeout(15.0, connect=8.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        res = await client.get(
+            api,
+            headers={
+                "User-Agent": BROWSER_UA,
+                "Referer": "https://www.bilibili.com/",
+            },
+        )
+        if res.status_code >= 400:
+            raise ValueError(f"Không lấy được metadata Bilibili (HTTP {res.status_code}).")
+        payload = res.json()
+    if payload.get("code") != 0 or not payload.get("data"):
+        raise ValueError(
+            f"Bilibili pagelist lỗi: {payload.get('message') or payload.get('code')}"
+        )
+    return metadata_from_bilibili_pagelist(payload["data"], ref["page"], ref["bvid"])
+
+
 def _get_yt_dlp_executable() -> str | None:
     """Find yt-dlp executable in system PATH or python environment."""
     found = shutil.which("yt-dlp")
@@ -146,8 +230,18 @@ class PageURLAdapter(BaseVideoSourceAdapter):
         domain = parsed.netloc.split(":")[0]
         source_display = self._get_domain_display(domain)
 
+        if _is_bilibili_domain(domain):
+            try:
+                return await fetch_bilibili_page_metadata(safe_url)
+            except Exception as bili_err:
+                logger.warning("Bilibili pagelist metadata failed, falling back to yt-dlp", error=str(bili_err))
+
         yt_dlp_bin = _get_yt_dlp_executable()
         if not yt_dlp_bin:
+            if _is_bilibili_domain(domain):
+                raise ValueError(
+                    "Không lấy được thời lượng Bilibili. Kiểm tra mạng hoặc cài yt-dlp."
+                )
             # Fallback metadata when yt-dlp binary is not installed
             return {
                 "source": source_display,
@@ -212,6 +306,8 @@ class PageURLAdapter(BaseVideoSourceAdapter):
             if isinstance(e, ValueError):
                 raise
             logger.warning("yt-dlp metadata extraction failed", url=safe_url, error=str(e))
+            if _is_bilibili_domain(domain):
+                raise ValueError(f"Không lấy được metadata Bilibili: {e}") from e
             return {
                 "source": source_display,
                 "domain": domain,

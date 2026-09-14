@@ -110,6 +110,44 @@ def test_yt_dlp_412_error_is_human_readable():
     assert "cookie" in msg.lower() or "chặn" in msg.lower()
 
 
+def test_parse_bilibili_video_ref_ignores_timestamp_query():
+    """?t= is a start offset, not a page. Default part is P1."""
+    from app.services.video_source.page_url_adapter import parse_bilibili_video_ref
+
+    ref = parse_bilibili_video_ref("https://www.bilibili.com/video/BV1dRMP68Ehp?t=40.9")
+    assert ref["bvid"] == "BV1dRMP68Ehp"
+    assert ref["page"] == 1
+
+    ref_p2 = parse_bilibili_video_ref("https://www.bilibili.com/video/BV1dRMP68Ehp?p=2&t=10")
+    assert ref_p2["page"] == 2
+
+
+def test_bilibili_pagelist_maps_part_duration():
+    """Check-url must use pagelist duration (893s), not the dummy 00:00 fallback."""
+    from app.services.video_source.page_url_adapter import metadata_from_bilibili_pagelist
+
+    pages = [
+        {
+            "page": 1,
+            "part": "宠物心声诊所 1",
+            "duration": 893,
+            "dimension": {"width": 1280, "height": 720},
+        },
+        {
+            "page": 2,
+            "part": "宠物心声诊所 2",
+            "duration": 895,
+            "dimension": {"width": 1280, "height": 720},
+        },
+    ]
+    meta = metadata_from_bilibili_pagelist(pages, page=1, bvid="BV1dRMP68Ehp")
+    assert meta["duration"] == 893
+    assert meta["title"] == "宠物心声诊所 1"
+    assert meta["width"] == 1280
+    assert meta["height"] == 720
+    assert meta["source"] == "Bilibili"
+
+
 def test_unsupported_source():
     """Test 10: Unsupported or invalid scheme URL raises ValueError."""
     service = get_video_source_service()

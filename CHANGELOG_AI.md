@@ -1,3 +1,8 @@
+- **Fix Bilibili check-url duration 00:00 (2026-09-14)**:
+  - **Root cause**: `GET metadata` for `https://www.bilibili.com/video/BV1dRMP68Ehp?t=40.9` fell back to dummy `{title: "Video từ Bilibili", duration: 0}` when yt-dlp was missing or failed. Query `t` is a timestamp, not a part index. Bilibili `view` API is often HTTP 412; `x/player/pagelist` returns real part duration (P1 = 893s).
+  - **Backend**: Parse BVID/`p`, map pagelist JSON, and prefer pagelist before yt-dlp in [page_url_adapter.py](backend/app/services/video_source/page_url_adapter.py). Do not return fake 0 duration as valid Bilibili metadata.
+  - **Tests**: `test_parse_bilibili_video_ref_ignores_timestamp_query`, `test_bilibili_pagelist_maps_part_duration`. Live pagelist fetch: title `宠物心声诊所 1`, duration `893`.
+
 - **Fix Bilibili URL ingest HTTP 400 empty error (2026-09-14)**:
   - **Root cause**: `POST /api/video-translator/import` for `https://www.bilibili.com/video/BV1dRMP68Ehp?t=40.9` failed at INGEST. Bilibili was not in `PAGE_DOMAINS` (display `Www.bilibili.com`), yt-dlp used `b[ext=mp4]/best[ext=mp4]/best` (incompatible with Bilibili DASH), subprocess `check=True` raised `CalledProcessError` without stderr, and the pipeline banner truncated `❌ ...` to `×`.
   - **Backend**: Added Bilibili hosts, browser UA/referer, `bv*+ba` merge-to-mp4, `check=False`, and human-readable 412 mapping in [page_url_adapter.py](backend/app/services/video_source/page_url_adapter.py). Import 400 now always includes a non-empty `detail` in [video_translator.py](backend/app/api/routes/video_translator.py).
