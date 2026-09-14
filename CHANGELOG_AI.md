@@ -1,3 +1,8 @@
+- **Do not kill in-progress video downloads on a 5-minute wall clock (2026-09-14)**:
+  - **Symptom**: `Hết thời gian tải video.` while the transfer bar was still running; no Job ID yet.
+  - **Root cause**: `VIDEO_DOWNLOAD_TIMEOUT` defaulted to 300s and `asyncio.wait_for` / HTTP deadline aborted a slow but live download.
+  - **Fix**: timeout `0` = unlimited. Native HTTP uses no read timeout; yt-dlp is not wrapped in `wait_for` when unlimited. Stall/resume still retries dropped connections.
+
 - **Download Bilibili via official playurl MP4 with Range resume (2026-09-14)**:
   - **Symptom**: Transfer still failed with "Mạng cắt file giữa chừng" but the UI showed the Extracting URL preamble instead of `509 bytes read, 18052770 more expected`.
   - **Root cause**: yt-dlp DASH still truncated; error mapper used `err_text[:180]` (start of log). Official `x/player/playurl?fnval=1` returns a single MP4 that accepts HTTP 206 Range (verified 8KB + Content-Range 0-8191/37089181).

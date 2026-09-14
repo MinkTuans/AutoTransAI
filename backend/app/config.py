@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     VIDEO_FORMAT: str = "mp4"
     VIDEO_MAX_SIZE_MB: int = 500
     VIDEO_MAX_DURATION_MINUTES: int = 60
-    VIDEO_DOWNLOAD_TIMEOUT: int = 300
+    VIDEO_DOWNLOAD_TIMEOUT: int = 0  # 0 = unlimited wall clock; stall handled per-request
 
     # ── Audio ──────────────────────────────────────────────────────────
     AUDIO_FORMAT: str = "wav"

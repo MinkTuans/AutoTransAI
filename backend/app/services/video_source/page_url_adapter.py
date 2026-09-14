@@ -30,6 +30,19 @@ from app.services.video_source.base import BaseVideoSourceAdapter
 logger = get_logger(__name__)
 settings = get_settings()
 
+
+def resolve_download_timeout(seconds: int | float | None) -> float | None:
+    """0 or negative means no wall-clock limit; keep downloading until complete or stall."""
+    if seconds is None:
+        return None
+    try:
+        value = float(seconds)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    return value
+
 PAGE_DOMAINS = {
     "youtube.com", "youtu.be", "www.youtube.com",
     "vimeo.com", "www.vimeo.com",
@@ -279,7 +292,8 @@ async def download_http_with_resume(
     part_path = output_path.with_suffix(output_path.suffix + ".part")
     downloaded = part_path.stat().st_size if part_path.exists() else 0
     total = expected_size
-    deadline = asyncio.get_event_loop().time() + timeout
+    limit = resolve_download_timeout(timeout)
+    deadline = (asyncio.get_event_loop().time() + limit) if limit else None
     retries = 0
     max_retries = 30
 
@@ -302,10 +316,11 @@ async def download_http_with_resume(
         except Exception:
             pass
 
-    client_timeout = httpx.Timeout(60.0, connect=15.0)
+    # No read timeout: a slow stream still making progress must not be killed.
+    client_timeout = httpx.Timeout(None, connect=30.0)
     async with httpx.AsyncClient(timeout=client_timeout, follow_redirects=True, headers=headers) as client:
         while retries < max_retries:
-            if asyncio.get_event_loop().time() > deadline:
+            if deadline is not None and asyncio.get_event_loop().time() > deadline:
                 raise ValueError("Hết thời gian tải video Bilibili.")
             req_headers = dict(headers)
             write_mode = "wb"
@@ -390,7 +405,7 @@ async def download_bilibili_native(
         output_path,
         headers=_bili_http_headers(),
         expected_size=int(play.get("size") or 0),
-        timeout=settings.VIDEO_DOWNLOAD_TIMEOUT,
+        timeout=0,
         progress_callback=progress_callback,
     )
     probe = await get_video_metadata_async(output_path)
@@ -489,8 +504,12 @@ async def run_yt_dlp_with_progress_async(
                     loop.call_soon_threadsafe(_emit, parsed)
         return process.wait()
 
+    limit = resolve_download_timeout(timeout)
     try:
-        returncode = await asyncio.wait_for(asyncio.to_thread(_read_worker), timeout=timeout)
+        if limit is None:
+            returncode = await asyncio.to_thread(_read_worker)
+        else:
+            returncode = await asyncio.wait_for(asyncio.to_thread(_read_worker), timeout=limit)
     except asyncio.TimeoutError:
         process.kill()
         await asyncio.to_thread(process.wait)
@@ -683,7 +702,7 @@ class PageURLAdapter(BaseVideoSourceAdapter):
 
         returncode, combined_log = await run_yt_dlp_with_progress_async(
             cmd,
-            timeout=settings.VIDEO_DOWNLOAD_TIMEOUT,
+            timeout=0,
             progress_callback=progress_callback,
         )
         file_ok = output_path.exists() and output_path.stat().st_size >= 100_000

@@ -18,6 +18,15 @@ from app.services.video_source import (
 settings = get_settings()
 
 
+def test_zero_download_timeout_means_unlimited():
+    """Wall-clock 0 must not abort an in-progress download."""
+    from app.services.video_source.page_url_adapter import resolve_download_timeout
+
+    assert resolve_download_timeout(0) is None
+    assert resolve_download_timeout(-1) is None
+    assert resolve_download_timeout(300) == 300.0
+
+
 def test_ssrf_validation_blocked_ips():
     """Test 11: SSRF protection blocks private IPs and cloud metadata."""
     blocked_urls = [

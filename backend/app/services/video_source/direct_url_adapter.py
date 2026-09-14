@@ -95,8 +95,10 @@ class DirectURLAdapter(BaseVideoSourceAdapter):
 
         max_bytes = settings.VIDEO_MAX_SIZE_MB * 1024 * 1024
         download_timeout = settings.VIDEO_DOWNLOAD_TIMEOUT
-
-        timeout = httpx.Timeout(download_timeout, connect=10.0)
+        timeout = httpx.Timeout(
+            None if not download_timeout or download_timeout <= 0 else float(download_timeout),
+            connect=10.0,
+        )
 
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             # SSRF check on final target
