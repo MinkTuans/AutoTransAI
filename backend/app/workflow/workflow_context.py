@@ -60,6 +60,11 @@ class WorkflowContext:
     watermark_opacity: float = 0.80
     watermark_margin: int = 20
     watermark_font_size: int = 32
+    thumbnail_enabled: bool = False
+    thumbnail_provider: str = "pollinations"
+    thumbnail_style: str = "auto"
+    thumbnail_custom_instruction: Optional[str] = None
+    thumbnail_url: Optional[str] = None
     settings_snapshot: dict[str, Any] = field(default_factory=dict)
 
     # QC Reports per stage
@@ -102,6 +107,11 @@ class WorkflowContext:
             "watermark_opacity": self.watermark_opacity,
             "watermark_margin": self.watermark_margin,
             "watermark_font_size": self.watermark_font_size,
+            "thumbnail_enabled": self.thumbnail_enabled,
+            "thumbnail_provider": self.thumbnail_provider,
+            "thumbnail_style": self.thumbnail_style,
+            "thumbnail_custom_instruction": self.thumbnail_custom_instruction,
+            "thumbnail_url": self.thumbnail_url,
             "settings_snapshot": self.settings_snapshot,
             "qc_reports": self.qc_reports,
             "seo_metadata": self.seo_metadata,
@@ -149,6 +159,19 @@ class WorkflowContext:
         ctx.watermark_opacity = float(data.get("watermark_opacity") or snapshot.get("watermark_opacity", 0.80))
         ctx.watermark_margin = int(data.get("watermark_margin") or snapshot.get("watermark_margin", 20))
         ctx.watermark_font_size = int(data.get("watermark_font_size") or snapshot.get("watermark_font_size", 32))
+
+        th_enabled_raw = data.get("thumbnail_enabled") if "thumbnail_enabled" in data else snapshot.get("thumbnail_enabled")
+        if isinstance(th_enabled_raw, str):
+            ctx.thumbnail_enabled = th_enabled_raw.strip().lower() in ("true", "1", "yes", "on")
+        else:
+            ctx.thumbnail_enabled = bool(th_enabled_raw) if th_enabled_raw is not None else False
+        ctx.thumbnail_provider = data.get("thumbnail_provider") or snapshot.get("thumbnail_provider", "pollinations")
+        ctx.thumbnail_style = data.get("thumbnail_style") or snapshot.get("thumbnail_style", "auto")
+        ctx.thumbnail_custom_instruction = (
+            data.get("thumbnail_custom_instruction")
+            or snapshot.get("thumbnail_custom_instruction")
+        )
+        ctx.thumbnail_url = data.get("thumbnail_url")
 
         ctx.qc_reports = data.get("qc_reports", {})
         ctx.seo_metadata = data.get("seo_metadata", {})

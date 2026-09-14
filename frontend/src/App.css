@@ -416,6 +416,48 @@ textarea:focus {
   box-sizing: border-box;
 }
 
+.modal-backdrop.publish-modal-backdrop {
+  padding: 1.5rem 0;
+  align-items: stretch;
+}
+
+.modal-dialog.publish-modal-dialog {
+  max-width: none;
+  width: 100%;
+  height: calc(100vh - 3rem);
+  max-height: calc(100vh - 3rem);
+  margin: 0;
+  border-radius: 12px;
+}
+
+.publish-modal-dialog .modal-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.publish-modal-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 1.1fr) minmax(320px, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.publish-preview-pane video,
+.publish-preview-pane img {
+  width: 100%;
+  max-height: 280px;
+  object-fit: contain;
+  background: #020617;
+  border-radius: 8px;
+  border: 1px solid #334155;
+}
+
+@media (max-width: 900px) {
+  .publish-modal-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .modal-header {
   display: flex;
   align-items: center;

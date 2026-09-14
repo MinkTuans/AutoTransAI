@@ -71,18 +71,33 @@ class PublishStage:
         return seo
 
     async def _select_thumbnail(self, ctx: WorkflowContext) -> dict[str, Any]:
-        """Select or generate AI thumbnail for publication."""
-        from app.services.thumbnail_service import ThumbnailService
-        from app.database import async_session_factory
-        
+        """Reuse the PRODUCE-stage thumbnail; generate only if Auto is on and none exists."""
         thumbnail_url = getattr(ctx, "thumbnail_url", None)
-        if not thumbnail_url and ctx.project_id:
+        if thumbnail_url:
+            return {"thumbnail_selected": thumbnail_url, "thumbnail_url": thumbnail_url}
+
+        snapshot = getattr(ctx, "settings_snapshot", None) or {}
+        enabled = getattr(ctx, "thumbnail_enabled", False)
+        if not enabled:
+            raw = snapshot.get("thumbnail_enabled")
+            if isinstance(raw, str):
+                enabled = raw.strip().lower() in ("true", "1", "yes", "on")
+            else:
+                enabled = bool(raw)
+
+        if enabled and ctx.project_id:
+            from app.services.thumbnail_service import ThumbnailService
+            from app.database import async_session_factory
             try:
                 async with async_session_factory() as session:
                     record = await ThumbnailService.create_thumbnail(
                         db=session,
                         project_id=ctx.project_id,
-                        selected_style="auto",
+                        job_id=getattr(ctx, "job_id", None),
+                        selected_style=getattr(ctx, "thumbnail_style", None) or snapshot.get("thumbnail_style") or "auto",
+                        custom_instruction=getattr(ctx, "thumbnail_custom_instruction", None)
+                        or snapshot.get("thumbnail_custom_instruction"),
+                        provider_id=getattr(ctx, "thumbnail_provider", None) or snapshot.get("thumbnail_provider"),
                     )
                     if record and record.thumbnail_url:
                         thumbnail_url = record.thumbnail_url

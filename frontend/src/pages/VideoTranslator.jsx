@@ -512,6 +512,10 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         watermark_opacity: watermarkOpacity,
         watermark_margin: watermarkMargin,
         watermark_font_size: watermarkFontSize,
+        thumbnail_enabled: thumbnailEnabled,
+        thumbnail_provider: thumbnailProvider,
+        thumbnail_style: thumbnailStyle,
+        thumbnail_custom_instruction: thumbnailInstruction,
       };
 
       const res = await videoTranslatorApi.preflightWorkflow(projId, payload);
@@ -623,6 +627,10 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         watermark_opacity: watermarkOpacity,
         watermark_margin: watermarkMargin,
         watermark_font_size: watermarkFontSize,
+        thumbnail_enabled: thumbnailEnabled,
+        thumbnail_provider: thumbnailProvider,
+        thumbnail_style: thumbnailStyle,
+        thumbnail_custom_instruction: thumbnailInstruction,
       };
 
       await videoTranslatorApi.startWorkflow(activeProjectId, payload);
@@ -998,6 +1006,10 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         watermark_opacity: watermarkOpacity,
         watermark_margin: watermarkMargin,
         watermark_font_size: watermarkFontSize,
+        thumbnail_enabled: thumbnailEnabled,
+        thumbnail_provider: thumbnailProvider,
+        thumbnail_style: thumbnailStyle,
+        thumbnail_custom_instruction: thumbnailInstruction,
       });
 
       const newJobId = jobRes.data.job_id || jobRes.data.id;
@@ -1776,6 +1788,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       {showYouTubeModal && job && (
         <YouTubePublisherModal
           jobId={job.id}
+          videoUrl={job.output_url}
+          videoPath={job.output_video_path}
           onClose={() => setShowYouTubeModal(false)}
         />
       )}

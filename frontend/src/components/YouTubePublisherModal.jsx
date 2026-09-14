@@ -1,7 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { videoEditorApi, youtubeApi } from '../api';
+import { videoEditorApi, youtubeApi, thumbnailApi, videoTranslatorApi } from '../api';
 
-export default function YouTubePublisherModal({ jobId, onClose }) {
+function resolveMediaSrc(pathOrUrl) {
+  if (!pathOrUrl) return null;
+  const value = String(pathOrUrl);
+  if (value.startsWith('http://') || value.startsWith('https://') || value.startsWith('/')) return value;
+  const stripped = value.replace(/^.*[\\/]data[\\/]/, '').replace(/^.*[\\/]storage[\\/]/, '');
+  return `/api/storage/files/${stripped.replace(/\\/g, '/')}`;
+}
+
+export default function YouTubePublisherModal({ jobId, videoPath, videoUrl, thumbnailUrl, onClose }) {
   const [loadingSeo, setLoadingSeo] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -11,10 +19,11 @@ export default function YouTubePublisherModal({ jobId, onClose }) {
   const [privacyStatus, setPrivacyStatus] = useState('private');
   const [statusMsg, setStatusMsg] = useState(null);
   const [publishedUrl, setPublishedUrl] = useState(null);
+  const [previewVideo, setPreviewVideo] = useState(resolveMediaSrc(videoUrl || videoPath));
+  const [previewThumb, setPreviewThumb] = useState(resolveMediaSrc(thumbnailUrl));
   const pollingRef = useRef(null);
 
   useEffect(() => {
-    // Fetch initial YouTube metadata populated from Project Defaults + Title Template + Episode calculation
     if (jobId) {
       videoEditorApi.getInitialSEO(jobId)
         .then((res) => {
@@ -25,6 +34,23 @@ export default function YouTubePublisherModal({ jobId, onClose }) {
           }
         })
         .catch((err) => console.warn('Failed to load initial YouTube defaults:', err));
+
+      videoTranslatorApi.getJob(jobId)
+        .then((res) => {
+          const job = res?.data?.job || res?.data;
+          if (!job) return;
+          const src = resolveMediaSrc(job.output_url || job.output_video_path);
+          if (src) setPreviewVideo(src);
+        })
+        .catch(() => {});
+
+      thumbnailApi.getByJob(jobId)
+        .then((res) => {
+          const items = res?.thumbnails || [];
+          const active = items.find((t) => t.is_active && t.thumbnail_url) || items.find((t) => t.thumbnail_url);
+          if (active?.thumbnail_url) setPreviewThumb(resolveMediaSrc(active.thumbnail_url));
+        })
+        .catch(() => {});
     }
 
     return () => {
@@ -124,8 +150,8 @@ export default function YouTubePublisherModal({ jobId, onClose }) {
   };
 
   return (
-    <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) handleSafeClose(); }}>
-      <div className="modal-dialog" style={{ maxWidth: '640px' }}>
+    <div className="modal-backdrop publish-modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) handleSafeClose(); }}>
+      <div className="modal-dialog publish-modal-dialog">
         <div className="modal-header">
           <h3 style={{ color: '#f43f5e', display: 'flex', alignItems: 'center', gap: '8px' }}>
             🔴 YouTube Auto-Publish & SEO Generator
@@ -175,7 +201,31 @@ export default function YouTubePublisherModal({ jobId, onClose }) {
               </div>
             </div>
           ) : (
-            <div>
+            <div className="publish-modal-grid">
+              <div className="publish-preview-pane">
+                <div className="form-group">
+                  <label className="form-label">🎬 Xem trước video</label>
+                  {previewVideo ? (
+                    <video src={previewVideo} controls playsInline />
+                  ) : (
+                    <div style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8', border: '1px dashed #334155', borderRadius: '8px' }}>
+                      Chưa có file video để xem trước
+                    </div>
+                  )}
+                </div>
+                <div className="form-group">
+                  <label className="form-label">🖼️ Thumbnail AI</label>
+                  {previewThumb ? (
+                    <img src={previewThumb} alt="Thumbnail" />
+                  ) : (
+                    <div style={{ padding: '1.5rem', textAlign: 'center', color: '#94a3b8', border: '1px dashed #334155', borderRadius: '8px' }}>
+                      Chưa có thumbnail. Bật “Tự Động Tạo Thumbnail AI” trước khi chạy Auto — ảnh được tạo sau bước Produce.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div>
               <button
                 type="button"
                 className="btn btn-primary"
@@ -272,6 +322,7 @@ export default function YouTubePublisherModal({ jobId, onClose }) {
                 >
                   {publishing ? `⏳ Đang Upload (${uploadProgress}%)...` : '🔴 Upload Lên YouTube'}
                 </button>
+              </div>
               </div>
             </div>
           )}

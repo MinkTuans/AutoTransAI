@@ -14,6 +14,7 @@ from app.workflow.workflow_context import WorkflowContext
 from app.workflow.workflow_registry import WorkflowRegistry
 from app.workflow.workflow_engine import WorkflowEngine
 from app.workflow.stages.publish_stage import PublishStage
+from app.workflow.stages.produce_stage import ProduceStage
 from app.workflow.stages.translate_stage import TranslateStage
 
 
@@ -43,6 +44,23 @@ async def test_workflow_context_serialization():
     hydrated = WorkflowContext.from_dict(data)
     assert hydrated.project_id == "test_p1"
     assert hydrated.duration == 120.5
+
+
+def test_produce_generates_thumbnail_after_final_video():
+    """Auto thumbnail must run in PRODUCE after the final video QC step."""
+    steps = ProduceStage.STEPS
+    assert "generate_ai_thumbnail" in steps
+    assert steps.index("generate_ai_thumbnail") > steps.index("final_video_qc")
+
+
+@pytest.mark.asyncio
+async def test_generate_ai_thumbnail_skipped_when_disabled():
+    stage = ProduceStage()
+    ctx = WorkflowContext(project_id="p-thumb")
+    ctx.thumbnail_enabled = False
+    res = await stage._generate_ai_thumbnail(ctx)
+    assert res["generated"] is False
+    assert ctx.thumbnail_url is None
 
 
 @pytest.mark.asyncio

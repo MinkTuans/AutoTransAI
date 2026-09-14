@@ -1,3 +1,8 @@
+- **Auto-generate thumbnail after Produce; enlarge YouTube publish modal (2026-09-14)**:
+  - **Issue**: Checking “Tự Động Tạo Thumbnail AI” did not create an image; publish popup was 640px with no video/thumb preview.
+  - **Pipeline**: PRODUCE now runs `generate_ai_thumbnail` after `final_video_qc` when `thumbnail_enabled` is on. Settings are sent on workflow start. PUBLISH reuses that URL.
+  - **UI**: YouTube modal is full-width with current top/bottom 1.5rem gap; left pane previews dubbed video + AI thumbnail, right pane keeps SEO/upload fields.
+
 - **Do not kill in-progress video downloads on a 5-minute wall clock (2026-09-14)**:
   - **Symptom**: `Hết thời gian tải video.` while the transfer bar was still running; no Job ID yet.
   - **Root cause**: `VIDEO_DOWNLOAD_TIMEOUT` defaulted to 300s and `asyncio.wait_for` / HTTP deadline aborted a slow but live download.

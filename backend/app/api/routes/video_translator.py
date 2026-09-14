@@ -1961,6 +1961,10 @@ class StartWorkflowRequest(BaseModel):
     watermark_opacity: Optional[float] = Field(0.80, description="Watermark opacity")
     watermark_margin: Optional[int] = Field(20, description="Watermark margin")
     watermark_font_size: Optional[int] = Field(32, description="Watermark font size")
+    thumbnail_enabled: Optional[bool] = Field(False, description="Generate AI thumbnail after Produce")
+    thumbnail_provider: Optional[str] = Field("pollinations", description="Image provider id")
+    thumbnail_style: Optional[str] = Field("auto", description="Thumbnail visual style")
+    thumbnail_custom_instruction: Optional[str] = Field(None, description="Extra thumbnail prompt")
 
 
 async def _validate_project_exists(project_id: str, session: AsyncSession) -> Project:
@@ -2263,6 +2267,8 @@ async def start_workflow_api(
         for k, v in payload_dict.items():
             if k == "watermark_enabled":
                 ctx_data[k] = v or _parse_bool(proj_settings.get("watermark_enabled"), False)
+            elif k == "thumbnail_enabled":
+                ctx_data[k] = bool(v) if v is not None else _parse_bool(proj_settings.get("thumbnail_enabled"), False)
             elif v is not None:
                 ctx_data[k] = v
 

@@ -23,6 +23,7 @@ class ProduceStage:
         "final_render",
         "add_watermark_logo",
         "final_video_qc",
+        "generate_ai_thumbnail",
     ]
 
     async def execute_step(self, step_name: str, ctx: WorkflowContext, db: Any) -> dict[str, Any]:
@@ -43,6 +44,8 @@ class ProduceStage:
             return await self._add_watermark_logo(ctx)
         elif step_name == "final_video_qc":
             return await self._final_video_qc(ctx)
+        elif step_name == "generate_ai_thumbnail":
+            return await self._generate_ai_thumbnail(ctx)
         else:
             raise ValueError(f"Unknown step in PRODUCE stage: {step_name}")
 
@@ -175,3 +178,45 @@ class ProduceStage:
         qc_res = await self.run_qc(ctx)
         ctx.qc_reports["PRODUCE"] = qc_res
         return qc_res
+
+    async def _generate_ai_thumbnail(self, ctx: WorkflowContext) -> dict[str, Any]:
+        """Create the YouTube thumbnail after the dubbed video exists (Auto flow)."""
+        snapshot = ctx.settings_snapshot or {}
+        enabled = getattr(ctx, "thumbnail_enabled", False)
+        if not enabled:
+            raw = snapshot.get("thumbnail_enabled")
+            if isinstance(raw, str):
+                enabled = raw.strip().lower() in ("true", "1", "yes", "on")
+            else:
+                enabled = bool(raw)
+
+        if not enabled:
+            return {"generated": False, "reason": "Thumbnail disabled in project settings"}
+
+        from app.services.thumbnail_service import ThumbnailService
+        from app.database import async_session_factory
+
+        style = ctx.thumbnail_style or snapshot.get("thumbnail_style") or "auto"
+        instruction = ctx.thumbnail_custom_instruction or snapshot.get("thumbnail_custom_instruction")
+        provider = ctx.thumbnail_provider or snapshot.get("thumbnail_provider") or "pollinations"
+
+        try:
+            async with async_session_factory() as session:
+                record = await ThumbnailService.create_thumbnail(
+                    db=session,
+                    project_id=ctx.project_id,
+                    job_id=getattr(ctx, "job_id", None),
+                    selected_style=style,
+                    custom_instruction=instruction,
+                    provider_id=provider,
+                )
+                url = getattr(record, "thumbnail_url", None)
+                ctx.thumbnail_url = url
+                return {
+                    "generated": bool(url),
+                    "thumbnail_url": url,
+                    "status": getattr(record, "status", None),
+                }
+        except Exception as exc:
+            logger.warning("[ProduceStage] AI thumbnail generation failed: %s", exc)
+            return {"generated": False, "error": str(exc)}
