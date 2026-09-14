@@ -7,6 +7,16 @@ const api = axios.create({
   },
 });
 
+api.interceptors.request.use((config) => {
+  if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+    if (config.headers) {
+      delete config.headers['Content-Type'];
+      delete config.headers['content-type'];
+    }
+  }
+  return config;
+});
+
 export default api;
 
 export const projectsApi = {
@@ -75,17 +85,13 @@ export const videoTranslatorApi = {
     const formData = new FormData();
     formData.append('source_type', 'url');
     formData.append('url', url);
-    return api.post('/video-translator/import', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }).then(res => res.data);
+    return api.post('/video-translator/import', formData).then(res => res.data);
   },
   importUpload: (file) => {
     const formData = new FormData();
     formData.append('source_type', 'upload');
     formData.append('file', file);
-    return api.post('/video-translator/import', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    }).then(res => res.data);
+    return api.post('/video-translator/import', formData).then(res => res.data);
   },
   getAsset: (assetId) => api.get(`/video-translator/assets/${assetId}`).then(res => res.data),
   createJob: (data) => api.post('/video-translator/jobs', data).then(res => res.data),

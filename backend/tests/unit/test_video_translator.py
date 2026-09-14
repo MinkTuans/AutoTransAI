@@ -59,6 +59,57 @@ def test_adapter_can_handle_page_url():
     assert adapter.can_handle("https://example.com/video.mp4") is False
 
 
+def test_adapter_can_handle_bilibili_url():
+    """Bilibili watch URLs (including timestamp query) must be treated as page sources."""
+    from app.services.video_source.page_url_adapter import PAGE_DOMAINS
+
+    adapter = PageURLAdapter()
+    url = "https://www.bilibili.com/video/BV1dRMP68Ehp?t=40.9"
+    assert adapter.can_handle(url) is True
+    assert "bilibili.com" in PAGE_DOMAINS
+    assert "b23.tv" in PAGE_DOMAINS
+
+
+def test_bilibili_domain_display_name():
+    """Bilibili must be labeled Bilibili, not Www.bilibili.com."""
+    adapter = PageURLAdapter()
+    assert adapter._get_domain_display("www.bilibili.com") == "Bilibili"
+    assert adapter._get_domain_display("bilibili.com") == "Bilibili"
+    assert adapter._get_domain_display("b23.tv") == "Bilibili"
+
+
+def test_yt_dlp_download_cmd_for_bilibili_uses_browser_headers():
+    """Bilibili WAF (HTTP 412) requires browser UA/referer and merged DASH streams."""
+    from app.services.video_source.page_url_adapter import build_yt_dlp_download_cmd
+
+    url = "https://www.bilibili.com/video/BV1dRMP68Ehp?t=40.9"
+    cmd = build_yt_dlp_download_cmd("yt-dlp", url, Path("/tmp/out.mp4"))
+    assert "--user-agent" in cmd
+    assert "--referer" in cmd
+    assert any("bilibili.com" in str(part) for part in cmd)
+    assert "--merge-output-format" in cmd
+    assert "mp4" in cmd
+    assert "-f" in cmd
+    fmt = cmd[cmd.index("-f") + 1]
+    assert "bv" in fmt or "+" in fmt
+    assert url in cmd
+
+
+def test_yt_dlp_412_error_is_human_readable():
+    """yt-dlp 412/WAF failures must not surface as empty ❌ or CalledProcessError."""
+    from app.services.video_source.page_url_adapter import raise_yt_dlp_download_error
+
+    with pytest.raises(ValueError) as excinfo:
+        raise_yt_dlp_download_error(
+            "Bilibili",
+            "ERROR: [BiliBili] BV1dRMP68Ehp: Unable to download JSON metadata: HTTP Error 412: Precondition Failed",
+        )
+    msg = str(excinfo.value)
+    assert "412" in msg
+    assert "Bilibili" in msg
+    assert "cookie" in msg.lower() or "chặn" in msg.lower()
+
+
 def test_unsupported_source():
     """Test 10: Unsupported or invalid scheme URL raises ValueError."""
     service = get_video_source_service()

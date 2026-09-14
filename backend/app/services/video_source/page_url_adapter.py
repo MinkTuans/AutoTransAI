@@ -33,7 +33,58 @@ PAGE_DOMAINS = {
     "instagram.com", "www.instagram.com",
     "drive.google.com",
     "dropbox.com", "www.dropbox.com",
+    "bilibili.com", "www.bilibili.com", "m.bilibili.com",
+    "b23.tv",
 }
+
+BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+
+
+def _is_bilibili_domain(domain: str) -> bool:
+    d = (domain or "").lower()
+    return "bilibili" in d or d == "b23.tv" or d.endswith(".b23.tv")
+
+
+def build_yt_dlp_download_cmd(yt_dlp_bin: str, url: str, output_path: Path) -> list[str]:
+    """Build yt-dlp args. Bilibili needs browser headers + merged DASH, not mp4-only `best`."""
+    parsed = urlparse(url.strip())
+    domain = (parsed.netloc or "").split(":")[0]
+    cmd = [
+        yt_dlp_bin,
+        "-f", "bv*+ba/b[ext=mp4]/best",
+        "--merge-output-format", "mp4",
+        "--no-playlist",
+        "-o", str(output_path),
+        "--max-filesize", f"{settings.VIDEO_MAX_SIZE_MB}M",
+    ]
+    if _is_bilibili_domain(domain):
+        cmd.extend([
+            "--user-agent", BROWSER_UA,
+            "--referer", "https://www.bilibili.com/",
+            "--add-header", "Origin:https://www.bilibili.com",
+        ])
+    cmd.append(url)
+    return cmd
+
+
+def raise_yt_dlp_download_error(source_display: str, stderr: str | None, returncode: int | None = None) -> None:
+    """Map yt-dlp stderr to a user-facing ValueError. Never raise an empty message."""
+    err_text = (stderr or "").strip()
+    err_lower = err_text.lower()
+    if "412" in err_text or "precondition failed" in err_lower or "风控" in err_text:
+        raise ValueError(
+            f"Bilibili chặn tải video (HTTP 412 / anti-bot). "
+            f"Cần cookie đăng nhập Bilibili hoặc thử lại từ mạng khác. "
+            f"Chi tiết: {err_text[:180] or 'empty stderr'}"
+        )
+    if "login" in err_lower or "private" in err_lower or "drm" in err_lower or "confirm your age" in err_lower:
+        raise ValueError("Nguồn này không thể được xử lý trực tiếp (yêu cầu đăng nhập, riêng tư hoặc chứa DRM).")
+    snippet = err_text[:200] if err_text else "Lỗi không xác định"
+    code = f" (exit {returncode})" if returncode not in (None, 0) else ""
+    raise ValueError(f"Không thể download video từ {source_display}{code}: {snippet}")
 
 
 def _get_yt_dlp_executable() -> str | None:
@@ -84,6 +135,8 @@ class PageURLAdapter(BaseVideoSourceAdapter):
             return "Google Drive"
         if "dropbox" in domain_lower:
             return "Dropbox"
+        if _is_bilibili_domain(domain_lower):
+            return "Bilibili"
         return domain.capitalize()
 
     async def get_metadata(self, url: str) -> Dict[str, Any]:
@@ -115,13 +168,22 @@ class PageURLAdapter(BaseVideoSourceAdapter):
             "--dump-single-json",
             "--no-playlist",
             "--skip-download",
-            safe_url,
         ]
+        if _is_bilibili_domain(domain):
+            cmd.extend([
+                "--user-agent", BROWSER_UA,
+                "--referer", "https://www.bilibili.com/",
+            ])
+        cmd.append(safe_url)
 
         try:
-            res = await safe_subprocess_run_async(cmd, timeout=20)
+            res = await safe_subprocess_run_async(cmd, timeout=20, check=False)
             if res.returncode != 0:
                 err_text = (res.stderr or "").lower()
+                if "412" in err_text or "precondition failed" in err_text:
+                    raise ValueError(
+                        f"Bilibili chặn truy cập metadata (HTTP 412). Cần cookie hoặc thử lại từ mạng khác."
+                    )
                 if "login" in err_text or "private" in err_text or "drm" in err_text or "confirm your age" in err_text:
                     raise ValueError("Nguồn này không thể được xử lý trực tiếp (yêu cầu đăng nhập, riêng tư hoặc chứa DRM).")
                 raise ValueError(f"Không thể truy cập nguồn video ({source_display}). Video có thể không tồn tại.")
@@ -184,21 +246,11 @@ class PageURLAdapter(BaseVideoSourceAdapter):
                 f"Nguồn video '{source_display}' yêu cầu bộ tải media. Vui lòng cài đặt yt-dlp hoặc sử dụng Direct MP4 URL."
             )
 
-        cmd = [
-            yt_dlp_bin,
-            "-f", "b[ext=mp4]/best[ext=mp4]/best",
-            "--no-playlist",
-            "-o", str(output_path),
-            "--max-filesize", f"{settings.VIDEO_MAX_SIZE_MB}M",
-            safe_url,
-        ]
+        cmd = build_yt_dlp_download_cmd(yt_dlp_bin, safe_url, output_path)
 
-        res = await safe_subprocess_run_async(cmd, timeout=settings.VIDEO_DOWNLOAD_TIMEOUT)
+        res = await safe_subprocess_run_async(cmd, timeout=settings.VIDEO_DOWNLOAD_TIMEOUT, check=False)
         if res.returncode != 0 or not output_path.exists():
-            err_text = (res.stderr or "").lower()
-            if "private" in err_text or "login" in err_text or "drm" in err_text:
-                raise ValueError("Nguồn này không thể được xử lý trực tiếp (bị khóa quyền truy cập hoặc DRM).")
-            raise ValueError(f"Không thể download video từ {source_display}: {res.stderr[:200] if res.stderr else 'Lỗi không xác định'}")
+            raise_yt_dlp_download_error(source_display, res.stderr, res.returncode)
 
         # Probe metadata of downloaded file
         meta = await get_video_metadata_async(output_path)

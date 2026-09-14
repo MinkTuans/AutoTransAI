@@ -1214,7 +1214,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <input
                     type="text"
-                    placeholder="https://example.com/video.mp4"
+                    placeholder="https://www.bilibili.com/video/BVxxxx hoặc YouTube URL"
                     value={videoUrl}
                     onChange={(e) => setVideoUrl(e.target.value)}
                     style={{

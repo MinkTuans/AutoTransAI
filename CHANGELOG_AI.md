@@ -1,3 +1,9 @@
+- **Fix Bilibili URL ingest HTTP 400 empty error (2026-09-14)**:
+  - **Root cause**: `POST /api/video-translator/import` for `https://www.bilibili.com/video/BV1dRMP68Ehp?t=40.9` failed at INGEST. Bilibili was not in `PAGE_DOMAINS` (display `Www.bilibili.com`), yt-dlp used `b[ext=mp4]/best[ext=mp4]/best` (incompatible with Bilibili DASH), subprocess `check=True` raised `CalledProcessError` without stderr, and the pipeline banner truncated `❌ ...` to `×`.
+  - **Backend**: Added Bilibili hosts, browser UA/referer, `bv*+ba` merge-to-mp4, `check=False`, and human-readable 412 mapping in [page_url_adapter.py](backend/app/services/video_source/page_url_adapter.py). Import 400 now always includes a non-empty `detail` in [video_translator.py](backend/app/api/routes/video_translator.py).
+  - **Frontend**: Let the browser set FormData multipart boundary in [api.js](frontend/src/api.js); wrap full error text in [WorkflowTimeline.jsx](frontend/src/components/WorkflowTimeline.jsx).
+  - **Tests**: `test_adapter_can_handle_bilibili_url`, `test_bilibili_domain_display_name`, `test_yt_dlp_download_cmd_for_bilibili_uses_browser_headers`, `test_yt_dlp_412_error_is_human_readable`.
+
 - **Implement Standalone Video Merger Feature (2026-09-12)**:
   - **Feature Architecture**: Added independent **Video Merger** feature, completely decoupled from the Video Translation workflow (`VideoTranslator.jsx`). Route `?page=merger` (`/video-merger`) accessed via top-level `Navbar.jsx` menu item `🎬 Ghép Video`.
   - **Database Persistence**: Added ORM models `VideoMergeJob` (`video_merge_jobs`) and `VideoMergeAsset` (`video_merge_assets`) in [video_merger.py](file:///c:/Hack/AutoTransAI/backend/app/models/video_merger.py) and exported them in [__init__.py](file:///c:/Hack/AutoTransAI/backend/app/models/__init__.py).

@@ -250,7 +250,13 @@ async def import_video_asset(
         try:
             meta = await service.download_video(url, storage_dir)
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"❌ {str(e)}")
+            msg = str(e).strip()
+            stderr = getattr(e, "stderr", None)
+            if not msg and stderr:
+                msg = str(stderr)[:300].strip()
+            if not msg:
+                msg = e.__class__.__name__
+            raise HTTPException(status_code=400, detail=f"❌ {msg}")
 
         asset = VideoAsset(
             id=asset_id,

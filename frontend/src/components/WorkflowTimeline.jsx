@@ -436,7 +436,7 @@ export default function WorkflowTimeline({
         <div style={{ marginTop: '12px', padding: '10px 14px', background: '#450a0a', border: '1px solid #ef4444', borderRadius: '8px', color: '#fee2e2', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
           <div style={{ flex: 1, minWidth: '220px' }}>
             <div style={{ fontWeight: 'bold', color: '#fca5a5', fontSize: '13px' }}>❌ Xử Lý Thất Bại</div>
-            <div style={{ fontSize: '12px', fontFamily: 'monospace', color: '#fecaca', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '500px' }}>
+            <div style={{ fontSize: '12px', fontFamily: 'monospace', color: '#fecaca', marginTop: '2px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxWidth: '100%' }}>
               {currentJob.error_message || pipelineError || 'Xảy ra lỗi trong quá trình thực thi pipeline.'}
             </div>
           </div>
