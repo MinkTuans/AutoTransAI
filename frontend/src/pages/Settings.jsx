@@ -555,10 +555,8 @@ export default function Settings() {
           { id: 'functions', label: 'Function' },
           { id: 'models', label: 'Models' },
           { id: 'social', label: 'Social' },
-          { id: 'storage', label: 'Storage' },
           { id: 'processing', label: 'Processing' },
-          { id: 'workflow_defaults', label: 'Workflow' },
-          { id: 'advanced', label: 'Advanced' },
+          { id: 'system', label: 'System' },
         ].map(tab => (
           <button
             key={tab.id}
@@ -1000,52 +998,14 @@ export default function Settings() {
         </div>
       )}
 
-      {/* TAB 5: STORAGE SETTINGS */}
-      {activeTab === 'storage' && (
-        <div className="card">
-          <div className="card-header">
-            <h3 style={{ margin: 0, fontSize: '1.1rem' }}>📁 Storage Settings (Local Disk Storage & Laragon MySQL)</h3>
-            <p style={{ margin: 0, fontSize: '0.85rem', color: '#94a3b8' }}>
-              Hệ thống lưu trữ Media file trực tiếp trên ổ đĩa local (`storage/projects/`) và quản lý CSDL MySQL (Laragon).
-            </p>
-          </div>
-          <div className="card-body">
-            <form onSubmit={handleSaveSystemSettings}>
-              <div className="form-group" style={{ marginBottom: '1.25rem' }}>
-                <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '0.5rem' }}>Storage Mode</label>
-                <select
-                  className="form-control"
-                  value={systemSettings.storage_provider}
-                  onChange={(e) => setSystemSettings({ ...systemSettings, storage_provider: e.target.value })}
-                >
-                  <option value="local">Local Disk Storage (`storage/projects/{'{project_id}'}/...`)</option>
-                </select>
-              </div>
-
-              {storageTestStatus && (
-                <div className={`alert alert-${storageTestStatus.success ? 'success' : 'danger'}`} style={{ marginBottom: '1rem' }}>
-                  {storageTestStatus.message}
-                </div>
-              )}
-
-              <div style={{ display: 'flex', gap: '0.75rem' }}>
-                <button type="submit" className="btn btn-primary" disabled={saving}>
-                  {saving ? 'Saving...' : 'Save Storage Settings'}
-                </button>
-                <button type="button" className="btn btn-secondary" onClick={handleTestStorageConnection} disabled={storageTesting}>
-                  {storageTesting ? 'Testing...' : '🧪 Test Connection'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 6: PROCESSING SETTINGS */}
+      {/* TAB 5: PROCESSING SETTINGS */}
       {activeTab === 'processing' && (
         <div className="card">
           <div className="card-header">
             <h3 style={{ margin: 0, fontSize: '1.1rem' }}>⚙️ Processing & Media Engine Settings</h3>
+            <p style={{ margin: '0.35rem 0 0', fontSize: '0.85rem', color: '#94a3b8' }}>
+              Điều khiển engine khi chạy job: bao nhiêu việc làm cùng lúc, retry khi lỗi, độ dài clip, và cách khớp độ dài audio lồng tiếng với video.
+            </p>
           </div>
           <div className="card-body">
             <form onSubmit={handleSaveSystemSettings}>
@@ -1099,14 +1059,37 @@ export default function Settings() {
         </div>
       )}
 
-      {/* TAB 7: WORKFLOW DEFAULTS */}
-      {activeTab === 'workflow_defaults' && (
-        <div className="card">
-          <div className="card-header">
-            <h3 style={{ margin: 0, fontSize: '1.1rem' }}>🎯 Workflow Default Values</h3>
-          </div>
-          <div className="card-body">
-            <form onSubmit={handleSaveSystemSettings}>
+      {/* TAB 6: SYSTEM (storage + workflow defaults + diagnostics) */}
+      {activeTab === 'system' && (
+        <form onSubmit={handleSaveSystemSettings} style={{ display: 'grid', gap: '1rem' }}>
+          <div className="card">
+            <div className="card-header">
+              <h3 style={{ margin: 0, fontSize: '1.1rem' }}>System</h3>
+              <p style={{ margin: '0.35rem 0 0', fontSize: '0.85rem', color: '#94a3b8' }}>
+                Storage local, giá trị mặc định khi tạo job, và kiểm tra backend.
+              </p>
+            </div>
+            <div className="card-body">
+              <div className="form-group" style={{ marginBottom: '1.25rem' }}>
+                <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '0.5rem' }}>Storage</label>
+                <select
+                  className="form-control"
+                  value={systemSettings.storage_provider}
+                  onChange={(e) => setSystemSettings({ ...systemSettings, storage_provider: e.target.value })}
+                >
+                  <option value="local">Local Disk (`storage/projects/{'{project_id}'}/...`)</option>
+                </select>
+                <p style={{ margin: '0.4rem 0 0', fontSize: '0.8rem', color: '#94a3b8' }}>
+                  Media nằm trên ổ đĩa máy, CSDL MySQL (Laragon).
+                </p>
+              </div>
+
+              {storageTestStatus && (
+                <div className={`alert alert-${storageTestStatus.success ? 'success' : 'danger'}`} style={{ marginBottom: '1rem' }}>
+                  {storageTestStatus.message}
+                </div>
+              )}
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
                 <div className="form-group">
                   <label>Default Source Language</label>
@@ -1147,31 +1130,29 @@ export default function Settings() {
                   </select>
                 </div>
               </div>
-              <button type="submit" className="btn btn-primary" disabled={saving}>
-                {saving ? <><ButtonSpinner /> Đang lưu...</> : 'Save Workflow Defaults'}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
 
-      {/* TAB 8: ADVANCED */}
-      {activeTab === 'advanced' && (
-        <div className="card">
-          <div className="card-header">
-            <h3 style={{ margin: 0, fontSize: '1.1rem' }}>🛠️ Advanced System Diagnostics</h3>
-          </div>
-          <div className="card-body">
-            <p style={{ color: '#94a3b8', fontSize: '0.9rem' }}>
-              Database Mode: <strong>SQLite (WAL Mode)</strong> with automatic DDL Schema Inspector listener (`_sync_schema_sync`).
-            </p>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button className="btn btn-secondary" onClick={() => systemApi.health().then(res => alert(JSON.stringify(res, null, 2)))}>
-                Check Backend System Health
-              </button>
+              <p style={{ color: '#94a3b8', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+                Database: <strong>SQLite (WAL)</strong> + schema inspector (`_sync_schema_sync`).
+              </p>
+
+              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <button type="submit" className="btn btn-primary" disabled={saving}>
+                  {saving ? <><ButtonSpinner /> Đang lưu...</> : 'Save System Settings'}
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={handleTestStorageConnection} disabled={storageTesting}>
+                  {storageTesting ? 'Testing...' : 'Test Storage'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => systemApi.health().then(res => alert(JSON.stringify(res, null, 2)))}
+                >
+                  Check Backend Health
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+        </form>
       )}
 
       {/* MODAL: ADD API KEY */}
