@@ -105,7 +105,8 @@ def main():
         # Wait for frontend server
         wait_for_server("http://localhost:5173")
 
-        # Determine icon path
+        # Determine icon path. A PNG renamed to .ico is not a Windows ICO and
+        # can crash pywebview before the window appears (pythonw hides stderr).
         icon_file = str(ICON_PATH) if ICON_PATH.exists() else str(PNG_ICON_PATH)
 
         # Create Native GUI Window
@@ -119,7 +120,10 @@ def main():
         )
 
         # Start GUI Loop (blocks until user closes window)
-        webview.start(icon=icon_file)
+        try:
+            webview.start(icon=icon_file)
+        except Exception:
+            webview.start()
 
     finally:
         # Cleanup when app window is closed

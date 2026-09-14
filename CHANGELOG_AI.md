@@ -1,3 +1,8 @@
+- **Fix desktop app not opening after a fake ICO (2026-09-14)**:
+  - **Symptom**: Double-clicking AutoTransAi did nothing. `pythonw.exe` hid the error.
+  - **Root cause**: `frontend/public/app-logo.ico` was a 1254×1254 PNG saved with a `.ico` name. `webview.start(icon=...)` on Windows needs a real ICO container (typically ≤256px).
+  - **Fix**: Rebuild a 6-size Windows ICO. Launcher still opens the window if the icon file is invalid.
+
 - **Remaster frontend visual system across all pages (2026-09-14)**:
   - **Scope**: Visual/layout only. 6-stage Studio flow, APIs, and pipeline unchanged.
   - **Design system**: New tokens, Plus Jakarta Sans, glass navbar pills, cards, buttons, tabs, forms, modals, hover/press motion in [App.css](frontend/src/App.css).
