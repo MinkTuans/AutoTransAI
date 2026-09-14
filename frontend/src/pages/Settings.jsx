@@ -555,7 +555,6 @@ export default function Settings() {
           { id: 'functions', label: 'Function' },
           { id: 'models', label: 'Models' },
           { id: 'social', label: 'Social' },
-          { id: 'processing', label: 'Processing' },
           { id: 'system', label: 'System' },
         ].map(tab => (
           <button
@@ -998,68 +997,7 @@ export default function Settings() {
         </div>
       )}
 
-      {/* TAB 5: PROCESSING SETTINGS */}
-      {activeTab === 'processing' && (
-        <div className="card">
-          <div className="card-header">
-            <h3 style={{ margin: 0, fontSize: '1.1rem' }}>⚙️ Processing & Media Engine Settings</h3>
-            <p style={{ margin: '0.35rem 0 0', fontSize: '0.85rem', color: '#94a3b8' }}>
-              Điều khiển engine khi chạy job: bao nhiêu việc làm cùng lúc, retry khi lỗi, độ dài clip, và cách khớp độ dài audio lồng tiếng với video.
-            </p>
-          </div>
-          <div className="card-body">
-            <form onSubmit={handleSaveSystemSettings}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
-                <div className="form-group">
-                  <label>Max Concurrent Jobs</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    value={systemSettings.max_concurrency}
-                    onChange={(e) => setSystemSettings({ ...systemSettings, max_concurrency: e.target.value })}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Max Retry Count</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    value={systemSettings.max_retries}
-                    onChange={(e) => setSystemSettings({ ...systemSettings, max_retries: e.target.value })}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Video Target Clip Duration (s)</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    value={systemSettings.video_target_duration}
-                    onChange={(e) => setSystemSettings({ ...systemSettings, video_target_duration: e.target.value })}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Sync Strategy</label>
-                  <select
-                    className="form-control"
-                    value={systemSettings.sync_strategy}
-                    onChange={(e) => setSystemSettings({ ...systemSettings, sync_strategy: e.target.value })}
-                  >
-                    <option value="trim_video">Trim Video</option>
-                    <option value="loop_video">Loop Video</option>
-                    <option value="pad_video">Pad Video</option>
-                    <option value="speed_video">Speed Video (atempo)</option>
-                  </select>
-                </div>
-              </div>
-              <button type="submit" className="btn btn-primary" disabled={saving}>
-                {saving ? 'Saving...' : 'Save Processing Settings'}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 6: SYSTEM (storage + workflow defaults + diagnostics) */}
+      {/* TAB 5: SYSTEM (storage + workflow defaults + diagnostics) */}
       {activeTab === 'system' && (
         <form onSubmit={handleSaveSystemSettings} style={{ display: 'grid', gap: '1rem' }}>
           <div className="card">
