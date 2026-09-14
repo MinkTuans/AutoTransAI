@@ -16,6 +16,7 @@ from app.workflow.workflow_engine import WorkflowEngine
 from app.workflow.stages.publish_stage import PublishStage
 from app.workflow.stages.produce_stage import ProduceStage
 from app.workflow.stages.translate_stage import TranslateStage
+from app.workflow.stages.ingest_stage import IngestStage
 
 
 @pytest.mark.asyncio
@@ -44,6 +45,24 @@ async def test_workflow_context_serialization():
     hydrated = WorkflowContext.from_dict(data)
     assert hydrated.project_id == "test_p1"
     assert hydrated.duration == 120.5
+
+
+def test_ingest_trims_filler_after_audio_extract():
+    steps = IngestStage.STEPS
+    assert "trim_filler" in steps
+    assert steps.index("trim_filler") > steps.index("extract_audio")
+
+
+@pytest.mark.asyncio
+async def test_trim_filler_skipped_when_disabled():
+    stage = IngestStage()
+    ctx = WorkflowContext(project_id="p-trim-off")
+    ctx.settings_snapshot = {"trim_filler_enabled": False}
+    ctx.video_path = "/tmp/missing.mp4"
+    ctx.duration = 100.0
+    res = await stage._trim_filler(ctx)
+    assert res["applied"] is False
+    assert res["reason"] == "disabled"
 
 
 def test_produce_generates_thumbnail_after_final_video():

@@ -67,6 +67,7 @@ class WorkflowContext:
     thumbnail_url: Optional[str] = None
     thumbnail_source: str = "ai"
     thumbnail_library_path: Optional[str] = None
+    trim_filler_enabled: bool = True
     settings_snapshot: dict[str, Any] = field(default_factory=dict)
 
     # QC Reports per stage
@@ -116,7 +117,9 @@ class WorkflowContext:
             "thumbnail_url": self.thumbnail_url,
             "thumbnail_source": self.thumbnail_source,
             "thumbnail_library_path": self.thumbnail_library_path,
+            "trim_filler_enabled": self.trim_filler_enabled,
             "settings_snapshot": self.settings_snapshot,
+            "trim_filler": (self.video_metadata or {}).get("trim_applied"),
             "qc_reports": self.qc_reports,
             "seo_metadata": self.seo_metadata,
             "publication_status": self.publication_status,
@@ -178,6 +181,14 @@ class WorkflowContext:
         ctx.thumbnail_url = data.get("thumbnail_url")
         ctx.thumbnail_source = data.get("thumbnail_source") or snapshot.get("thumbnail_source") or "ai"
         ctx.thumbnail_library_path = data.get("thumbnail_library_path") or snapshot.get("thumbnail_library_path")
+
+        trim_raw = data.get("trim_filler_enabled") if "trim_filler_enabled" in data else snapshot.get("trim_filler_enabled")
+        if isinstance(trim_raw, str):
+            ctx.trim_filler_enabled = trim_raw.strip().lower() in ("true", "1", "yes", "on")
+        elif trim_raw is None:
+            ctx.trim_filler_enabled = True
+        else:
+            ctx.trim_filler_enabled = bool(trim_raw)
 
         ctx.qc_reports = data.get("qc_reports", {})
         ctx.seo_metadata = data.get("seo_metadata", {})

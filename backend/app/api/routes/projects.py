@@ -63,6 +63,7 @@ DEFAULT_PROJECT_SETTINGS = {
     "target_language": "vi",
     "auto_detect_language": True,
     "auto_confirm_translation": True,
+    "trim_filler_enabled": True,
     "stt_provider_id": None,
     "stt_model": None,
     "translation_provider_id": None,
@@ -132,6 +133,7 @@ def normalize_project_settings(raw_settings: Optional[dict]) -> dict:
     res["watermark_enabled"] = _parse_bool(res.get("watermark_enabled"), False)
     res["thumbnail_enabled"] = _parse_bool(res.get("thumbnail_enabled"), False)
     res["auto_confirm_translation"] = _parse_bool(res.get("auto_confirm_translation"), True)
+    res["trim_filler_enabled"] = _parse_bool(res.get("trim_filler_enabled"), True)
 
     # Normalize YouTube SEO Settings
     res["youtube_enabled"] = _parse_bool(res.get("youtube_enabled"), True)

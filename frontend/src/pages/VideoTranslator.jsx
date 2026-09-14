@@ -49,6 +49,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   const [originalAudioMode, setOriginalAudioMode] = useState('mute');
   const [originalAudioVolume, setOriginalAudioVolume] = useState(0.20);
   const [autoConfirmTranslation, setAutoConfirmTranslation] = useState(true);
+  const [trimFillerEnabled, setTrimFillerEnabled] = useState(true);
 
   // Watermark Settings State
   const [watermarkEnabled, setWatermarkEnabled] = useState(false);
@@ -147,6 +148,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     original_audio_mode: originalAudioMode,
     original_audio_volume: originalAudioVolume,
     auto_confirm_translation: autoConfirmTranslation,
+    trim_filler_enabled: trimFillerEnabled,
     watermark_enabled: watermarkEnabled,
     watermark_type: watermarkType,
     watermark_image_path: watermarkImagePath,
@@ -297,6 +299,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     if (cfg.original_audio_mode) setOriginalAudioMode(cfg.original_audio_mode);
     if (cfg.original_audio_volume !== undefined) setOriginalAudioVolume(cfg.original_audio_volume);
     setAutoConfirmTranslation(parseBool(cfg.auto_confirm_translation, true));
+    setTrimFillerEnabled(parseBool(cfg.trim_filler_enabled, true));
 
     setWatermarkEnabled(parseBool(cfg.watermark_enabled, false));
     setWatermarkType(cfg.watermark_type || 'image');
@@ -348,6 +351,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     const compareKeys = [
       'target_language', 'source_language', 'audio_provider_id', 'llm_provider_id',
       'stt_model', 'voice_id', 'original_audio_mode', 'original_audio_volume', 'auto_confirm_translation',
+      'trim_filler_enabled',
       'watermark_enabled', 'watermark_type', 'watermark_image_path', 'watermark_text',
       'watermark_position', 'watermark_scale', 'watermark_opacity', 'watermark_margin',
       'watermark_font_size', 'thumbnail_enabled', 'thumbnail_provider', 'thumbnail_model',
@@ -376,6 +380,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     originalAudioMode,
     originalAudioVolume,
     autoConfirmTranslation,
+    trimFillerEnabled,
     watermarkEnabled,
     watermarkType,
     watermarkImagePath,
@@ -621,6 +626,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         audio_provider_id: audioProviderId,
         llm_provider_id: llmProviderId,
         voice_id: voiceId,
+        auto_confirm_translation: autoConfirmTranslation,
+        trim_filler_enabled: trimFillerEnabled,
         watermark_enabled: watermarkEnabled,
         watermark_type: watermarkType,
         watermark_image_path: watermarkImagePath,
@@ -1002,6 +1009,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         voice_id: voiceId,
         original_audio_mode: originalAudioMode,
         auto_confirm_translation: autoConfirmTranslation,
+        trim_filler_enabled: trimFillerEnabled,
         watermark_enabled: watermarkEnabled,
         watermark_type: watermarkType,
         watermark_image_path: watermarkImagePath,
@@ -1347,8 +1355,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                 </select>
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0', marginTop: '16px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
                   <input
                     type="checkbox"
                     checked={autoConfirmTranslation}
@@ -1356,6 +1364,15 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                     style={{ width: '16px', height: '16px', accentColor: '#10b981', cursor: 'pointer' }}
                   />
                   Auto-Confirm Translation
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
+                  <input
+                    type="checkbox"
+                    checked={trimFillerEnabled}
+                    onChange={(e) => setTrimFillerEnabled(e.target.checked)}
+                    style={{ width: '16px', height: '16px', accentColor: '#10b981', cursor: 'pointer' }}
+                  />
+                  Tự cắt intro/outro thừa
                 </label>
               </div>
             </div>

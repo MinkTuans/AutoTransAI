@@ -1,3 +1,8 @@
+- **Auto-trim intro/outro filler before STT (2026-09-14)**:
+  - **Problem**: Videos with ~7 min of content plus ~7 min of endcards/ads still went through STT/TTS/render for the whole file.
+  - **Behavior**: Optional Studio checkbox `Tự cắt intro/outro thừa` (default on, same pattern as Auto-Confirm Translation). After audio extract, scan the full timeline (silence + freeze on head/tail) and optionally confirm edges with Gemini. `ffmpeg -ss/-t -c copy` writes `content_trimmed.mp4`, original file is kept.
+  - **Safety**: Only head and tail; refuse if keep-window &lt; 40% or &lt; 60s; 20s dead-zone required.
+
 - **Refresh Windows Search/Start shortcut icon (2026-09-14)**:
   - **Symptom**: Search still showed the old hoodie wolf after the T-wolf logo landed.
   - **Root cause**: Start Menu uses `AutoTransAI Studio.lnk` + Windows icon cache, not the in-app PNG.

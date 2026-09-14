@@ -21,6 +21,7 @@ class IngestStage:
         "probe_video",
         "store_asset",
         "extract_audio",
+        "trim_filler",
     ]
 
     async def execute_step(self, step_name: str, ctx: WorkflowContext, db: Any) -> dict[str, Any]:
@@ -37,6 +38,8 @@ class IngestStage:
             return await self._store_asset(ctx, db)
         elif step_name == "extract_audio":
             return await self._extract_audio(ctx)
+        elif step_name == "trim_filler":
+            return await self._trim_filler(ctx)
         else:
             raise ValueError(f"Unknown step in INGEST stage: {step_name}")
 
@@ -168,3 +171,49 @@ class IngestStage:
         extracted_path = await extract_audio_from_video(Path(ctx.video_path), output_wav)
         ctx.audio_path = str(extracted_path)
         return {"audio_path": str(extracted_path)}
+
+    def _trim_enabled(self, ctx: WorkflowContext) -> bool:
+        snapshot = ctx.settings_snapshot or {}
+        raw = snapshot.get("trim_filler_enabled")
+        if raw is None:
+            raw = getattr(ctx, "trim_filler_enabled", True)
+        if isinstance(raw, str):
+            return raw.strip().lower() in ("true", "1", "yes", "on")
+        return bool(raw) if raw is not None else True
+
+    async def _trim_filler(self, ctx: WorkflowContext) -> dict[str, Any]:
+        from app.services.video_translator.filler_detector import detect_and_trim_filler
+        from app.services.video_translator.translator_service import extract_audio_from_video
+
+        if not self._trim_enabled(ctx):
+            return {"applied": False, "reason": "disabled"}
+
+        src = Path(ctx.video_path) if ctx.video_path else None
+        if not src or not src.is_file():
+            return {"applied": False, "reason": "missing_video"}
+
+        out_video = src.parent / "content_trimmed.mp4"
+        out_audio = src.parent / "extracted_audio_trimmed.wav"
+
+        async def _reextract(video: Path, wav: Path):
+            return await extract_audio_from_video(video, wav)
+
+        result = await detect_and_trim_filler(
+            video_path=str(src),
+            audio_path=ctx.audio_path or "",
+            duration=float(ctx.duration or 0.0),
+            output_video=str(out_video),
+            output_audio=str(out_audio),
+            enabled=True,
+            extract_audio=_reextract,
+        )
+        if result.get("applied"):
+            ctx.video_metadata = dict(ctx.video_metadata or {})
+            ctx.video_metadata["original_video_path"] = result.get("original_video_path")
+            ctx.video_metadata["trim_applied"] = True
+            ctx.video_metadata["content_start_sec"] = result.get("start_sec")
+            ctx.video_metadata["content_end_sec"] = result.get("end_sec")
+            ctx.video_path = result["video_path"]
+            ctx.audio_path = result.get("audio_path") or ctx.audio_path
+            ctx.duration = float(result["end_sec"]) - float(result["start_sec"])
+        return result

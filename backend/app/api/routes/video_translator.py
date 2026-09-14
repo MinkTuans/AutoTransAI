@@ -145,6 +145,7 @@ class CreateJobRequest(BaseModel):
     voice_id: Optional[str] = None
     original_audio_mode: str = "mute"
     auto_confirm_translation: bool = True
+    trim_filler_enabled: bool = True
     
     # Watermark Settings
     watermark_enabled: bool = False
@@ -533,9 +534,11 @@ async def create_translation_job(
     wm_font_size = body.watermark_font_size if body.watermark_font_size != 32 else proj_settings.get("watermark_font_size", 32)
 
     auto_confirm = _parse_bool(body.auto_confirm_translation, proj_settings.get("auto_confirm_translation", True))
+    trim_filler = _parse_bool(getattr(body, "trim_filler_enabled", True), proj_settings.get("trim_filler_enabled", True))
 
     settings_snapshot = {
         "auto_confirm_translation": auto_confirm,
+        "trim_filler_enabled": trim_filler,
         "stt": {
             "provider": body.llm_provider_id or proj_settings.get("stt_provider_id", "gemini"),
             "model": proj_settings.get("stt_model", "gemini-2.0-flash"),
@@ -753,6 +756,63 @@ async def start_translation_pipeline(
                     b_job.last_checkpoint_stage = "EXTRACTING_AUDIO_DONE"
                     b_job.last_checkpoint_at = now_dt
                     await bg_session.commit()
+
+                    # 1b. Trim intro/outro filler before STT
+                    snap = {}
+                    if b_job.settings_snapshot_json:
+                        try:
+                            snap = json.loads(b_job.settings_snapshot_json)
+                        except Exception:
+                            snap = {}
+                    trim_on = _parse_bool(snap.get("trim_filler_enabled"), True)
+                    if trim_on:
+                        from app.services.video_translator.filler_detector import detect_and_trim_filler
+                        from app.media.ffprobe import probe_duration_async
+
+                        b_job.current_step = "Đang lọc intro/outro thừa"
+                        await bg_session.commit()
+                        try:
+                            meta_dur = await probe_duration_async(local_asset_path)
+                        except Exception:
+                            meta_dur = 0.0
+
+                        async def _llm_generate(prompt: str) -> str:
+                            from app.providers.llm.gemini_provider import GeminiLLMProvider
+                            return await GeminiLLMProvider().generate_text(prompt, model="gemini-2.0-flash")
+
+                        async def _reextract(video_path, wav_path):
+                            return await extract_audio_from_video(
+                                video_path,
+                                wav_path,
+                                job_id=job_id,
+                            )
+
+                        trim_res = await detect_and_trim_filler(
+                            video_path=str(local_asset_path),
+                            audio_path=str(extracted_audio_path),
+                            duration=float(meta_dur or 0.0),
+                            output_video=str(job_dir / "content_trimmed.mp4"),
+                            output_audio=str(job_dir / "extracted_audio_trimmed.wav"),
+                            enabled=True,
+                            llm_generate=_llm_generate,
+                            extract_audio=_reextract,
+                        )
+                        if trim_res.get("applied") and Path(trim_res["video_path"]).is_file():
+                            local_asset_path = Path(trim_res["video_path"])
+                            extracted_audio_path = Path(trim_res.get("audio_path") or extracted_audio_path)
+                            b_asset.file_path = str(local_asset_path)
+                            snap["trim_filler"] = {
+                                "applied": True,
+                                "original_duration": trim_res.get("original_duration"),
+                                "start_sec": trim_res.get("start_sec"),
+                                "end_sec": trim_res.get("end_sec"),
+                                "original_video_path": trim_res.get("original_video_path"),
+                                "notice": trim_res.get("notice"),
+                            }
+                            b_job.settings_snapshot_json = json.dumps(snap)
+                            b_job.current_step = trim_res.get("notice") or "Đã cắt intro/outro thừa"
+                            log_job_event(job_id, "TRIM_FILLER", b_job.current_step)
+                            await bg_session.commit()
 
                     # 2. STT & Language Detection
                     current_stage = "STT"
@@ -1952,6 +2012,7 @@ class StartWorkflowRequest(BaseModel):
     llm_provider_id: Optional[str] = Field("gemini", description="LLM translation provider ID")
     voice_id: Optional[str] = Field(None, description="Voice model ID")
     auto_confirm_translation: Optional[bool] = Field(True, description="Automatically confirm translation text segments and proceed to TTS dubbing render")
+    trim_filler_enabled: Optional[bool] = Field(True, description="Auto-trim intro/outro filler before STT")
     watermark_enabled: Optional[bool] = Field(False, description="Enable watermark embedding")
     watermark_type: Optional[str] = Field("image", description="Watermark type: image or text")
     watermark_image_path: Optional[str] = Field(None, description="Watermark image path")

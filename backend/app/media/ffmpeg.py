@@ -26,6 +26,30 @@ async def trim_video_async(input_path: Path, output_path: Path, duration: float)
     return output_path
 
 
+async def trim_video_window_async(
+    input_path: Path,
+    output_path: Path,
+    start_sec: float,
+    end_sec: float,
+) -> Path:
+    """Keep [start_sec, end_sec) via stream copy. Original file is not overwritten."""
+    from app.services.video_translator.filler_detector import build_trim_window_cmd
+
+    _check_ffmpeg()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = build_trim_window_cmd(str(input_path), str(output_path), start_sec, end_sec)
+    timeout = max(180, int(max(1.0, end_sec - start_sec) * 2))
+    await safe_subprocess_run_async(cmd, timeout=timeout)
+    logger.info(
+        "Video window trimmed",
+        input=str(input_path),
+        start=start_sec,
+        end=end_sec,
+        output=str(output_path),
+    )
+    return output_path
+
+
 async def loop_video_async(input_path: Path, output_path: Path, target_duration: float) -> Path:
     """Loop a video to fill a target duration (non-blocking async)."""
     _check_ffmpeg()
