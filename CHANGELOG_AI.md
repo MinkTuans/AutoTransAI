@@ -1,3 +1,7 @@
+- **Fix Windows NotImplementedError on URL ingest (2026-09-14)**:
+  - **Root cause**: `run_yt_dlp_with_progress_async` used `asyncio.create_subprocess_exec`, which raises `NotImplementedError` on Windows uvicorn SelectorEventLoop. Transfer failed before a Job ID existed.
+  - **Fix**: Spawn yt-dlp with `subprocess.Popen` + `asyncio.to_thread` (same pattern as FFmpeg progress). Tests assert no `asyncio.create_subprocess_exec` and parse a progress line from Popen stdout.
+
 - **Show ingest transfer progress and harden Bilibili download (2026-09-14)**:
   - **Symptoms**: Pipeline stuck at INGEST 0% with no Job ID; yt-dlp `509 bytes read, 18052770 more expected` after 10 retries.
   - **Root cause**: `POST /import` blocked until yt-dlp finished (no progress). Default 10 retries + concurrent fragments + caching tiny leftover files.

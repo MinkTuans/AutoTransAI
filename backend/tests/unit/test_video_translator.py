@@ -114,6 +114,34 @@ def test_parse_yt_dlp_progress_line():
     assert parse_yt_dlp_progress_line("ERROR: boom") is None
 
 
+def test_yt_dlp_progress_runner_uses_popen_not_asyncio_subprocess():
+    """Windows uvicorn SelectorEventLoop raises NotImplementedError on create_subprocess_exec."""
+    import inspect
+    from app.services.video_source.page_url_adapter import run_yt_dlp_with_progress_async
+
+    src = inspect.getsource(run_yt_dlp_with_progress_async)
+    assert "asyncio.create_subprocess_exec" not in src
+    assert "subprocess.Popen" in src
+
+
+@pytest.mark.anyio
+async def test_yt_dlp_progress_runner_parses_lines_from_popen():
+    """Progress callback must work via Popen stdout, the Windows-safe path."""
+    import sys
+    from app.services.video_source.page_url_adapter import run_yt_dlp_with_progress_async
+
+    events = []
+    cmd = [
+        sys.executable,
+        "-c",
+        "print('[download]  45.2% of  17.22MiB at  1.10MiB/s ETA 00:13', flush=True)",
+    ]
+    rc, log = await run_yt_dlp_with_progress_async(cmd, timeout=10, progress_callback=events.append)
+    assert rc == 0
+    assert events
+    assert events[0]["percent"] == 45.2
+
+
 def test_yt_dlp_truncated_download_error_is_human_readable():
     """Incomplete CDN read must not look like a generic exit 1."""
     from app.services.video_source.page_url_adapter import raise_yt_dlp_download_error

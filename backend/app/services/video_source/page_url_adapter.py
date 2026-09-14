@@ -12,6 +12,8 @@ import asyncio
 import json
 import re
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import Callable, Optional, Dict, Any
 from urllib.parse import parse_qs, urlparse
@@ -232,40 +234,56 @@ async def run_yt_dlp_with_progress_async(
     timeout: int,
     progress_callback: Optional[Callable[..., None]] = None,
 ) -> tuple[int, str]:
-    """Run yt-dlp, parse `--newline` progress, return (returncode, combined_log)."""
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    logs: list[str] = []
+    """Run yt-dlp via Popen (Windows uvicorn SelectorEventLoop cannot create_subprocess_exec)."""
+    try:
+        popen_kwargs: dict[str, Any] = {
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.STDOUT,
+            "text": True,
+            "bufsize": 1,
+            "encoding": "utf-8",
+            "errors": "replace",
+        }
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        process = subprocess.Popen(cmd, **popen_kwargs)
+    except NotImplementedError as e:
+        raise ValueError(
+            "Không chạy được yt-dlp trên event loop hiện tại (Windows). "
+            "Dùng subprocess.Popen thay vì asyncio subprocess."
+        ) from e
 
-    async def _consume():
-        assert proc.stdout is not None
-        while True:
-            raw = await proc.stdout.readline()
-            if not raw:
-                break
-            text = raw.decode("utf-8", errors="replace").rstrip()
-            if text:
-                logs.append(text)
-            parsed = parse_yt_dlp_progress_line(text)
-            if parsed and progress_callback:
-                try:
-                    progress_callback(parsed)
-                except TypeError:
-                    progress_callback(parsed["downloaded_bytes"], parsed["total_bytes"])
-                except Exception:
-                    pass
+    logs: list[str] = []
+    loop = asyncio.get_running_loop()
+
+    def _emit(parsed: dict[str, Any]) -> None:
+        if not progress_callback:
+            return
+        try:
+            progress_callback(parsed)
+        except TypeError:
+            progress_callback(parsed["downloaded_bytes"], parsed["total_bytes"])
+        except Exception:
+            pass
+
+    def _read_worker() -> int:
+        if process.stdout:
+            for line in process.stdout:
+                text = (line or "").rstrip()
+                if text:
+                    logs.append(text)
+                parsed = parse_yt_dlp_progress_line(text)
+                if parsed:
+                    loop.call_soon_threadsafe(_emit, parsed)
+        return process.wait()
 
     try:
-        await asyncio.wait_for(_consume(), timeout=timeout)
-        returncode = await asyncio.wait_for(proc.wait(), timeout=10)
+        returncode = await asyncio.wait_for(asyncio.to_thread(_read_worker), timeout=timeout)
     except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
+        process.kill()
+        await asyncio.to_thread(process.wait)
         raise ValueError("Hết thời gian tải video.")
-    return returncode, "\n".join(logs)
+    return int(returncode), "\n".join(logs)
 
 
 def _get_yt_dlp_executable() -> str | None:
