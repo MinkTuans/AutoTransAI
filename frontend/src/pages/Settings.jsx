@@ -726,8 +726,10 @@ export default function Settings() {
           </div>
           <div className="card-body">
             {/* Banner Notice for STT Gemini Requirement */}
-            <div className="alert alert-info" style={{ marginBottom: '1.5rem', fontSize: '0.85rem' }}>
-              📌 <strong>Speech-to-Text Policy:</strong> High-precision audio transcription uses <strong>Google Gemini</strong>. When Gemini STT fallback is disabled, any Gemini API error stops pipeline immediately with a clear error without calling OpenAI/Whisper.
+            <div className="alert alert-info" style={{ marginBottom: '1.5rem', fontSize: '0.85rem', display: 'block' }}>
+              <p style={{ margin: 0, lineHeight: 1.55 }}>
+                <strong>Speech-to-Text Policy:</strong> High-precision audio transcription uses <strong>Google Gemini</strong>. When Gemini STT fallback is disabled, any Gemini API error stops the pipeline immediately with a clear error, without calling OpenAI/Whisper.
+              </p>
             </div>
 
             {functionsList.length === 0 ? (

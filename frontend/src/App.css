@@ -759,15 +759,17 @@ textarea:focus {
 
 .tab-btn {
   appearance: none;
+  flex: 1 1 0;
   border: none;
   background: transparent;
   color: var(--text-secondary);
   font-weight: 650;
   font-size: 0.84rem;
-  padding: 0.55rem 0.95rem;
+  padding: 0.55rem 0.5rem;
   border-radius: 10px;
   cursor: pointer;
   white-space: nowrap;
+  text-align: center;
   transition: all var(--ease);
 }
 
