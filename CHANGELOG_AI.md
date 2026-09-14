@@ -1,3 +1,8 @@
+- **Refresh Windows Search/Start shortcut icon (2026-09-14)**:
+  - **Symptom**: Search still showed the old hoodie wolf after the T-wolf logo landed.
+  - **Root cause**: Start Menu uses `AutoTransAI Studio.lnk` + Windows icon cache, not the in-app PNG.
+  - **Fix**: `update_app_icon.ps1` rewrites the project/Start Menu shortcuts to `app-logo.ico` and runs on launch.
+
 - **Fix desktop app not opening after a fake ICO (2026-09-14)**:
   - **Symptom**: Double-clicking AutoTransAi did nothing. `pythonw.exe` hid the error.
   - **Root cause**: `frontend/public/app-logo.ico` was a 1254×1254 PNG saved with a `.ico` name. `webview.start(icon=...)` on Windows needs a real ICO container (typically ≤256px).
