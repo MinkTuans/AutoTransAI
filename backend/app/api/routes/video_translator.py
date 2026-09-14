@@ -53,6 +53,12 @@ from app.services.video_editor.watermark_service import (
 
 from app.providers.registry import get_registry
 from app.services.video_source import get_video_source_service
+from app.services.video_source.transfer_progress import (
+    apply_yt_dlp_progress,
+    create_transfer,
+    get_transfer,
+    update_transfer,
+)
 from app.services.video_translator import (
     extract_audio_from_video,
     speech_to_text_and_detect_language,
@@ -307,6 +313,109 @@ async def import_video_asset(
             "file_path": asset.file_path,
         },
     }
+
+
+async def _run_url_transfer(transfer_id: str, url: str) -> None:
+    """Background URL download so the UI can poll percent/bytes/speed."""
+    update_transfer(transfer_id, status="running", message="Đang tải xuống video...")
+    service = get_video_source_service()
+    asset_id = str(uuid.uuid4())[:8]
+    storage_dir = settings.DATA_DIR / "translator" / "assets" / asset_id
+    storage_dir.mkdir(parents=True, exist_ok=True)
+
+    def _on_progress(info):
+        apply_yt_dlp_progress(transfer_id, info)
+        rec = get_transfer(transfer_id) or {}
+        pct = rec.get("percent") or 0
+        update_transfer(
+            transfer_id,
+            message=f"Đang tải xuống {pct:.0f}% ({rec.get('speed') or '…'})",
+        )
+
+    try:
+        meta = await service.download_video(url, storage_dir, progress_callback=_on_progress)
+        update_transfer(transfer_id, percent=100, message="Đang lưu file...")
+        asset = VideoAsset(
+            id=asset_id,
+            source_type=AssetSourceType.URL.value,
+            source_url=url,
+            source_domain=meta.get("domain", "web"),
+            title=meta["title"],
+            original_filename=Path(meta["local_path"]).name,
+            file_path=meta["local_path"],
+            mime_type=meta.get("mime_type", "video/mp4"),
+            file_size=meta["file_size"],
+            duration=meta["duration"],
+            width=meta["width"],
+            height=meta["height"],
+            audio_available=meta["audio_available"],
+            status="ready",
+        )
+        try:
+            asset_local_file = Path(meta["local_path"])
+            r2_asset_key = f"translator/assets/{asset_id}/{asset_local_file.name}"
+            obj_key, asset_url = await storage_service.upload_file(
+                asset_local_file,
+                r2_asset_key,
+                content_type=meta.get("mime_type", "video/mp4"),
+            )
+            asset.r2_key = obj_key
+            asset.url = asset_url
+        except Exception as store_err:
+            logger.warning("Error storing asset in R2", error=str(store_err), asset_id=asset_id)
+
+        async with async_session_factory() as session:
+            session.add(asset)
+            await session.commit()
+
+        payload = {
+            "asset_id": asset.id,
+            "title": asset.title,
+            "source_type": asset.source_type,
+            "source_domain": asset.source_domain,
+            "duration": asset.duration,
+            "width": asset.width,
+            "height": asset.height,
+            "file_size": asset.file_size,
+            "audio_available": asset.audio_available,
+            "file_path": asset.file_path,
+        }
+        update_transfer(
+            transfer_id,
+            status="done",
+            percent=100,
+            message="Tải xong",
+            asset=payload,
+        )
+    except Exception as e:
+        msg = str(e).strip() or e.__class__.__name__
+        update_transfer(transfer_id, status="failed", error=msg, message=msg)
+
+
+@router.post("/transfers", response_model=dict)
+async def start_media_transfer(
+    source_type: str = Form("url"),
+    url: Optional[str] = Form(None),
+):
+    """Start an async URL download and return a transfer_id for progress polling."""
+    if source_type != "url":
+        raise HTTPException(
+            status_code=400,
+            detail="❌ Upload file dùng progress phía trình duyệt. URL thì gọi /transfers.",
+        )
+    if not url:
+        raise HTTPException(status_code=400, detail="❌ Vui lòng nhập Video URL.")
+    transfer_id = create_transfer("download", "Đang khởi tạo tải xuống...")
+    asyncio.create_task(_run_url_transfer(transfer_id, url))
+    return {"success": True, "data": get_transfer(transfer_id)}
+
+
+@router.get("/transfers/{transfer_id}", response_model=dict)
+async def get_media_transfer(transfer_id: str):
+    rec = get_transfer(transfer_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="❌ Không tìm thấy tiến độ tải.")
+    return {"success": True, "data": rec}
 
 
 @router.post("/upload-watermark-logo", response_model=dict)

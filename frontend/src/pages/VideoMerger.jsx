@@ -58,7 +58,11 @@ export default function VideoMerger() {
       const file = fileList[i];
       setUploadProgress(`Đang tải lên (${i + 1}/${fileList.length}): ${file.name}...`);
       try {
-        const res = await videoMergerApi.upload(file);
+        const res = await videoMergerApi.upload(file, (evt) => {
+          if (!evt.total) return;
+          const percent = Math.round((evt.loaded / evt.total) * 100);
+          setUploadProgress(`Đang tải lên (${i + 1}/${fileList.length}): ${file.name} — ${percent}%`);
+        });
         if (res.success && res.data) {
           newItems.push({
             id: res.data.id || `file_${Date.now()}_${i}`,

@@ -87,11 +87,20 @@ export const videoTranslatorApi = {
     formData.append('url', url);
     return api.post('/video-translator/import', formData).then(res => res.data);
   },
-  importUpload: (file) => {
+  startUrlTransfer: (url) => {
+    const formData = new FormData();
+    formData.append('source_type', 'url');
+    formData.append('url', url);
+    return api.post('/video-translator/transfers', formData).then(res => res.data);
+  },
+  getTransfer: (transferId) => api.get(`/video-translator/transfers/${transferId}`).then(res => res.data),
+  importUpload: (file, onUploadProgress) => {
     const formData = new FormData();
     formData.append('source_type', 'upload');
     formData.append('file', file);
-    return api.post('/video-translator/import', formData).then(res => res.data);
+    return api.post('/video-translator/import', formData, {
+      onUploadProgress,
+    }).then(res => res.data);
   },
   getAsset: (assetId) => api.get(`/video-translator/assets/${assetId}`).then(res => res.data),
   createJob: (data) => api.post('/video-translator/jobs', data).then(res => res.data),
@@ -102,14 +111,14 @@ export const videoTranslatorApi = {
   renderJob: (jobId) => api.post(`/video-translator/jobs/${jobId}/render`).then(res => res.data),
   renderFinalVideo: (jobId) => api.post(`/video-translator/jobs/${jobId}/render`).then(res => res.data),
   getLogs: (jobId) => api.get(`/video-translator/jobs/${jobId}/logs`).then(res => res.data),
-  uploadWatermarkLogo: (file, projectId = null) => {
+  uploadWatermarkLogo: (file, projectId = null, onUploadProgress) => {
     const formData = new FormData();
     formData.append('file', file);
     if (projectId) {
       formData.append('project_id', projectId);
     }
     return api.post('/video-translator/upload-watermark-logo', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress,
     }).then(res => res.data);
   },
   cancelJob: (jobId) => api.post(`/video-translator/jobs/${jobId}/cancel`).then(res => res.data),
@@ -172,11 +181,11 @@ export const youtubeApi = {
 };
 
 export const videoMergerApi = {
-  upload: (file) => {
+  upload: (file, onUploadProgress) => {
     const formData = new FormData();
     formData.append('file', file);
     return api.post('/video-merger/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress,
     }).then(res => res.data);
   },
   listAssets: () => api.get('/video-merger/assets').then(res => res.data),

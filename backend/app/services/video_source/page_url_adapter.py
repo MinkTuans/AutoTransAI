@@ -51,6 +51,51 @@ def _is_bilibili_domain(domain: str) -> bool:
     return "bilibili" in d or d == "b23.tv" or d.endswith(".b23.tv")
 
 
+_SIZE_UNITS = {
+    "B": 1,
+    "KB": 1000,
+    "KIB": 1024,
+    "MB": 1000 * 1000,
+    "MIB": 1024 * 1024,
+    "GB": 1000 * 1000 * 1000,
+    "GIB": 1024 * 1024 * 1024,
+}
+
+_YT_DLP_PROGRESS_RE = re.compile(
+    r"\[download\]\s+(?P<pct>[\d.]+)%\s+of\s+~?(?P<size>[\d.]+)\s*(?P<sunit>KiB|MiB|GiB|kB|MB|GB|B)"
+    r"(?:\s+at\s+(?P<speed>[\d.]+)\s*(?P<spunit>KiB|MiB|GiB|kB|MB|GB|B)/s)?"
+    r"(?:\s+ETA\s+(?P<eta>\S+))?",
+    re.IGNORECASE,
+)
+
+
+def _unit_to_bytes(value: float, unit: str) -> int:
+    return int(value * _SIZE_UNITS.get((unit or "B").upper(), 1))
+
+
+def parse_yt_dlp_progress_line(line: str) -> dict[str, Any] | None:
+    """Parse a yt-dlp `--newline` download progress line."""
+    if not line:
+        return None
+    match = _YT_DLP_PROGRESS_RE.search(line)
+    if not match:
+        return None
+    pct = float(match.group("pct"))
+    total = _unit_to_bytes(float(match.group("size")), match.group("sunit"))
+    speed = None
+    if match.group("speed") and match.group("spunit"):
+        speed = f"{match.group('speed')}{match.group('spunit')}/s"
+    downloaded = int(total * pct / 100.0) if total else 0
+    return {
+        "percent": pct,
+        "downloaded_bytes": downloaded,
+        "total_bytes": total,
+        "speed": speed,
+        "eta": match.group("eta"),
+        "message": line.strip(),
+    }
+
+
 def build_yt_dlp_download_cmd(yt_dlp_bin: str, url: str, output_path: Path) -> list[str]:
     """Build yt-dlp args. Bilibili needs browser headers + merged DASH, not mp4-only `best`."""
     parsed = urlparse(url.strip())
@@ -60,6 +105,13 @@ def build_yt_dlp_download_cmd(yt_dlp_bin: str, url: str, output_path: Path) -> l
         "-f", "bv*+ba/b[ext=mp4]/best",
         "--merge-output-format", "mp4",
         "--no-playlist",
+        "-c",
+        "--retries", "30",
+        "--fragment-retries", "30",
+        "--retry-sleep", "2",
+        "-N", "1",
+        "--socket-timeout", "30",
+        "--newline",
         "-o", str(output_path),
         "--max-filesize", f"{settings.VIDEO_MAX_SIZE_MB}M",
     ]
@@ -82,6 +134,10 @@ def raise_yt_dlp_download_error(source_display: str, stderr: str | None, returnc
             f"Bilibili chặn tải video (HTTP 412 / anti-bot). "
             f"Cần cookie đăng nhập Bilibili hoặc thử lại từ mạng khác. "
             f"Chi tiết: {err_text[:180] or 'empty stderr'}"
+        )
+    if "bytes read" in err_lower and "more expected" in err_lower:
+        raise ValueError(
+            f"Mạng cắt file giữa chừng, video tải không hoàn chỉnh. {err_text[:180]}"
         )
     if "login" in err_lower or "private" in err_lower or "drm" in err_lower or "confirm your age" in err_lower:
         raise ValueError("Nguồn này không thể được xử lý trực tiếp (yêu cầu đăng nhập, riêng tư hoặc chứa DRM).")
@@ -169,6 +225,47 @@ async def fetch_bilibili_page_metadata(url: str) -> dict[str, Any]:
             f"Bilibili pagelist lỗi: {payload.get('message') or payload.get('code')}"
         )
     return metadata_from_bilibili_pagelist(payload["data"], ref["page"], ref["bvid"])
+
+
+async def run_yt_dlp_with_progress_async(
+    cmd: list[str],
+    timeout: int,
+    progress_callback: Optional[Callable[..., None]] = None,
+) -> tuple[int, str]:
+    """Run yt-dlp, parse `--newline` progress, return (returncode, combined_log)."""
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    logs: list[str] = []
+
+    async def _consume():
+        assert proc.stdout is not None
+        while True:
+            raw = await proc.stdout.readline()
+            if not raw:
+                break
+            text = raw.decode("utf-8", errors="replace").rstrip()
+            if text:
+                logs.append(text)
+            parsed = parse_yt_dlp_progress_line(text)
+            if parsed and progress_callback:
+                try:
+                    progress_callback(parsed)
+                except TypeError:
+                    progress_callback(parsed["downloaded_bytes"], parsed["total_bytes"])
+                except Exception:
+                    pass
+
+    try:
+        await asyncio.wait_for(_consume(), timeout=timeout)
+        returncode = await asyncio.wait_for(proc.wait(), timeout=10)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise ValueError("Hết thời gian tải video.")
+    return returncode, "\n".join(logs)
 
 
 def _get_yt_dlp_executable() -> str | None:
@@ -344,9 +441,16 @@ class PageURLAdapter(BaseVideoSourceAdapter):
 
         cmd = build_yt_dlp_download_cmd(yt_dlp_bin, safe_url, output_path)
 
-        res = await safe_subprocess_run_async(cmd, timeout=settings.VIDEO_DOWNLOAD_TIMEOUT, check=False)
-        if res.returncode != 0 or not output_path.exists():
-            raise_yt_dlp_download_error(source_display, res.stderr, res.returncode)
+        returncode, combined_log = await run_yt_dlp_with_progress_async(
+            cmd,
+            timeout=settings.VIDEO_DOWNLOAD_TIMEOUT,
+            progress_callback=progress_callback,
+        )
+        file_ok = output_path.exists() and output_path.stat().st_size >= 100_000
+        if returncode != 0 or not file_ok:
+            if output_path.exists() and output_path.stat().st_size < 100_000:
+                output_path.unlink(missing_ok=True)
+            raise_yt_dlp_download_error(source_display, combined_log, returncode)
 
         # Probe metadata of downloaded file
         meta = await get_video_metadata_async(output_path)

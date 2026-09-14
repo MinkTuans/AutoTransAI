@@ -180,7 +180,18 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     setWatermarkValidationError('');
     setIsUploadingLogo(true);
     try {
-      const res = await videoTranslatorApi.uploadWatermarkLogo(file, selectedProjectId);
+      const res = await videoTranslatorApi.uploadWatermarkLogo(file, selectedProjectId, (evt) => {
+        if (!evt.total) return;
+        const percent = Math.round((evt.loaded / evt.total) * 100);
+        setTransferProgress({
+          kind: 'upload',
+          status: 'running',
+          percent,
+          downloaded_bytes: evt.loaded,
+          total_bytes: evt.total,
+          message: `Đang tải lên logo watermark ${percent}%`,
+        });
+      });
       if (res.success && res.data) {
         const imgPath = res.data.image_path;
         setWatermarkImagePath(imgPath);
@@ -205,6 +216,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       setWatermarkValidationError('Lỗi upload logo: ' + (err.response?.data?.detail || err.message));
     } finally {
       setIsUploadingLogo(false);
+      setTransferProgress(null);
     }
   };
 
@@ -214,6 +226,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   const [segments, setSegments] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [pipelineError, setPipelineError] = useState(null);
+  const [transferProgress, setTransferProgress] = useState(null);
 
   // Workflow engine state & actions
   const [workflowStatusData, setWorkflowStatusData] = useState(null);
@@ -907,12 +920,48 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       let importedAsset;
       if (inputMode === 'upload') {
         if (!uploadFile) throw new Error('Vui lòng chọn file video.');
-        const res = await videoTranslatorApi.importUpload(uploadFile);
+        const res = await videoTranslatorApi.importUpload(uploadFile, (evt) => {
+          if (!evt.total) return;
+          const percent = Math.round((evt.loaded / evt.total) * 100);
+          setTransferProgress({
+            kind: 'upload',
+            status: 'running',
+            percent,
+            downloaded_bytes: evt.loaded,
+            total_bytes: evt.total,
+            message: `Đang tải lên video ${percent}%`,
+          });
+          setWorkflowStatusData((prev) => ({
+            ...(prev || {}),
+            current_step: `Đang tải lên video ${percent}%`,
+            overall_progress_pct: Math.min(8, Math.round(percent * 0.08)),
+          }));
+        });
         importedAsset = res.data;
+        setTransferProgress(null);
       } else {
         if (!videoUrl) throw new Error('Vui lòng nhập URL video.');
-        const res = await videoTranslatorApi.importUrl(videoUrl);
-        importedAsset = res.data;
+        const started = await videoTranslatorApi.startUrlTransfer(videoUrl);
+        const transferId = started.data?.id;
+        if (!transferId) throw new Error('Không tạo được phiên tải xuống.');
+        let transfer = started.data;
+        while (transfer && !['done', 'failed'].includes(transfer.status)) {
+          setTransferProgress({ kind: 'download', ...transfer });
+          setWorkflowStatusData((prev) => ({
+            ...(prev || {}),
+            current_step: transfer.message || `Đang tải xuống ${transfer.percent || 0}%`,
+            overall_progress_pct: Math.min(12, Math.round((transfer.percent || 0) * 0.12)),
+          }));
+          await new Promise((r) => setTimeout(r, 700));
+          const polled = await videoTranslatorApi.getTransfer(transferId);
+          transfer = polled.data;
+        }
+        setTransferProgress(transfer ? { kind: 'download', ...transfer } : null);
+        if (!transfer || transfer.status === 'failed') {
+          throw new Error(transfer?.error || transfer?.message || 'Tải video thất bại.');
+        }
+        importedAsset = transfer.asset;
+        setTransferProgress(null);
       }
       setAsset(importedAsset);
 
@@ -1159,6 +1208,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
             onRetryStage={handleRetryStage}
             onRetryJob={handleRetryJob}
             onOpenLogs={handleOpenLogs}
+            transferProgress={transferProgress}
             loadingAction={loadingWorkflowAction}
             lastPollTime={lastPollTime}
             lastApiResponseTime={lastApiResponseTime}

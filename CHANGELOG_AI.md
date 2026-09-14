@@ -1,3 +1,10 @@
+- **Show ingest transfer progress and harden Bilibili download (2026-09-14)**:
+  - **Symptoms**: Pipeline stuck at INGEST 0% with no Job ID; yt-dlp `509 bytes read, 18052770 more expected` after 10 retries.
+  - **Root cause**: `POST /import` blocked until yt-dlp finished (no progress). Default 10 retries + concurrent fragments + caching tiny leftover files.
+  - **Backend**: yt-dlp now uses `-c --retries 30 -N 1 --newline`, streams progress, maps truncated CDN reads, rejects cache files &lt; 100KB. New `POST/GET /api/video-translator/transfers` for pollable download percent/bytes/speed.
+  - **Frontend**: Transfer bar on WorkflowTimeline; axios `onUploadProgress` for video import, watermark logo, and Video Merger uploads.
+  - **Tests**: progress line parse, retries/`-N 1` in command, truncated-download Vietnamese error.
+
 - **Fix Bilibili check-url duration 00:00 (2026-09-14)**:
   - **Root cause**: `GET metadata` for `https://www.bilibili.com/video/BV1dRMP68Ehp?t=40.9` fell back to dummy `{title: "Video từ Bilibili", duration: 0}` when yt-dlp was missing or failed. Query `t` is a timestamp, not a part index. Bilibili `view` API is often HTTP 412; `x/player/pagelist` returns real part duration (P1 = 893s).
   - **Backend**: Parse BVID/`p`, map pagelist JSON, and prefer pagelist before yt-dlp in [page_url_adapter.py](backend/app/services/video_source/page_url_adapter.py). Do not return fake 0 duration as valid Bilibili metadata.

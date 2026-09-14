@@ -93,6 +93,39 @@ def test_yt_dlp_download_cmd_for_bilibili_uses_browser_headers():
     fmt = cmd[cmd.index("-f") + 1]
     assert "bv" in fmt or "+" in fmt
     assert url in cmd
+    assert "--retries" in cmd
+    assert "-N" in cmd
+    assert cmd[cmd.index("-N") + 1] == "1"
+    assert "-c" in cmd or "--continue" in cmd
+
+
+def test_parse_yt_dlp_progress_line():
+    """yt-dlp newline progress must yield percent and byte totals for the UI."""
+    from app.services.video_source.page_url_adapter import parse_yt_dlp_progress_line
+
+    parsed = parse_yt_dlp_progress_line(
+        "[download]  45.2% of  17.22MiB at  1.10MiB/s ETA 00:13"
+    )
+    assert parsed is not None
+    assert parsed["percent"] == 45.2
+    assert parsed["total_bytes"] == int(17.22 * 1024 * 1024)
+    assert parsed["speed"] == "1.10MiB/s"
+    assert parsed["eta"] == "00:13"
+    assert parse_yt_dlp_progress_line("ERROR: boom") is None
+
+
+def test_yt_dlp_truncated_download_error_is_human_readable():
+    """Incomplete CDN read must not look like a generic exit 1."""
+    from app.services.video_source.page_url_adapter import raise_yt_dlp_download_error
+
+    with pytest.raises(ValueError) as excinfo:
+        raise_yt_dlp_download_error(
+            "Bilibili",
+            "[download] Got error: 509 bytes read, 18052770 more expected. Giving up after 10 retries",
+            returncode=1,
+        )
+    msg = str(excinfo.value).lower()
+    assert "cắt" in msg or "mạng" in msg or "không hoàn chỉnh" in msg
 
 
 def test_yt_dlp_412_error_is_human_readable():

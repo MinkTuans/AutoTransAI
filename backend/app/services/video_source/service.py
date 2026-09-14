@@ -80,24 +80,31 @@ class VideoSourceService:
         output_dir.mkdir(parents=True, exist_ok=True)
         cached_file = output_dir / f"url_video_{url_hash}.mp4"
 
-        # Check Cache
-        if cached_file.exists() and cached_file.stat().st_size > 0:
-            logger.info("Using cached video asset", hash=url_hash, path=str(cached_file))
-            meta = await get_video_metadata_async(cached_file)
-            parsed = urlparse(url)
-            return {
-                "source": adapter.source_name,
-                "domain": parsed.netloc,
-                "title": f"Video ({url_hash})",
-                "duration": meta["duration"],
-                "width": meta["width"],
-                "height": meta["height"],
-                "format": meta["format"],
-                "file_size": cached_file.stat().st_size,
-                "audio_available": meta["has_audio"],
-                "local_path": str(cached_file),
-                "mime_type": "video/mp4",
-            }
+        # Check Cache — reject truncated leftovers (e.g. 509-byte Bilibili fails)
+        if cached_file.exists() and cached_file.stat().st_size >= 100_000:
+            try:
+                meta = await get_video_metadata_async(cached_file)
+            except Exception:
+                meta = {"duration": 0.0}
+            if float(meta.get("duration") or 0.0) > 0:
+                logger.info("Using cached video asset", hash=url_hash, path=str(cached_file))
+                parsed = urlparse(url)
+                return {
+                    "source": adapter.source_name,
+                    "domain": parsed.netloc,
+                    "title": f"Video ({url_hash})",
+                    "duration": meta["duration"],
+                    "width": meta["width"],
+                    "height": meta["height"],
+                    "format": meta["format"],
+                    "file_size": cached_file.stat().st_size,
+                    "audio_available": meta["has_audio"],
+                    "local_path": str(cached_file),
+                    "mime_type": "video/mp4",
+                }
+            cached_file.unlink(missing_ok=True)
+        elif cached_file.exists():
+            cached_file.unlink(missing_ok=True)
 
         # Download via adapter
         result = await adapter.download(url, cached_file, progress_callback)

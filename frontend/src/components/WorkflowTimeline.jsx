@@ -48,6 +48,7 @@ export default function WorkflowTimeline({
   lastPollTime,
   lastApiResponseTime,
   segments = [],
+  transferProgress = null,
 }) {
   const [selectedStageOverride, setSelectedStageOverride] = useState(null);
   const [showDebug, setShowDebug] = useState(false);
@@ -70,6 +71,16 @@ export default function WorkflowTimeline({
     const s = Math.floor(sec % 60);
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
+
+  const formatBytes = (n) => {
+    const num = Number(n) || 0;
+    if (num < 1024) return `${num} B`;
+    if (num < 1024 * 1024) return `${(num / 1024).toFixed(1)} KB`;
+    return `${(num / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const transferPct = Math.min(100, Math.max(0, Number(transferProgress?.percent) || 0));
+  const transferKind = transferProgress?.kind === 'upload' ? 'Tải lên' : 'Tải xuống';
 
   const getStatusBadge = (status) => {
     switch (status) {
@@ -291,6 +302,28 @@ export default function WorkflowTimeline({
             }}
           />
         </div>
+        {transferProgress && (
+          <div style={{ marginTop: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#cbd5e1', marginBottom: '4px', gap: '8px', flexWrap: 'wrap' }}>
+              <span>📡 {transferKind}: <strong>{transferProgress.message || `${transferPct.toFixed(0)}%`}</strong></span>
+              <span>
+                {formatBytes(transferProgress.downloaded_bytes)} / {formatBytes(transferProgress.total_bytes)}
+                {transferProgress.speed ? ` · ${transferProgress.speed}` : ''}
+                {transferProgress.eta ? ` · ETA ${transferProgress.eta}` : ''}
+              </span>
+            </div>
+            <div style={{ background: '#0f172a', borderRadius: '6px', height: '8px', width: '100%', overflow: 'hidden', border: '1px solid #334155' }}>
+              <div
+                style={{
+                  width: `${transferPct}%`,
+                  height: '100%',
+                  background: transferProgress.status === 'failed' ? '#ef4444' : 'linear-gradient(90deg, #22c55e, #38bdf8)',
+                  transition: 'width 0.2s ease',
+                }}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 6 Stage Grid Cards */}
