@@ -156,6 +156,40 @@ def test_yt_dlp_truncated_download_error_is_human_readable():
     assert "cắt" in msg or "mạng" in msg or "không hoàn chỉnh" in msg
 
 
+def test_yt_dlp_truncated_error_uses_bytes_read_line_not_log_prefix():
+    """User-facing error must cite 509/18052770, not the Extracting URL header."""
+    from app.services.video_source.page_url_adapter import raise_yt_dlp_download_error
+
+    log = (
+        "[BiliBili] Extracting URL: https://www.bilibili.com/video/BV1dRMP68Ehp?t=40.9\n"
+        "[BiliBili] BV1dRMP68Ehp: Downloading webpage\n"
+        "[BiliBili] BV1dRMP68Ehp: Extracting videos in anthology\n"
+        "[download] Got error: 509 bytes read, 18052770 more expected. Giving up after 10 retries\n"
+    )
+    with pytest.raises(ValueError) as excinfo:
+        raise_yt_dlp_download_error("Bilibili", log, returncode=1)
+    msg = str(excinfo.value)
+    assert "509" in msg
+    assert "18052770" in msg
+    assert "Extracting URL" not in msg
+
+
+def test_extract_bilibili_playurl_from_durl():
+    """Prefer official MP4 durl over yt-dlp DASH for Bilibili ingest."""
+    from app.services.video_source.page_url_adapter import extract_bilibili_playurl
+
+    info = extract_bilibili_playurl({
+        "code": 0,
+        "data": {
+            "quality": 16,
+            "format": "mp4",
+            "durl": [{"url": "https://cdn.example/video.mp4", "size": 37089181, "length": 892019}],
+        },
+    })
+    assert info["url"] == "https://cdn.example/video.mp4"
+    assert info["size"] == 37089181
+
+
 def test_yt_dlp_412_error_is_human_readable():
     """yt-dlp 412/WAF failures must not surface as empty ❌ or CalledProcessError."""
     from app.services.video_source.page_url_adapter import raise_yt_dlp_download_error
@@ -192,6 +226,7 @@ def test_bilibili_pagelist_maps_part_duration():
             "page": 1,
             "part": "宠物心声诊所 1",
             "duration": 893,
+            "cid": 39651445310,
             "dimension": {"width": 1280, "height": 720},
         },
         {
@@ -207,6 +242,7 @@ def test_bilibili_pagelist_maps_part_duration():
     assert meta["width"] == 1280
     assert meta["height"] == 720
     assert meta["source"] == "Bilibili"
+    assert meta["cid"] == 39651445310
 
 
 def test_unsupported_source():

@@ -122,28 +122,39 @@ def build_yt_dlp_download_cmd(yt_dlp_bin: str, url: str, output_path: Path) -> l
             "--user-agent", BROWSER_UA,
             "--referer", "https://www.bilibili.com/",
             "--add-header", "Origin:https://www.bilibili.com",
+            "--http-chunk-size", "1048576",
         ])
     cmd.append(url)
     return cmd
+
+
+def _yt_dlp_error_snippet(err_text: str, limit: int = 220) -> str:
+    """Prefer the actual failure line over the extractor preamble."""
+    lines = [ln.strip() for ln in (err_text or "").splitlines() if ln.strip()]
+    for ln in reversed(lines):
+        low = ln.lower()
+        if "bytes read" in low or "more expected" in low or ln.startswith("ERROR") or "giving up" in low:
+            return ln[:limit]
+    return (err_text or "empty stderr")[:limit]
 
 
 def raise_yt_dlp_download_error(source_display: str, stderr: str | None, returncode: int | None = None) -> None:
     """Map yt-dlp stderr to a user-facing ValueError. Never raise an empty message."""
     err_text = (stderr or "").strip()
     err_lower = err_text.lower()
+    snippet = _yt_dlp_error_snippet(err_text)
     if "412" in err_text or "precondition failed" in err_lower or "风控" in err_text:
         raise ValueError(
             f"Bilibili chặn tải video (HTTP 412 / anti-bot). "
             f"Cần cookie đăng nhập Bilibili hoặc thử lại từ mạng khác. "
-            f"Chi tiết: {err_text[:180] or 'empty stderr'}"
+            f"Chi tiết: {snippet}"
         )
     if "bytes read" in err_lower and "more expected" in err_lower:
         raise ValueError(
-            f"Mạng cắt file giữa chừng, video tải không hoàn chỉnh. {err_text[:180]}"
+            f"Mạng cắt file giữa chừng, video tải không hoàn chỉnh. {snippet}"
         )
     if "login" in err_lower or "private" in err_lower or "drm" in err_lower or "confirm your age" in err_lower:
         raise ValueError("Nguồn này không thể được xử lý trực tiếp (yêu cầu đăng nhập, riêng tư hoặc chứa DRM).")
-    snippet = err_text[:200] if err_text else "Lỗi không xác định"
     code = f" (exit {returncode})" if returncode not in (None, 0) else ""
     raise ValueError(f"Không thể download video từ {source_display}{code}: {snippet}")
 
@@ -186,6 +197,7 @@ def metadata_from_bilibili_pagelist(
         raise ValueError("Bilibili không trả về thời lượng video.")
     dim = entry.get("dimension") or {}
     title = (entry.get("part") or "").strip() or f"Bilibili {bvid}"
+    cid = entry.get("cid")
     return {
         "source": "Bilibili",
         "domain": "www.bilibili.com",
@@ -201,6 +213,206 @@ def metadata_from_bilibili_pagelist(
         "bvid": bvid,
         "page": page,
         "page_count": len(pages),
+        "cid": cid,
+    }
+
+
+def extract_bilibili_playurl(payload: dict[str, Any]) -> dict[str, Any]:
+    """Pick a single MP4 durl from playurl JSON (fnval=1)."""
+    data = payload.get("data") or {}
+    durl = data.get("durl") or []
+    if not durl or not durl[0].get("url"):
+        raise ValueError("Bilibili playurl không trả về file MP4.")
+    item = durl[0]
+    return {
+        "url": item["url"],
+        "size": int(item.get("size") or 0),
+        "length_ms": int(item.get("length") or 0),
+        "quality": data.get("quality"),
+        "format": data.get("format") or "mp4",
+    }
+
+
+def _bili_http_headers() -> dict[str, str]:
+    return {
+        "User-Agent": BROWSER_UA,
+        "Referer": "https://www.bilibili.com/",
+        "Origin": "https://www.bilibili.com",
+    }
+
+
+async def fetch_bilibili_mp4_playurl(bvid: str, cid: int) -> dict[str, Any]:
+    timeout = httpx.Timeout(20.0, connect=8.0)
+    async with httpx.AsyncClient(timeout=timeout, headers=_bili_http_headers()) as client:
+        last_err = "unknown"
+        for qn in (64, 32, 16):
+            api = (
+                f"https://api.bilibili.com/x/player/playurl"
+                f"?bvid={bvid}&cid={cid}&qn={qn}&fnval=1&fnver=0"
+            )
+            res = await client.get(api)
+            if res.status_code >= 400:
+                last_err = f"HTTP {res.status_code}"
+                continue
+            payload = res.json()
+            if payload.get("code") != 0:
+                last_err = str(payload.get("message") or payload.get("code"))
+                continue
+            try:
+                return extract_bilibili_playurl(payload)
+            except ValueError as e:
+                last_err = str(e)
+                continue
+    raise ValueError(f"Không lấy được playurl Bilibili: {last_err}")
+
+
+async def download_http_with_resume(
+    url: str,
+    output_path: Path,
+    *,
+    headers: dict[str, str],
+    expected_size: int = 0,
+    timeout: int = 300,
+    progress_callback: Optional[Callable[..., None]] = None,
+) -> int:
+    """Download a direct HTTP file with Range resume and progress callbacks."""
+    part_path = output_path.with_suffix(output_path.suffix + ".part")
+    downloaded = part_path.stat().st_size if part_path.exists() else 0
+    total = expected_size
+    deadline = asyncio.get_event_loop().time() + timeout
+    retries = 0
+    max_retries = 30
+
+    def _emit():
+        if not progress_callback:
+            return
+        pct = round(100.0 * downloaded / total, 1) if total else 0.0
+        info = {
+            "percent": min(pct, 99.9),
+            "downloaded_bytes": downloaded,
+            "total_bytes": total,
+            "speed": None,
+            "eta": None,
+            "message": f"Đang tải xuống {pct:.0f}%",
+        }
+        try:
+            progress_callback(info)
+        except TypeError:
+            progress_callback(downloaded, total)
+        except Exception:
+            pass
+
+    client_timeout = httpx.Timeout(60.0, connect=15.0)
+    async with httpx.AsyncClient(timeout=client_timeout, follow_redirects=True, headers=headers) as client:
+        while retries < max_retries:
+            if asyncio.get_event_loop().time() > deadline:
+                raise ValueError("Hết thời gian tải video Bilibili.")
+            req_headers = dict(headers)
+            write_mode = "wb"
+            if downloaded > 0:
+                req_headers["Range"] = f"bytes={downloaded}-"
+                write_mode = "ab"
+            try:
+                async with client.stream("GET", url, headers=req_headers) as res:
+                    if res.status_code not in (200, 206):
+                        raise ValueError(f"CDN Bilibili HTTP {res.status_code}")
+                    if res.status_code == 200:
+                        downloaded = 0
+                        write_mode = "wb"
+                    cr = res.headers.get("Content-Range") or ""
+                    if "/" in cr:
+                        try:
+                            total = int(cr.rsplit("/", 1)[-1])
+                        except ValueError:
+                            pass
+                    elif not total:
+                        try:
+                            cl = int(res.headers.get("Content-Length") or 0)
+                            total = downloaded + cl if res.status_code == 206 else cl
+                        except ValueError:
+                            pass
+                    with open(part_path, write_mode) as fh:
+                        async for chunk in res.aiter_bytes(64 * 1024):
+                            if not chunk:
+                                continue
+                            fh.write(chunk)
+                            downloaded += len(chunk)
+                            _emit()
+                break
+            except (httpx.HTTPError, ValueError) as exc:
+                retries += 1
+                logger.warning("Bilibili HTTP download retry", attempt=retries, error=str(exc))
+                await asyncio.sleep(min(2 * retries, 8))
+        else:
+            raise ValueError(
+                f"Mạng cắt file giữa chừng, video tải không hoàn chỉnh. "
+                f"{downloaded} bytes read, {max(total - downloaded, 0)} more expected."
+            )
+
+    if downloaded < 100_000:
+        part_path.unlink(missing_ok=True)
+        raise ValueError("File Bilibili tải về quá nhỏ, có thể bị CDN chặn.")
+    if total and downloaded < total * 0.95:
+        raise ValueError(
+            f"Mạng cắt file giữa chừng, video tải không hoàn chỉnh. "
+            f"{downloaded} bytes read, {total - downloaded} more expected."
+        )
+    part_path.replace(output_path)
+    if progress_callback:
+        try:
+            progress_callback({
+                "percent": 100.0,
+                "downloaded_bytes": downloaded,
+                "total_bytes": total or downloaded,
+                "speed": None,
+                "eta": "00:00",
+                "message": "Tải xong",
+            })
+        except Exception:
+            pass
+    return downloaded
+
+
+async def download_bilibili_native(
+    url: str,
+    output_path: Path,
+    progress_callback: Optional[Callable[..., None]] = None,
+) -> dict[str, Any]:
+    """Download one Bilibili part via official playurl MP4 + HTTP Range."""
+    meta = await fetch_bilibili_page_metadata(url)
+    cid = meta.get("cid")
+    bvid = meta.get("bvid")
+    if not cid or not bvid:
+        raise ValueError("Thiếu cid/bvid Bilibili để lấy playurl.")
+    play = await fetch_bilibili_mp4_playurl(str(bvid), int(cid))
+    size = await download_http_with_resume(
+        play["url"],
+        output_path,
+        headers=_bili_http_headers(),
+        expected_size=int(play.get("size") or 0),
+        timeout=settings.VIDEO_DOWNLOAD_TIMEOUT,
+        progress_callback=progress_callback,
+    )
+    probe = await get_video_metadata_async(output_path)
+    max_duration_sec = settings.VIDEO_MAX_DURATION_MINUTES * 60
+    if probe.get("duration", 0.0) > max_duration_sec:
+        output_path.unlink(missing_ok=True)
+        raise ValueError(
+            f"Thời lượng video ({probe['duration']/60:.1f} phút) vượt quá giới hạn tối đa "
+            f"({settings.VIDEO_MAX_DURATION_MINUTES} phút)."
+        )
+    return {
+        "source": "Bilibili",
+        "domain": "www.bilibili.com",
+        "title": meta.get("title") or output_path.stem,
+        "duration": probe["duration"],
+        "width": probe["width"],
+        "height": probe["height"],
+        "format": probe["format"],
+        "file_size": size,
+        "audio_available": probe["has_audio"],
+        "local_path": str(output_path),
+        "mime_type": "video/mp4",
     }
 
 
@@ -450,9 +662,19 @@ class PageURLAdapter(BaseVideoSourceAdapter):
         source_display = self._get_domain_display(domain)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        native_err: Exception | None = None
+        if _is_bilibili_domain(domain):
+            try:
+                return await download_bilibili_native(safe_url, output_path, progress_callback)
+            except Exception as exc:
+                native_err = exc
+                logger.warning("Bilibili native playurl download failed, falling back to yt-dlp", error=str(exc))
+
         yt_dlp_bin = _get_yt_dlp_executable()
 
         if not yt_dlp_bin:
+            if native_err:
+                raise native_err
             raise ValueError(
                 f"Nguồn video '{source_display}' yêu cầu bộ tải media. Vui lòng cài đặt yt-dlp hoặc sử dụng Direct MP4 URL."
             )

@@ -1,3 +1,8 @@
+- **Download Bilibili via official playurl MP4 with Range resume (2026-09-14)**:
+  - **Symptom**: Transfer still failed with "Mạng cắt file giữa chừng" but the UI showed the Extracting URL preamble instead of `509 bytes read, 18052770 more expected`.
+  - **Root cause**: yt-dlp DASH still truncated; error mapper used `err_text[:180]` (start of log). Official `x/player/playurl?fnval=1` returns a single MP4 that accepts HTTP 206 Range (verified 8KB + Content-Range 0-8191/37089181).
+  - **Fix**: Prefer native playurl + `download_http_with_resume`; keep yt-dlp as fallback. Snippet now uses the `bytes read` line. Tests cover snippet, playurl durl parse, and pagelist `cid`.
+
 - **Fix Windows NotImplementedError on URL ingest (2026-09-14)**:
   - **Root cause**: `run_yt_dlp_with_progress_async` used `asyncio.create_subprocess_exec`, which raises `NotImplementedError` on Windows uvicorn SelectorEventLoop. Transfer failed before a Job ID existed.
   - **Fix**: Spawn yt-dlp with `subprocess.Popen` + `asyncio.to_thread` (same pattern as FFmpeg progress). Tests assert no `asyncio.create_subprocess_exec` and parse a progress line from Popen stdout.
