@@ -66,7 +66,11 @@ def heuristic_extract_terms(text: str, target_lang: str = "vi") -> list[dict[str
     counts = Counter(grams)
     raw: list[dict[str, Any]] = []
     for term, n in counts.items():
-        if n < 2 or term in _CJK_STOP:
+        if term in _CJK_STOP:
+            continue
+        if len(term) < 3 and n < 2:
+            continue
+        if n < 1:
             continue
         raw.append(
             {
@@ -180,6 +184,37 @@ async def persist_terminology_memory(
             saved += 1
     await db.commit()
     return saved
+
+
+def segments_transcript_blob(segments: Optional[Iterable[dict[str, Any]]]) -> str:
+    parts: list[str] = []
+    for seg in segments or []:
+        txt = (
+            seg.get("text")
+            or seg.get("original_text")
+            or seg.get("translated_text")
+            or ""
+        )
+        if txt:
+            parts.append(str(txt))
+    return "\n".join(parts)
+
+
+async def extract_and_persist_from_segments(
+    db: Optional[AsyncSession],
+    project_id: str,
+    segments: Optional[Iterable[dict[str, Any]]],
+    target_lang: str = "vi",
+) -> int:
+    """Used by the Studio Auto job pipeline (startJob), which never hits TranslateStage."""
+    blob = segments_transcript_blob(segments)
+    if len(blob.strip()) < 4:
+        return 0
+    heuristic = heuristic_extract_terms(blob, target_lang)
+    llm_terms = await llm_extract_terms(blob, target_lang)
+    llm_keys = {t["source_term"].lower() for t in llm_terms}
+    merged = llm_terms + [t for t in heuristic if t["source_term"].lower() not in llm_keys]
+    return await persist_terminology_memory(db, project_id, merged)
 
 
 def transcript_blob(ctx: Any) -> str:

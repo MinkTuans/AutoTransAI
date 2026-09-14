@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { videoTranslatorApi } from '../api';
 
 export default function ProjectGlossaryManager({ projectId, refreshKey }) {
   const [activeTab, setActiveTab] = useState('manual');
@@ -11,8 +12,7 @@ export default function ProjectGlossaryManager({ projectId, refreshKey }) {
   const fetchGlossary = async () => {
     if (!projectId) return;
     try {
-      const res = await fetch(`/api/video-translator/projects/${projectId}/glossary`);
-      const data = await res.json();
+      const data = await videoTranslatorApi.getGlossary(projectId);
       if (data.success) {
         setTerms(data.data || []);
       }
@@ -24,10 +24,11 @@ export default function ProjectGlossaryManager({ projectId, refreshKey }) {
   const fetchMemory = async () => {
     if (!projectId) return;
     try {
-      const res = await fetch(`/api/video-translator/projects/${projectId}/terminology-memory`);
-      const data = await res.json();
+      const data = await videoTranslatorApi.getTerminologyMemory(projectId);
       if (data.success) {
-        setMemoryTerms(data.data || []);
+        const rows = data.data || [];
+        setMemoryTerms(rows);
+        if (rows.length > 0) setActiveTab('memory');
       }
     } catch (err) {
       console.error('Failed fetching terminology memory', err);
@@ -46,16 +47,11 @@ export default function ProjectGlossaryManager({ projectId, refreshKey }) {
     if (!sourceTerm.trim() || !translatedTerm.trim()) return;
 
     try {
-      const res = await fetch(`/api/video-translator/projects/${projectId}/glossary`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          source_term: sourceTerm,
-          translated_term: translatedTerm,
-          term_type: termType,
-        }),
+      const data = await videoTranslatorApi.addGlossary(projectId, {
+        source_term: sourceTerm,
+        translated_term: translatedTerm,
+        term_type: termType,
       });
-      const data = await res.json();
       if (data.success) {
         setSourceTerm('');
         setTranslatedTerm('');
@@ -68,10 +64,7 @@ export default function ProjectGlossaryManager({ projectId, refreshKey }) {
 
   const handleDeleteTerm = async (termId) => {
     try {
-      const res = await fetch(`/api/video-translator/projects/${projectId}/glossary/${termId}`, {
-        method: 'DELETE',
-      });
-      const data = await res.json();
+      const data = await videoTranslatorApi.deleteGlossary(projectId, termId);
       if (data.success) {
         fetchGlossary();
       }
@@ -82,10 +75,7 @@ export default function ProjectGlossaryManager({ projectId, refreshKey }) {
 
   const handleDeleteMemoryTerm = async (termId) => {
     try {
-      const res = await fetch(`/api/video-translator/projects/${projectId}/terminology-memory/${termId}`, {
-        method: 'DELETE',
-      });
-      const data = await res.json();
+      const data = await videoTranslatorApi.deleteTerminologyMemory(projectId, termId);
       if (data.success) {
         fetchMemory();
       }
@@ -96,14 +86,10 @@ export default function ProjectGlossaryManager({ projectId, refreshKey }) {
 
   const handlePromoteMemoryToGlossary = async (item) => {
     try {
-      await fetch(`/api/video-translator/projects/${projectId}/glossary`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          source_term: item.source_term,
-          translated_term: item.suggested_term,
-          term_type: item.term_type,
-        }),
+      await videoTranslatorApi.addGlossary(projectId, {
+        source_term: item.source_term,
+        translated_term: item.suggested_term,
+        term_type: item.term_type,
       });
       fetchGlossary();
     } catch (err) {

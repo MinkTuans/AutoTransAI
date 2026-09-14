@@ -1,3 +1,7 @@
+- **Save AI Terminology Memory on the Studio Auto job path (2026-09-14)**:
+  - **Root cause**: Auto uses `POST /jobs/{id}/start`, not TranslateStage. Entity extract never ran, so the UI stayed at (0).
+  - **Fix**: After STT/translate, `extract_and_persist_from_segments` writes `project_terminology_memory`. Glossary panel opens and refetches on job progress.
+
 - **Auto-trim intro/outro filler before STT (2026-09-14)**:
   - **Problem**: Videos with ~7 min of content plus ~7 min of endcards/ads still went through STT/TTS/render for the whole file.
   - **Behavior**: Optional Studio checkbox `Tự cắt intro/outro thừa` (default on, same pattern as Auto-Confirm Translation). After audio extract, scan the full timeline (silence + freeze on head/tail) and optionally confirm edges with Gemini. `ffmpeg -ss/-t -c copy` writes `content_trimmed.mp4`, original file is kept.

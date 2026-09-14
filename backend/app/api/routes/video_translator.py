@@ -875,6 +875,31 @@ async def start_translation_pipeline(
                         )
                         bg_session.add(db_seg)
 
+                    try:
+                        from app.services.terminology_memory import extract_and_persist_from_segments
+
+                        term_project_id = b_job.project_id
+                        if term_project_id and term_project_id != "default_project":
+                            b_job.current_step = "Đang ghi AI Terminology Memory"
+                            await bg_session.commit()
+                            saved_terms = await extract_and_persist_from_segments(
+                                bg_session,
+                                term_project_id,
+                                translated_segs,
+                                b_job.target_language or "vi",
+                            )
+                            log_job_event(
+                                job_id,
+                                "TERMINOLOGY",
+                                f"AI Auto Terminology Memory saved {saved_terms} terms for project {term_project_id}",
+                            )
+                    except Exception as term_err:
+                        logger.warning(
+                            "Terminology memory extract failed for job %s: %s",
+                            job_id,
+                            term_err,
+                        )
+
                     now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
                     auto_confirm = getattr(b_job, "auto_confirm_translation", True)
                     if auto_confirm is None:
