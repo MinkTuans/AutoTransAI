@@ -22,42 +22,80 @@ _CJK_STOP = {
     "一个", "我们", "他们", "什么", "不是", "可以", "因为", "所以", "这个", "那个",
     "没有", "已经", "现在", "自己", "知道", "出来", "起来", "时候", "这样", "那样",
     "学校", "今天", "什么", "什麼", "怎么", "怎麼",
+    "弟子", "哥哥", "弟弟", "姐姐", "妹妹", "师父", "师傅", "朋友", "人心",
+    "山门", "山門", "门派", "門派", "宗门", "宗門",
+    "爬上", "上车", "上車", "下去", "上来", "进去", "进去", "过去", "过来",
+    "回去", "冰發", "究冰",
 }
 
 # Particles / function chars: n-grams containing these are clauses, not names.
 _CJK_FUNC_CHARS = set(
     "了的是我不在有这那就会也和与把被要去来到从对给让还只很太最更"
-    "你他她它吗呢啊吧着过没可所因什麼么們们叫想走先看"
+    "你他她它吗呢啊吧着过没可所因什麼么們们叫想走先看而且爬"
+)
+
+_CJK_BAD_PREFIXES = (
+    "而且", "但是", "然后", "然後", "于是", "於是", "就是", "还是", "還是",
+    "或者", "虽然", "雖然", "如果", "因为", "所以", "只是", "可是", "并且", "以及",
+)
+
+# 2-char CJK is only a name when it starts with a common surname (张三, 姜男, 李四).
+_CJK_SURNAMES = set(
+    "赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜"
+    "戚谢邹喻柏水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳酆鲍史"
+    "唐费廉岑薛雷贺倪汤滕殷罗毕郝邬安常乐于时傅皮卞齐康伍余元卜顾孟"
+    "黄和穆萧尹姚邵湛汪祁毛禹狄米贝明臧计伏成戴谈宋茅庞熊纪舒屈项祝"
+    "董梁杜阮蓝闵季贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍"
+    "虞万支柯昝管卢莫经房裘缪干解应宗丁宣贲邓郁单杭洪包诸左石崔吉钮"
+    "龚程嵇邢滑裴陆荣翁荀羊於惠甄曲家封芮羿储靳汲邴糜松井段富巫乌焦"
+    "巴弓牧隗山谷车侯宓蓬全郗班仰秋仲伊宫宁仇栾暴甘斜厉戎祖武符刘景"
+    "詹束龙叶幸司韶郜黎蓟薄印宿白怀蒲邰从鄂索咸籍赖卓蔺屠蒙池乔阴鬱"
+    "胥能苍双闻莘党翟谭贡劳逄姬申扶堵冉宰郦雍卻璩桑桂濮牛寿通边扈燕"
+    "冀郏浦尚农温别庄晏柴瞿阎充慕连茹习宦艾鱼容向古易慎戈廖庾终暨居"
+    "衡步都耿满弘匡国文寇广禄阙东欧殳沃利蔚越夔隆师巩厍聂晁勾敖融冷"
+    "訾辛阚那简饶空曾毋沙乜养鞠须丰巢关蒯相查后荆红游竺权逯盖益桓公"
+    "趙錢孫李週吳鄭王馮陳衛蔣韓楊許呂張嚴華金魏姜謝鄒範魯韋馬鳳俞劉"
+    "黃蕭羅畢鄔齊顧黃穆姚鄧單龔鍾駱劉葉喬閻聶關"
 )
 
 _CJK_NAME_SUFFIXES = (
-    "城", "宫", "殿", "宗", "派", "门", "幫", "帮", "谷", "山", "岛", "國", "国",
+    "城", "宫", "殿", "宗", "谷", "岛", "國", "国",
     "府", "院", "寺", "观", "鎮", "镇", "村", "庄", "樓", "楼", "閣", "阁",
-    "峰", "湖", "海", "河", "江", "岛", "寨", "营", "盟",
+    "峰", "湖", "海", "河", "江", "寨", "营", "盟",
 )
 
 PROPER_NAME_TYPES = frozenset({"character", "location", "organization"})
 
 
 def looks_like_cjk_name(term: str) -> bool:
-    """True for 张三 / 青云城; false for 我先走了 / 看来今天."""
+    """True for 张三 / 青云城 / 李飞羽; false for 爬上 / 弟子 / 而且門派."""
     if not term or not _CJK_RUN_RE.fullmatch(term):
         return False
     if term in _CJK_STOP:
         return False
+    if any(term.startswith(p) for p in _CJK_BAD_PREFIXES):
+        return False
     if any(ch in _CJK_FUNC_CHARS for ch in term):
         return False
-    return 2 <= len(term) <= 6
+    if not (2 <= len(term) <= 6):
+        return False
+    if len(term) == 2:
+        return term[0] in _CJK_SURNAMES
+    return True
 
 
 def filter_proper_names(terms: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep characters / places / orgs only. Drop Other sentence fragments."""
+    """Keep characters / places / orgs only. Drop verbs, kinship, conjunction+sect n-grams."""
     kept: list[dict[str, Any]] = []
     for item in normalize_extracted_terms(terms):
         source = item["source_term"]
+        suggested = item["suggested_term"]
+        translated = suggested != source
         term_type = item["term_type"] if item["term_type"] in PROPER_NAME_TYPES else ""
         if _CJK_RUN_RE.fullmatch(source):
             if not looks_like_cjk_name(source):
+                continue
+            if len(source) == 2 and not translated and source[0] not in _CJK_SURNAMES:
                 continue
             if not term_type:
                 term_type = "location" if source.endswith(_CJK_NAME_SUFFIXES) else "character"

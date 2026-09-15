@@ -1,3 +1,6 @@
+- **Tighten Auto Memory: drop verbs/kinship/conjunction n-grams (2026-09-15)**:
+  - Screenshot still showed `爬上`, `弟子`, `哥哥`, `上车`, `而且門派` as Character/Location. 2-char CJK now requires a common surname (`张三`, `姜男`, `李四`); `派`/`门` alone is not a place; prefixes like `而且` are rejected. `李飞羽` → Lý Phi Vũ and toponyms like `基途河` stay.
+
 - **Terminology Memory keeps proper names only; TTS no longer hangs DUB (2026-09-15)**:
   - **Memory**: Heuristic CJK n-grams saved subtitle clauses as `Other 60%` (`看来今天`, `我先走了`) and required Duyệt vào Glossary. Extractor now keeps character/location/organization names only, skips function-word fragments, and does not set `needs_review`. GET hides leftover junk. Prompt tells Gemini: names only, no clauses.
   - **DUB stall**: Job stuck at `Đang tạo giọng đọc TTS (31/193)` because `edge_tts.Communicate.save` had no timeout. Each segment now has a 45s timeout (3 attempts), empty text is skipped, already-written wav files are reused so Retry Stage DUB continues from 32/193.

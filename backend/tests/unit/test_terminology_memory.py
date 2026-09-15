@@ -89,6 +89,34 @@ def test_filter_proper_names_keeps_khương_nam_drops_other_phrases():
     assert sources == {"姜男", "青云城"}
 
 
+def test_filter_keeps_ly_phi_vu_drops_verbs_and_common_nouns():
+    """Second Studio screenshot: 李飞羽 is a name; 爬上/弟子/哥哥/而且門派 are not."""
+    from app.services.terminology_memory import filter_proper_names
+
+    kept = filter_proper_names(
+        [
+            {"source_term": "李飞羽", "suggested_term": "Lý Phi Vũ", "term_type": "character", "confidence": 0.9},
+            {"source_term": "基途河", "suggested_term": "基途河", "term_type": "location", "confidence": 0.75},
+            {"source_term": "Hàn Lực", "suggested_term": "Hàn Lực", "term_type": "character", "confidence": 0.75},
+            {"source_term": "冰發", "suggested_term": "冰發", "term_type": "character", "confidence": 0.65},
+            {"source_term": "而且門派", "suggested_term": "而且門派", "term_type": "location", "confidence": 0.75},
+            {"source_term": "爬上", "suggested_term": "爬上", "term_type": "character", "confidence": 0.65},
+            {"source_term": "弟子", "suggested_term": "弟子", "term_type": "character", "confidence": 0.65},
+            {"source_term": "山门", "suggested_term": "山门", "term_type": "location", "confidence": 0.75},
+            {"source_term": "哥哥", "suggested_term": "哥哥", "term_type": "character", "confidence": 0.7},
+            {"source_term": "人心", "suggested_term": "人心", "term_type": "character", "confidence": 0.65},
+            {"source_term": "究冰", "suggested_term": "究冰", "term_type": "character", "confidence": 0.65},
+            {"source_term": "上车", "suggested_term": "上车", "term_type": "character", "confidence": 0.65},
+        ]
+    )
+    sources = {t["source_term"] for t in kept}
+    assert "李飞羽" in sources
+    assert "基途河" in sources
+    assert "Hàn Lực" in sources
+    junk = {"冰發", "而且門派", "爬上", "弟子", "山门", "哥哥", "人心", "究冰", "上车"}
+    assert sources.isdisjoint(junk)
+
+
 def test_segments_transcript_blob_joins_original_and_text():
     from app.services.terminology_memory import segments_transcript_blob
 
