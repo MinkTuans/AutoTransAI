@@ -1,3 +1,6 @@
+- **Translate STT as one numbered JSON and save names (2026-09-15)**:
+  - Auto gửi `{"lines":[{"n":1,"text":"..."}]}` (n = thứ tự STT) và nhận cùng dạng kèm `names` (nhân vật/địa danh/tổ chức). Gắn dịch lại đúng câu. Tên lưu terminology memory. JSON quá dài vẫn tách lô như cũ.
+
 - **Studio option checkboxes on one equal-width row (2026-09-15)**:
   - Auto-Confirm, Tự cắt intro/outro, and `Kiểm tra bản quyền` sit in one `repeat(3, 1fr)` row so the third label no longer wraps shorter than the others.
 

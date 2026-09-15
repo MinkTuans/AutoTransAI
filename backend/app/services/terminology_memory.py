@@ -149,7 +149,7 @@ def normalize_extracted_terms(raw: Iterable[dict[str, Any]]) -> list[dict[str, A
             or item.get("target")
             or source
         ).strip() or source
-        term_type = str(item.get("term_type") or "other").strip().lower() or "other"
+        term_type = str(item.get("term_type") or item.get("type") or "other").strip().lower() or "other"
         try:
             confidence = float(item.get("confidence") or 0.8)
         except (TypeError, ValueError):

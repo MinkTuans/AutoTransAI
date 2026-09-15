@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.services.video_translator.translator_service import (
     _safe_parse_json_translation,
     _safe_parse_json_list,
+    build_numbered_dialogue_payload,
+    parse_translation_envelope,
     translate_transcript_segments,
 )
 from app.providers.base import LLMProvider
@@ -58,6 +60,93 @@ class MockLLM(LLMProvider):
 
     async def get_quota(self):
         return []
+
+
+def test_numbered_payload_uses_stt_order():
+    segs = [
+        {"number": 1, "text": "李飞羽来了。"},
+        {"number": 2, "text": "青云城很大。"},
+    ]
+    payload = build_numbered_dialogue_payload(segs)
+    assert payload == {
+        "lines": [
+            {"n": 1, "text": "李飞羽来了。"},
+            {"n": 2, "text": "青云城很大。"},
+        ]
+    }
+
+
+def test_parse_envelope_maps_n_and_names():
+    raw = json.dumps(
+        {
+            "lines": [
+                {"n": 1, "text": "Lý Phi Vũ đến rồi."},
+                {"n": 2, "text": "Thanh Vân Thành rất lớn."},
+            ],
+            "names": [
+                {"source": "李飞羽", "translation": "Lý Phi Vũ", "type": "character"},
+                {"source": "青云城", "translation": "Thanh Vân Thành", "type": "location"},
+            ],
+        },
+        ensure_ascii=False,
+    )
+    lines, names = parse_translation_envelope(raw)
+    assert lines[1] == "Lý Phi Vũ đến rồi."
+    assert lines[2] == "Thanh Vân Thành rất lớn."
+    sources = {n["source_term"] for n in names}
+    assert "李飞羽" in sources
+    assert "青云城" in sources
+
+
+@pytest.mark.asyncio
+async def test_translate_one_json_attaches_by_n_and_saves_names():
+    segments = [
+        {"number": 1, "text": "李飞羽来了。"},
+        {"number": 2, "text": "青云城很大。"},
+    ]
+    mock_resp = json.dumps(
+        {
+            "lines": [
+                {"n": 1, "text": "Lý Phi Vũ đến rồi."},
+                {"n": 2, "text": "Thanh Vân Thành rất lớn."},
+            ],
+            "names": [
+                {"source": "李飞羽", "translation": "Lý Phi Vũ", "type": "character"},
+            ],
+        },
+        ensure_ascii=False,
+    )
+    mock_llm = MockLLM(responses=[mock_resp])
+    saved = []
+
+    async def fake_persist(_db, project_id, terms):
+        assert project_id == "proj-names"
+        saved.extend(terms)
+        return len(terms)
+
+    with patch("app.services.video_translator.translator_service.get_registry") as mock_reg:
+        with patch(
+            "app.services.terminology_memory.persist_terminology_memory",
+            fake_persist,
+        ):
+            reg_instance = MagicMock()
+            reg_instance.get_llm.return_value = mock_llm
+            mock_reg.return_value = reg_instance
+            results = await translate_transcript_segments(
+                segments=segments,
+                source_language="zh",
+                target_language="vi",
+                job_id="TEST-JSON-1",
+                llm_provider_id="mock_gemini",
+                project_id="proj-names",
+                db=object(),
+            )
+
+    assert mock_llm.prompts[0].count('"n":') >= 2
+    assert '"lines"' in mock_llm.prompts[0]
+    assert results[0]["translated_text"] == "Lý Phi Vũ đến rồi."
+    assert results[1]["translated_text"] == "Thanh Vân Thành rất lớn."
+    assert any(t.get("source_term") == "李飞羽" for t in saved)
 
 
 @pytest.mark.asyncio

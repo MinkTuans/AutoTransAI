@@ -743,6 +743,8 @@ def _safe_parse_json_translation(text: str) -> dict:
         for idx, item in enumerate(raw_parsed):
             if isinstance(item, dict):
                 item_id = item.get("id")
+                if item_id is None:
+                    item_id = item.get("n")
                 trans = item.get("translation")
                 if trans is None:
                     trans = item.get("text", "")
@@ -770,7 +772,10 @@ def _safe_parse_json_translation(text: str) -> dict:
             return res_dict
 
     # Regex extraction fallback for plain string array or json objects
-    dict_matches = re.findall(r'\{\s*"id"\s*:\s*(\d+)\s*,\s*"translation"\s*:\s*"((?:[^"\\]|\\.)*)"\s*\}', json_str)
+    dict_matches = re.findall(
+        r'\{\s*"(?:id|n)"\s*:\s*(\d+)\s*,\s*"(?:translation|text)"\s*:\s*"((?:[^"\\]|\\.)*)"\s*\}',
+        json_str,
+    )
     if dict_matches:
         for seg_id_str, trans_str in dict_matches:
             res_dict[int(seg_id_str)] = trans_str.replace('\\"', '"').replace('\\n', '\n').strip()
@@ -795,6 +800,132 @@ def _safe_parse_json_list(text: str) -> list:
     raise ValueError(f"Could not parse valid JSON list from response: {text[:200]}")
 
 
+def dialogue_line_number(seg: Dict[str, Any], fallback_index: int) -> int:
+    for key in ("number", "segment_number", "n"):
+        raw = seg.get(key)
+        if raw is None:
+            continue
+        try:
+            n = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if n >= 1:
+            return n
+    return fallback_index + 1
+
+
+def build_numbered_dialogue_payload(segments: List[Dict[str, Any]]) -> Dict[str, Any]:
+    lines = []
+    for i, seg in enumerate(segments):
+        lines.append(
+            {
+                "n": dialogue_line_number(seg, i),
+                "text": str(seg.get("text") or seg.get("original_text") or ""),
+            }
+        )
+    return {"lines": lines}
+
+
+def _load_json_blob(text: str) -> Any:
+    json_str = re.sub(r"^```json\s*", "", text or "", flags=re.MULTILINE)
+    json_str = re.sub(r"^```\s*", "", json_str, flags=re.MULTILINE)
+    json_str = re.sub(r"```$", "", json_str, flags=re.MULTILINE).strip()
+    try:
+        return json.loads(json_str, strict=False)
+    except Exception:
+        pass
+    obj = re.search(r"\{.*\}", json_str, re.DOTALL)
+    if obj:
+        try:
+            return json.loads(obj.group(0), strict=False)
+        except Exception:
+            pass
+    arr = re.search(r"\[.*\]", json_str, re.DOTALL)
+    if arr:
+        try:
+            return json.loads(arr.group(0), strict=False)
+        except Exception:
+            pass
+    return None
+
+
+def parse_translation_envelope(text: str) -> Tuple[Dict[int, str], List[Dict[str, Any]]]:
+    """Parse {lines:[{n,text}], names:[...]} or legacy [{id, translation}]."""
+    raw = _load_json_blob(text)
+    names_raw: List[Any] = []
+    lines_raw: Any = raw
+    if isinstance(raw, dict):
+        names_raw = raw.get("names") or raw.get("terms") or raw.get("glossary") or []
+        if isinstance(raw.get("lines"), list):
+            lines_raw = raw["lines"]
+        elif isinstance(raw.get("translations"), list):
+            lines_raw = raw["translations"]
+        elif isinstance(raw.get("items"), list):
+            lines_raw = raw["items"]
+    lines_map: Dict[int, str] = {}
+    if isinstance(lines_raw, list):
+        fake = json.dumps(lines_raw, ensure_ascii=False)
+        try:
+            lines_map = _safe_parse_json_translation(fake)
+        except ValueError:
+            lines_map = {}
+    if not lines_map:
+        lines_map = _safe_parse_json_translation(text)
+    names: List[Dict[str, Any]] = []
+    if isinstance(names_raw, list):
+        from app.services.terminology_memory import normalize_extracted_terms
+
+        names = normalize_extracted_terms([x for x in names_raw if isinstance(x, dict)])
+    return lines_map, names
+
+
+def _ordered_translations(
+    parsed_map: Dict[int, str],
+    numbers: List[int],
+    count: int,
+) -> Optional[List[str]]:
+    """Prefer STT `n` keys; fall back to legacy 0-based batch ids."""
+    zero_based = count > 0 and all(i in parsed_map for i in range(count))
+    n_based = bool(numbers) and all(n in parsed_map for n in numbers)
+    sequential_n = numbers == list(range(1, count + 1))
+    if zero_based and 0 in parsed_map and sequential_n:
+        return [parsed_map[i] for i in range(count)]
+    if n_based:
+        return [parsed_map[n] for n in numbers]
+    if zero_based:
+        return [parsed_map[i] for i in range(count)]
+    return None
+
+
+def _translation_json_prompt(
+    payload: Dict[str, Any],
+    source_lang_name: str,
+    target_lang_name: str,
+) -> str:
+    return (
+        "Bạn là dịch giả phim chuyên nghiệp.\n"
+        f"Dịch TOÀN BỘ các câu thoại từ {source_lang_name} sang {target_lang_name}.\n"
+        "Input là một JSON. Output PHẢI là một JSON cùng hình dạng.\n"
+        "Quy tắc:\n"
+        "1. Giữ nguyên số thứ tự 'n' của từng câu. Không gộp, không bỏ, không đổi thứ tự.\n"
+        f"2. Field 'text' ở output là bản dịch {target_lang_name} (tự nhiên, hợp lồng tiếng).\n"
+        "3. Trong 'names' chỉ liệt kê TÊN RIÊNG (người/nhân vật, địa danh, tổ chức) kèm bản dịch. "
+        "Không đưa động từ, đại từ, câu thoại thường.\n"
+        "Output đúng dạng:\n"
+        '{"lines":[{"n":1,"text":"..."},{"n":2,"text":"..."}],'
+        '"names":[{"source":"...","translation":"...","type":"character"}]}\n\n'
+        f"JSON gốc:\n{json.dumps(payload, ensure_ascii=False)}"
+    )
+
+
+async def _persist_translation_names(db: Optional[Any], project_id: Optional[str], names: List[Dict[str, Any]]) -> int:
+    if not db or not project_id or project_id == "default_project" or not names:
+        return 0
+    from app.services.terminology_memory import filter_proper_names, persist_terminology_memory
+
+    return await persist_terminology_memory(db, project_id, filter_proper_names(names))
+
+
 async def _translate_sub_batch(
     llm: Any,
     sub_segments: List[Dict[str, Any]],
@@ -807,50 +938,49 @@ async def _translate_sub_batch(
     if not sub_segments:
         return []
 
-    input_items = [{"id": i, "text": s.get("text", "")} for i, s in enumerate(sub_segments)]
-    prompt = (
-        "Bạn là một dịch giả phim chuyên nghiệp.\n"
-        f"Nhiệm vụ: Dịch chính xác danh sách câu thoại bên dưới từ {source_lang_name} sang {target_lang_name}.\n"
-        "Yêu cầu bắt buộc:\n"
-        f"1. Phải dịch TOÀN BỘ nội dung câu thoại sang {target_lang_name} tự nhiên, hợp ngữ cảnh lồng tiếng phim.\n"
-        "2. Trả về mảng JSON chứa các object. Mỗi object PHẢI giữ nguyên 'id' và chứa field 'translation' là bản dịch tương ứng.\n"
-        "3. Tuyệt đối KHÔNG ĐƯỢC tự ý gộp, bỏ qua hoặc đổi 'id'. Đảm bảo đủ số lượng items trong output.\n\n"
-        f"Danh sách câu thoại gốc ({source_lang_name}):\n"
-        f"{json.dumps(input_items, ensure_ascii=False)}"
-    )
+    payload = build_numbered_dialogue_payload(sub_segments)
+    numbers = [item["n"] for item in payload["lines"]]
+    prompt = _translation_json_prompt(payload, source_lang_name, target_lang_name)
 
     parsed_map: Dict[int, str] = {}
     last_err = None
     for attempt in range(2):
         try:
             resp = await llm.generate_text(
-                prompt if attempt == 0 else prompt + "\nLƯU Ý: Trả về mảng JSON hợp lệ [{\"id\": 0, \"translation\": \"...\"}]",
+                prompt if attempt == 0 else prompt + '\nLƯU Ý: Trả về đúng JSON {"lines":[{"n":1,"text":"..."}],"names":[]}',
                 model=getattr(llm, '_resolved_model_id', None),
             )
-            parsed_map = _safe_parse_json_translation(resp)
+            parsed_map, _names = parse_translation_envelope(resp)
+            mapped = _ordered_translations(parsed_map, numbers, len(sub_segments))
+            if mapped is not None:
+                return mapped
 
-            missing_ids = [i for i in range(len(sub_segments)) if i not in parsed_map]
+            missing_ids = [n for n in numbers if n not in parsed_map]
+            if 0 in parsed_map:
+                missing_ids = [i for i in range(len(sub_segments)) if i not in parsed_map]
             if missing_ids and len(missing_ids) < max(1, len(sub_segments) // 2):
-                missing_items = [{"id": mid, "text": sub_segments[mid].get("text", "")} for mid in missing_ids]
+                missing_items = {
+                    "lines": [item for item in payload["lines"] if item["n"] in missing_ids]
+                }
                 rec_prompt = (
-                    f"CẢNH BÁO: Bị thiếu câu thoại có ID {missing_ids}. Dịch bắt buộc sang {target_lang_name}:\n"
-                    f"{json.dumps(missing_items, ensure_ascii=False)}\n\n"
-                    "Trả về mảng JSON [{\"id\": X, \"translation\": \"...\"}]"
+                    f"CẢNH BÁO: Thiếu câu thoại n={missing_ids}. Dịch bắt buộc sang {target_lang_name}:\n"
+                    f"{json.dumps(missing_items, ensure_ascii=False)}\n"
+                    'Trả về JSON {"lines":[{"n":X,"text":"..."}],"names":[]}'
                 )
                 try:
                     rec_resp = await llm.generate_text(rec_prompt, model=getattr(llm, '_resolved_model_id', None))
-                    rec_map = _safe_parse_json_translation(rec_resp)
+                    rec_map, _ = parse_translation_envelope(rec_resp)
                     for r_id, r_trans in rec_map.items():
                         if r_id in missing_ids:
                             parsed_map[r_id] = r_trans
                 except Exception as ex:
                     logger.warning(f"Sub-batch {batch_label} recovery failed: {ex}")
 
-            if all(i in parsed_map for i in range(len(sub_segments))):
-                return [parsed_map.get(i, "") for i in range(len(sub_segments))]
-            else:
-                still_missing = [i for i in range(len(sub_segments)) if i not in parsed_map]
-                last_err = f"Sub-batch length mismatch: expected {len(sub_segments)}, still missing IDs {still_missing}"
+            mapped = _ordered_translations(parsed_map, numbers, len(sub_segments))
+            if mapped is not None:
+                return mapped
+            still_missing = [n for n in numbers if n not in parsed_map]
+            last_err = f"Sub-batch length mismatch: expected {len(sub_segments)}, still missing IDs {still_missing}"
         except Exception as ex:
             last_err = str(ex)
 
@@ -870,9 +1000,10 @@ async def translate_transcript_segments(
     target_language: str,
     job_id: str = "VT-JOB",
     llm_provider_id: str = "gemini",
-    batch_size: int = 30,
+    batch_size: int = 0,
     translation_model_id: Optional[str] = None,
     db: Optional[AsyncSession] = None,
+    project_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Translate transcript text segments to target language using LLM Provider (Gemini / OpenAI).
@@ -959,25 +1090,17 @@ async def translate_transcript_segments(
 
         try:
             translated_results: List[str] = []
-            total_batches = (len(segments) + batch_size - 1) // batch_size
+            collected_names: List[Dict[str, Any]] = []
+            chunk = len(segments) if not batch_size or batch_size < 1 else batch_size
+            total_batches = (len(segments) + chunk - 1) // chunk
 
             for batch_idx in range(total_batches):
-                start_i = batch_idx * batch_size
-                end_i = min(len(segments), start_i + batch_size)
+                start_i = batch_idx * chunk
+                end_i = min(len(segments), start_i + chunk)
                 batch_segments = segments[start_i:end_i]
-
-                input_items = [{"id": i, "text": s.get("text", "")} for i, s in enumerate(batch_segments)]
-
-                prompt = (
-                    "Bạn là một dịch giả phim chuyên nghiệp.\n"
-                    f"Nhiệm vụ: Dịch chính xác danh sách câu thoại bên dưới từ {source_lang_name} sang {target_lang_name}.\n"
-                    "Yêu cầu bắt buộc:\n"
-                    f"1. Phải dịch TOÀN BỘ nội dung câu thoại sang {target_lang_name} tự nhiên, hợp ngữ cảnh lồng tiếng phim.\n"
-                    "2. Trả về mảng JSON chứa các object. Mỗi object PHẢI giữ nguyên 'id' và chứa field 'translation' là bản dịch tương ứng.\n"
-                    "3. Tuyệt đối KHÔNG ĐƯỢC tự ý gộp, bỏ qua hoặc đổi 'id'. Đảm bảo đủ số lượng items trong output.\n\n"
-                    f"Danh sách câu thoại gốc ({source_lang_name}):\n"
-                    f"{json.dumps(input_items, ensure_ascii=False)}"
-                )
+                payload = build_numbered_dialogue_payload(batch_segments)
+                numbers = [item["n"] for item in payload["lines"]]
+                prompt = _translation_json_prompt(payload, source_lang_name, target_lang_name)
 
                 translated_list = None
                 batch_error = None
@@ -985,13 +1108,18 @@ async def translate_transcript_segments(
 
                 for attempt in range(2):
                     try:
-                        curr_prompt = prompt if attempt == 0 else prompt + "\nLƯU Ý BẮT BUỘC: Đảm bảo mảng JSON hợp lệ [{\"id\": 0, \"translation\": \"...\"}]"
+                        curr_prompt = prompt if attempt == 0 else prompt + '\nLƯU Ý BẮT BUỘC: Trả về đúng JSON {"lines":[{"n":1,"text":"..."}],"names":[]}'
                         response_text = await llm.generate_text(curr_prompt, model=getattr(llm, '_resolved_model_id', None))
-                        parsed_map = _safe_parse_json_translation(response_text)
-                        
-                        expected_ids = set(range(len(batch_segments)))
+                        parsed_map, batch_names = parse_translation_envelope(response_text)
+                        if batch_names:
+                            collected_names.extend(batch_names)
+
+                        mapped = _ordered_translations(parsed_map, numbers, len(batch_segments))
+                        expected_ids = set(numbers)
                         found_ids = set(parsed_map.keys())
                         missing_ids = sorted(list(expected_ids - found_ids))
+                        if mapped is None and 0 in parsed_map:
+                            missing_ids = [i for i in range(len(batch_segments)) if i not in parsed_map]
 
                         log_job_event(
                             job_id,
@@ -1001,23 +1129,26 @@ async def translate_transcript_segments(
                             f"missing_count={len(missing_ids)} | missing_ids={missing_ids}"
                         )
 
-                        # Targeted recovery retry if some IDs were omitted
-                        if missing_ids and len(missing_ids) < len(batch_segments):
+                        if mapped is None and missing_ids and len(missing_ids) < len(batch_segments):
                             log_job_event(
                                 job_id,
                                 "TRANSLATING",
                                 f"[Gemini Recovery] Attempting targeted recovery for batch {batch_idx+1}/{total_batches} missing {len(missing_ids)} segments: {missing_ids}"
                             )
-                            missing_items = [{"id": mid, "text": batch_segments[mid].get("text", "")} for mid in missing_ids]
+                            missing_payload = {
+                                "lines": [item for item in payload["lines"] if item["n"] in missing_ids]
+                            }
                             rec_prompt = (
-                                f"CẢNH BÁO: Các câu thoại sau đây có ID {missing_ids} BỊ THIẾU TRONG BẢN DỊCH TRƯỚC.\n"
-                                f"Bắt buộc dịch toàn bộ các câu thoại này sang {target_lang_name} và giữ nguyên 'id':\n"
-                                f"{json.dumps(missing_items, ensure_ascii=False)}\n\n"
-                                "Trả về mảng JSON [{\"id\": X, \"translation\": \"...\"}]"
+                                f"CẢNH BÁO: Thiếu câu thoại n={missing_ids} trong bản dịch trước.\n"
+                                f"Bắt buộc dịch sang {target_lang_name} và giữ nguyên 'n':\n"
+                                f"{json.dumps(missing_payload, ensure_ascii=False)}\n"
+                                'Trả về JSON {"lines":[{"n":X,"text":"..."}],"names":[]}'
                             )
                             try:
                                 rec_resp = await llm.generate_text(rec_prompt)
-                                rec_map = _safe_parse_json_translation(rec_resp)
+                                rec_map, rec_names = parse_translation_envelope(rec_resp)
+                                if rec_names:
+                                    collected_names.extend(rec_names)
                                 for r_id, r_trans in rec_map.items():
                                     if r_id in missing_ids:
                                         parsed_map[r_id] = r_trans
@@ -1029,18 +1160,16 @@ async def translate_transcript_segments(
                             except Exception as rec_err:
                                 logger.warning(f"Targeted recovery retry failed: {rec_err}")
 
-                        # If all required segment IDs 0..N-1 are present, translation is complete
-                        if all(i in parsed_map for i in range(len(batch_segments))):
-                            translated_list = [parsed_map.get(i, "") for i in range(len(batch_segments))]
+                        mapped = _ordered_translations(parsed_map, numbers, len(batch_segments))
+                        if mapped is not None:
+                            translated_list = mapped
                             break
-                        else:
-                            still_missing = [i for i in range(len(batch_segments)) if i not in parsed_map]
-                            batch_error = f"Output length mismatch: expected {len(batch_segments)}, still missing IDs {still_missing}"
+                        still_missing = [n for n in numbers if n not in parsed_map]
+                        batch_error = f"Output length mismatch: expected {len(batch_segments)}, still missing IDs {still_missing}"
                     except Exception as ex:
                         batch_error = str(ex)
                         logger.warning(f"Batch {batch_idx+1}/{total_batches} attempt {attempt+1} failed on {llm.provider_id}: {batch_error}")
 
-                # If full batch attempt failed, fallback to sub-batch splitting
                 if translated_list is None or len(translated_list) != len(batch_segments):
                     logger.warning(f"Batch {batch_idx+1}/{total_batches} full batch translation failed ({batch_error}). Triggering dynamic sub-batch splitting fallback...")
                     try:
@@ -1058,7 +1187,6 @@ async def translate_transcript_segments(
                 if not isinstance(translated_list, list) or len(translated_list) != len(batch_segments):
                     raise ValueError(f"LLM translation failed for batch {batch_idx+1}/{total_batches} on {llm.provider_name}: {batch_error}")
 
-                # Check for verbatim echo
                 texts_to_translate = [s.get("text", "") for s in batch_segments]
                 verbatim_echo_count = 0
                 for orig, trans in zip(texts_to_translate, translated_list):
@@ -1070,14 +1198,17 @@ async def translate_transcript_segments(
                     logger.warning(f"Batch {batch_idx+1}/{total_batches} on {llm.provider_id} had {verbatim_echo_count} verbatim echoes. Retrying batch with strict prompt...")
                     strict_prompt = (
                         f"CẢNH BÁO: Bạn đã trả về nguyên văn {source_lang_name}. HÃY DỊCH BẮT BUỘC SANG {target_lang_name}.\n"
-                        f"Bắt buộc dịch toàn bộ các câu thoại này sang {target_lang_name} cho lồng tiếng phim:\n"
-                        f"{json.dumps(input_items, ensure_ascii=False)}\n\n"
-                        "Chỉ trả về mảng JSON [{\"id\": 0, \"translation\": \"...\"}] chứa các câu đã dịch sang tiếng Việt."
+                        f"{json.dumps(payload, ensure_ascii=False)}\n"
+                        'Chỉ trả về JSON {"lines":[{"n":1,"text":"..."}],"names":[]}'
                     )
                     try:
                         retry_resp = await llm.generate_text(strict_prompt)
-                        retry_map = _safe_parse_json_translation(retry_resp)
-                        if len(retry_map) == len(batch_segments):
+                        retry_map, retry_names = parse_translation_envelope(retry_resp)
+                        if retry_names:
+                            collected_names.extend(retry_names)
+                        if all(n in retry_map for n in numbers):
+                            translated_list = [retry_map.get(n, "") for n in numbers]
+                        elif len(retry_map) == len(batch_segments):
                             translated_list = [retry_map.get(i, "") for i in range(len(batch_segments))]
                     except Exception as retry_ex:
                         logger.warning(f"Batch {batch_idx+1} anti-echo retry failed: {retry_ex}")
@@ -1102,7 +1233,12 @@ async def translate_transcript_segments(
                 for seg, trans in zip(segments, translated_results):
                     seg["translated_text"] = trans
 
-                log_job_event(job_id, "TRANSLATING", f"LLM translation ({llm.provider_name}) completed successfully for all {len(segments)} segments.")
+                saved = await _persist_translation_names(db, project_id, collected_names)
+                log_job_event(
+                    job_id,
+                    "TRANSLATING",
+                    f"LLM translation ({llm.provider_name}) completed successfully for all {len(segments)} segments. names={len(collected_names)} saved={saved}",
+                )
                 return segments
 
         except Exception as e:
