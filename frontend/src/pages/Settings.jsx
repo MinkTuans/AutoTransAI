@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { providersApi, settingsApi, systemApi, youtubeApi } from '../api';
+import { providersApi, settingsApi, systemApi, tiktokApi, youtubeApi } from '../api';
 import { LoadingSpinner, ButtonSpinner, LoadingOverlay, SkeletonLoader } from '../components/LoadingSpinner';
 
 
@@ -135,9 +135,10 @@ export default function Settings() {
 
   const fetchSocialAccounts = async () => {
     try {
-      const [settingsRes, ytAccounts] = await Promise.allSettled([
+      const [settingsRes, ytAccounts, ttAccounts] = await Promise.allSettled([
         settingsApi.getSocialAccounts(),
         youtubeApi.listAccounts(),
+        tiktokApi.listAccounts(),
       ]);
 
       let accounts = [];
@@ -156,29 +157,80 @@ export default function Settings() {
         }));
         accounts = [...ytList, ...accounts.filter(a => a.platform !== 'youtube')];
       }
+      if (ttAccounts.status === 'fulfilled' && Array.isArray(ttAccounts.value)) {
+        const ttList = ttAccounts.value.map(acc => ({
+          id: acc.id,
+          platform: 'tiktok',
+          account_name: acc.display_name || acc.channel_name,
+          channel_id: acc.open_id || acc.channel_id,
+          status: 'CONNECTED (OAuth 2.0)',
+          priority: 1,
+          is_oauth: true,
+        }));
+        accounts = [...ttList, ...accounts.filter(a => a.platform !== 'tiktok')];
+      }
       setSocialAccounts(accounts);
+      return accounts;
     } catch (err) {
       console.error('Failed fetching social accounts:', err);
+      return [];
     }
   };
 
-  const handleConnectYouTubeOAuth = async () => {
-    try {
-      const res = await youtubeApi.getAuthUrl();
-      if (res && res.auth_url) {
-        window.location.href = res.auth_url;
-      } else {
-        alert('❌ Không thể khởi tạo kết nối Google OAuth. Vui lòng kiểm tra lại YOUTUBE_CLIENT_ID trong file .env');
+  const openOAuthInChrome = async (authUrl) => {
+    const res = await systemApi.openBrowser(authUrl);
+    if (!res?.success) {
+      throw new Error(res?.detail || 'Không mở được Google Chrome');
+    }
+  };
+
+  const pollForNewOauthAccount = async (platform, previousIds) => {
+    const started = Date.now();
+    while (Date.now() - started < 180000) {
+      const list = await fetchSocialAccounts();
+      const found = (list || []).some(acc => acc.platform === platform && acc.is_oauth && !previousIds.has(acc.id));
+      if (found) {
+        setMessage({ type: 'success', text: `Đã kết nối ${platform === 'tiktok' ? 'TikTok' : 'YouTube'}. Có thể đóng tab Chrome.` });
+        return true;
       }
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    return false;
+  };
+
+  const handleConnectOAuth = async (platform) => {
+    const previousIds = new Set(socialAccounts.filter(a => a.platform === platform && a.is_oauth).map(a => a.id));
+    try {
+      const res = platform === 'tiktok'
+        ? await tiktokApi.getAuthUrl()
+        : await youtubeApi.getAuthUrl();
+      if (!res?.auth_url) {
+        alert(platform === 'tiktok'
+          ? '❌ Không thể khởi tạo TikTok OAuth. Kiểm tra TIKTOK_CLIENT_KEY / TIKTOK_CLIENT_SECRET trong .env'
+          : '❌ Không thể khởi tạo kết nối Google OAuth. Vui lòng kiểm tra lại YOUTUBE_CLIENT_ID trong file .env');
+        return;
+      }
+      await openOAuthInChrome(res.auth_url);
+      setShowAddSocialModal(false);
+      setMessage({
+        type: 'info',
+        text: `Đã mở tab mới trên Google Chrome. Đăng nhập ${platform === 'tiktok' ? 'TikTok' : 'Google/YouTube'} xong rồi quay lại app này — không đóng cửa sổ AutoTransAI.`,
+      });
+      pollForNewOauthAccount(platform, previousIds);
     } catch (err) {
-      alert('❌ Lỗi kết nối Google OAuth: ' + (err.response?.data?.detail || err.message));
+      alert('❌ Lỗi mở Chrome cho OAuth: ' + (err.response?.data?.detail || err.message));
     }
   };
 
-  const handleDeleteSocialAccount = async (accId, isOAuth) => {
+  const handleConnectYouTubeOAuth = () => handleConnectOAuth('youtube');
+  const handleConnectTikTokOAuth = () => handleConnectOAuth('tiktok');
+
+  const handleDeleteSocialAccount = async (accId, isOAuth, platform) => {
     if (!window.confirm('Bạn có chắc chắn muốn ngắt kết nối kênh này?')) return;
     try {
-      if (isOAuth) {
+      if (isOAuth && platform === 'tiktok') {
+        await tiktokApi.disconnectAccount(accId);
+      } else if (isOAuth) {
         await youtubeApi.disconnectAccount(accId);
       } else {
         await settingsApi.deleteSocialAccount(accId);
@@ -208,6 +260,12 @@ export default function Settings() {
       fetchSocialAccounts(),
       fetchSystemSettings(),
     ]).finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    const onFocus = () => { fetchSocialAccounts(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
   }, []);
 
   useEffect(() => {
@@ -951,9 +1009,17 @@ export default function Settings() {
                 className="btn btn-primary"
                 style={{ fontSize: '0.8rem', background: 'linear-gradient(135deg, #ef4444, #dc2626)' }}
                 onClick={handleConnectYouTubeOAuth}
-                title="Đăng nhập Google OAuth 2.0 để tự động kết nối kênh YouTube"
+                title="Mở tab Google Chrome để đăng nhập Google OAuth 2.0"
               >
-                🔴 Kết Nối YouTube (Google OAuth 2.0)
+                🔴 Kết Nối YouTube
+              </button>
+              <button
+                className="btn btn-primary"
+                style={{ fontSize: '0.8rem', background: 'linear-gradient(135deg, #111827, #000000)', color: '#fff' }}
+                onClick={handleConnectTikTokOAuth}
+                title="Mở tab Google Chrome để đăng nhập TikTok Login Kit"
+              >
+                ♪ Kết Nối TikTok
               </button>
               <button className="btn btn-secondary" style={{ fontSize: '0.8rem' }} onClick={() => setShowAddSocialModal(true)}>
                 + Thêm Kênh Khác
@@ -963,7 +1029,7 @@ export default function Settings() {
           <div className="card-body">
             {socialAccounts.length === 0 ? (
               <div style={{ color: '#94a3b8', fontStyle: 'italic' }}>
-                Chưa có tài khoản nào được kết nối. Hãy ấn "🔴 Kết Nối YouTube (Google OAuth 2.0)" ở trên.
+                Chưa có tài khoản nào được kết nối. Hãy ấn Kết Nối YouTube hoặc Kết Nối TikTok (mở tab Chrome, không mở trong app).
               </div>
             ) : (
               <table className="table" style={{ width: '100%', fontSize: '0.85rem' }}>
@@ -986,7 +1052,7 @@ export default function Settings() {
                       <td><span className="badge badge-success">● {acc.status}</span></td>
                       <td><span className="badge badge-info">P{acc.priority}</span></td>
                       <td style={{ textAlign: 'right' }}>
-                        <button className="btn btn-danger" style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }} onClick={() => handleDeleteSocialAccount(acc.id, acc.is_oauth)}>
+                        <button className="btn btn-danger" style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }} onClick={() => handleDeleteSocialAccount(acc.id, acc.is_oauth, acc.platform)}>
                           Remove
                         </button>
                       </td>
@@ -1384,7 +1450,7 @@ export default function Settings() {
                 {newSocialData.platform === 'youtube' && (
                   <div style={{ marginBottom: '1.25rem', padding: '1rem', background: '#1e1b4b', border: '1px solid #6366f1', borderRadius: '8px', textAlign: 'center' }}>
                     <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.85rem', color: '#c7d2fe' }}>
-                      🔑 Để tải video lên YouTube tự động, hãy đăng nhập và cấp quyền trực tiếp qua Google OAuth 2.0:
+                      🔑 Đăng nhập YouTube sẽ mở tab mới trên Google Chrome (không mở trong app):
                     </p>
                     <button
                       type="button"
@@ -1393,6 +1459,21 @@ export default function Settings() {
                       style={{ background: 'linear-gradient(135deg, #ef4444, #dc2626)', width: '100%', fontWeight: 'bold' }}
                     >
                       🔴 Đăng Nhập Google OAuth 2.0 (YouTube)
+                    </button>
+                  </div>
+                )}
+                {newSocialData.platform === 'tiktok' && (
+                  <div style={{ marginBottom: '1.25rem', padding: '1rem', background: '#111827', border: '1px solid #6b7280', borderRadius: '8px', textAlign: 'center' }}>
+                    <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.85rem', color: '#e5e7eb' }}>
+                      ♪ Đăng nhập TikTok sẽ mở tab mới trên Google Chrome. Sau khi cấp quyền, đóng tab đó và quay lại app.
+                    </p>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={handleConnectTikTokOAuth}
+                      style={{ background: 'linear-gradient(135deg, #111827, #000000)', width: '100%', fontWeight: 'bold' }}
+                    >
+                      ♪ Đăng Nhập TikTok (Login Kit)
                     </button>
                   </div>
                 )}

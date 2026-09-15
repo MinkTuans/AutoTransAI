@@ -102,6 +102,11 @@ class Settings(BaseSettings):
     ENCRYPTION_KEY: str = ""
     YOUTUBE_REDIRECT_URI: str = "http://127.0.0.1:8000/api/youtube/oauth-callback"
 
+    TIKTOK_CLIENT_KEY: str = ""
+    TIKTOK_CLIENT_SECRET: str = ""
+    TIKTOK_REDIRECT_URI: str = "http://127.0.0.1:8000/api/tiktok/oauth-callback"
+    TIKTOK_SCOPES: str = "user.info.basic,video.upload,video.publish"
+
     # ── Server ─────────────────────────────────────────────────────────
     HOST: str = "127.0.0.1"
     PORT: int = 8000

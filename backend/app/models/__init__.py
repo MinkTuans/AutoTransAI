@@ -22,6 +22,7 @@ from app.models.video_editor import (
     QCReport,
     YouTubeChannel,
     YouTubePublication,
+    TikTokAccount,
 )
 from app.models.video_merger import (
     VideoMergeJob,
@@ -64,6 +65,7 @@ __all__ = [
     "QCReport",
     "YouTubeChannel",
     "YouTubePublication",
+    "TikTokAccount",
     "VideoMergeJob",
     "VideoMergeAsset",
     "MergeJobStatus",

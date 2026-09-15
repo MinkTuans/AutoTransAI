@@ -1,3 +1,9 @@
+- **TikTok Login Kit OAuth + open Chrome tab, not the app window (2026-09-15)**:
+  - **Ask**: Connect TikTok like YouTube, and stop OAuth from taking over the desktop app (pywebview / Edge `--app=`), which cannot return after TikTok/Google login.
+  - **Auth**: `GET /api/tiktok/auth-url` builds `https://www.tiktok.com/v2/auth/authorize/` with desktop PKCE (hex SHA256 challenge). Callback exchanges code at `open.tiktokapis.com/v2/oauth/token/`, fetches display name, encrypts tokens into `tiktok_accounts`.
+  - **Chrome**: `POST /api/system/open-browser` only allows Google/TikTok authorize HTTPS URLs and runs `chrome --new-tab`. YouTube OAuth uses the same path. Callback shows “đóng tab Chrome, quay lại AutoTransAI”; Settings polls for the new account.
+  - **Config**: `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REDIRECT_URI`, `TIKTOK_SCOPES`. Register the redirect URI on developers.tiktok.com (Login Kit, localhost/127.0.0.1 with port).
+
 - **Pre-STT copyright risk check (2026-09-14)**:
   - **Scope**: Studio checkbox `Kiểm tra bản quyền trước khi dịch` (default on), after trim / before STT.
   - **Signals (no LLM)**: YouTube `licensedContent`, Bilibili `copyright`/tname via view API, film/TV title+duration heuristics, Chromaprint/AcoustID when `fpcalc` + `ACOUSTID_API_KEY` are present.

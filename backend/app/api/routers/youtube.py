@@ -6,7 +6,7 @@ import uuid
 import asyncio
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
@@ -19,6 +19,7 @@ from app.api.deps import get_db
 from app.config import get_settings
 from app.models.video_editor import YouTubeChannel, YouTubePublication, PublishStatusEnum
 from app.core.encryption import encrypt_data
+from app.core.open_browser import oauth_done_html
 from app.services.video_editor.youtube_service import YouTubePublishingService
 
 router = APIRouter(prefix="/youtube", tags=["youtube"])
@@ -97,7 +98,8 @@ async def get_auth_url(redirect_uri: str = None):
 async def oauth_callback(request: Request, state: str = None, code: str = None, db: AsyncSession = Depends(get_db)):
     """Handle the Google OAuth 2.0 callback."""
     if not code:
-        raise HTTPException(status_code=400, detail="Missing authorization code")
+        html = oauth_done_html("YouTube", False, "Thiếu mã ủy quyền từ Google.")
+        return HTMLResponse(content=html, status_code=400)
     
     try:
         client_config = _get_client_config()
@@ -160,12 +162,13 @@ async def oauth_callback(request: Request, state: str = None, code: str = None, 
             db.add(new_channel)
             
         await db.commit()
-        
-        # Redirect back to frontend settings page
-        return RedirectResponse(url="http://127.0.0.1:5173/settings/social?youtube_connected=true")
-        
+
+        html = oauth_done_html("YouTube", True, f"Kênh: {channel_title}")
+        return HTMLResponse(content=html)
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        html = oauth_done_html("YouTube", False, str(e))
+        return HTMLResponse(content=html, status_code=500)
 
 
 @router.get("/accounts")

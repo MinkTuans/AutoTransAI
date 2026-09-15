@@ -45,6 +45,7 @@ TABLE_MIGRATION_ORDER = [
     "qc_reports",
     "youtube_channels",
     "youtube_publications",
+    "tiktok_accounts",
     "project_glossaries",
     "project_terminology_memory",
     "speaker_voice_mappings",

@@ -4,7 +4,8 @@ System API routes — health checks, interrupted project detection, cleanup.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +14,7 @@ from app.media.ffprobe import is_ffmpeg_installed, get_ffmpeg_version
 from app.models.project import Project
 from app.workflow.state_machine import is_running_state
 from app.core import get_logger
+from app.core.open_browser import open_oauth_in_chrome
 
 logger = get_logger(__name__)
 
@@ -57,3 +59,19 @@ async def list_interrupted(session: AsyncSession = Depends(get_session)):
         await session.commit()
 
     return {"success": True, "data": interrupted}
+
+
+class OpenBrowserBody(BaseModel):
+    url: str
+
+
+@router.post("/open-browser", response_model=dict)
+async def open_browser(body: OpenBrowserBody):
+    """Open an allowlisted OAuth URL in a new Google Chrome tab (not the app window)."""
+    try:
+        result = open_oauth_in_chrome(body.url)
+        return {"success": True, "data": result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

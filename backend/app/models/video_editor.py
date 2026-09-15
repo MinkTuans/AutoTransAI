@@ -129,6 +129,26 @@ class YouTubeChannel(Base):
     )
 
 
+class TikTokAccount(Base):
+    __tablename__ = "tiktok_accounts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    open_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(200), default="TikTok")
+    avatar_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    credentials_json: Mapped[str] = mapped_column(Text)  # Encrypted OAuth2 tokens
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+
+
 class YouTubePublication(Base):
     __tablename__ = "youtube_publications"
 

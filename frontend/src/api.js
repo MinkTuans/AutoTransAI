@@ -77,6 +77,7 @@ export const systemApi = {
 
   health: () => api.get('/system/health').then(res => res.data),
   interrupted: () => api.get('/system/interrupted').then(res => res.data),
+  openBrowser: (url) => api.post('/system/open-browser', { url }).then(res => res.data),
 };
 
 export const videoTranslatorApi = {
@@ -187,6 +188,12 @@ export const youtubeApi = {
   listAccounts: () => api.get('/youtube/accounts').then(res => res.data),
   disconnectAccount: (id) => api.delete(`/youtube/accounts/${id}`).then(res => res.data),
   getUploadStatus: (uploadId) => api.get(`/youtube/upload/${uploadId}/status`).then(res => res.data),
+};
+
+export const tiktokApi = {
+  getAuthUrl: () => api.get('/tiktok/auth-url').then(res => res.data),
+  listAccounts: () => api.get('/tiktok/accounts').then(res => res.data),
+  disconnectAccount: (id) => api.delete(`/tiktok/accounts/${id}`).then(res => res.data),
 };
 
 export const videoMergerApi = {
