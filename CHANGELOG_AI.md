@@ -1,3 +1,6 @@
+- **Studio option checkboxes on one equal-width row (2026-09-15)**:
+  - Auto-Confirm, Tự cắt intro/outro, and `Kiểm tra bản quyền` sit in one `repeat(3, 1fr)` row so the third label no longer wraps shorter than the others.
+
 - **Bilibili `/video/av…` URLs resolve duration without yt-dlp (2026-09-15)**:
   - Studio `Kiểm tra URL` on `https://www.bilibili.com/video/av14901263585041?t=26.0` returned HTTP 400 `Không lấy được thời lượng Bilibili` because the parser only accepted `BV…`. AV/aid now uses `pagelist?aid=` and playurl/view APIs the same way.
 

@@ -1394,33 +1394,41 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                 </select>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                  gap: '8px',
+                  marginTop: '12px',
+                  width: '100%',
+                }}
+              >
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0', minHeight: '28px', whiteSpace: 'nowrap' }}>
                   <input
                     type="checkbox"
                     checked={autoConfirmTranslation}
                     onChange={(e) => setAutoConfirmTranslation(e.target.checked)}
-                    style={{ width: '16px', height: '16px', accentColor: '#10b981', cursor: 'pointer' }}
+                    style={{ width: '16px', height: '16px', flexShrink: 0, accentColor: '#10b981', cursor: 'pointer' }}
                   />
                   Auto-Confirm Translation
                 </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0', minHeight: '28px', whiteSpace: 'nowrap' }}>
                   <input
                     type="checkbox"
                     checked={trimFillerEnabled}
                     onChange={(e) => setTrimFillerEnabled(e.target.checked)}
-                    style={{ width: '16px', height: '16px', accentColor: '#10b981', cursor: 'pointer' }}
+                    style={{ width: '16px', height: '16px', flexShrink: 0, accentColor: '#10b981', cursor: 'pointer' }}
                   />
                   Tự cắt intro/outro thừa
                 </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0', minHeight: '28px', whiteSpace: 'nowrap' }}>
                   <input
                     type="checkbox"
                     checked={copyrightCheckEnabled}
                     onChange={(e) => setCopyrightCheckEnabled(e.target.checked)}
-                    style={{ width: '16px', height: '16px', accentColor: '#10b981', cursor: 'pointer' }}
+                    style={{ width: '16px', height: '16px', flexShrink: 0, accentColor: '#10b981', cursor: 'pointer' }}
                   />
-                  Kiểm tra bản quyền trước khi dịch
+                  Kiểm tra bản quyền
                 </label>
               </div>
             </div>
