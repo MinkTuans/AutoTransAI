@@ -1,3 +1,9 @@
+- **Pre-STT copyright risk check (2026-09-14)**:
+  - **Scope**: Studio checkbox `Kiểm tra bản quyền trước khi dịch` (default on), after trim / before STT.
+  - **Signals (no LLM)**: YouTube `licensedContent`, Bilibili `copyright`/tname via view API, film/TV title+duration heuristics, Chromaprint/AcoustID when `fpcalc` + `ACOUSTID_API_KEY` are present.
+  - **Levels**: red pauses Auto as `copyright_hold` until `POST /jobs/{id}/copyright-continue`; yellow warns and continues; green means no known match (not a legal clearance).
+  - **Files**: `copyright_check.py`, INGEST step, job snapshot, Studio checkbox + hold banner.
+
 - **Allow Bilibili (and other public hosts) resolved via DNS64/NAT64 (2026-09-14)**:
   - **Symptom**: `POST /import` HTTP 400 `Tên miền www.bilibili.com phân giải về địa chỉ nội bộ (64:ff9b::a434:13e) bị cấm truy cập.`
   - **Root cause**: SSRF treated `ip.is_reserved` as internal. NAT64 well-known prefix `64:ff9b::/96` sits in `::/8`, so Python marks it reserved even when it embeds a public IPv4 (here `164.52.1.62`).

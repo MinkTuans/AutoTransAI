@@ -50,6 +50,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   const [originalAudioVolume, setOriginalAudioVolume] = useState(0.20);
   const [autoConfirmTranslation, setAutoConfirmTranslation] = useState(true);
   const [trimFillerEnabled, setTrimFillerEnabled] = useState(true);
+  const [copyrightCheckEnabled, setCopyrightCheckEnabled] = useState(true);
 
   // Watermark Settings State
   const [watermarkEnabled, setWatermarkEnabled] = useState(false);
@@ -149,6 +150,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     original_audio_volume: originalAudioVolume,
     auto_confirm_translation: autoConfirmTranslation,
     trim_filler_enabled: trimFillerEnabled,
+    copyright_check_enabled: copyrightCheckEnabled,
     watermark_enabled: watermarkEnabled,
     watermark_type: watermarkType,
     watermark_image_path: watermarkImagePath,
@@ -300,6 +302,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     if (cfg.original_audio_volume !== undefined) setOriginalAudioVolume(cfg.original_audio_volume);
     setAutoConfirmTranslation(parseBool(cfg.auto_confirm_translation, true));
     setTrimFillerEnabled(parseBool(cfg.trim_filler_enabled, true));
+    setCopyrightCheckEnabled(parseBool(cfg.copyright_check_enabled, true));
 
     setWatermarkEnabled(parseBool(cfg.watermark_enabled, false));
     setWatermarkType(cfg.watermark_type || 'image');
@@ -352,6 +355,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       'target_language', 'source_language', 'audio_provider_id', 'llm_provider_id',
       'stt_model', 'voice_id', 'original_audio_mode', 'original_audio_volume', 'auto_confirm_translation',
       'trim_filler_enabled',
+      'copyright_check_enabled',
       'watermark_enabled', 'watermark_type', 'watermark_image_path', 'watermark_text',
       'watermark_position', 'watermark_scale', 'watermark_opacity', 'watermark_margin',
       'watermark_font_size', 'thumbnail_enabled', 'thumbnail_provider', 'thumbnail_model',
@@ -381,6 +385,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     originalAudioVolume,
     autoConfirmTranslation,
     trimFillerEnabled,
+    copyrightCheckEnabled,
     watermarkEnabled,
     watermarkType,
     watermarkImagePath,
@@ -628,6 +633,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         voice_id: voiceId,
         auto_confirm_translation: autoConfirmTranslation,
         trim_filler_enabled: trimFillerEnabled,
+        copyright_check_enabled: copyrightCheckEnabled,
         watermark_enabled: watermarkEnabled,
         watermark_type: watermarkType,
         watermark_image_path: watermarkImagePath,
@@ -663,6 +669,21 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       await fetchWorkflowStatus(activeProjectId);
     } catch (err) {
       alert('Không thể tạm dừng workflow: ' + formatApiError(err, 'Lỗi hệ thống'));
+    } finally {
+      setLoadingWorkflowAction(null);
+    }
+  };
+
+  const handleCopyrightContinue = async () => {
+    if (!activeJobId) return;
+    setLoadingWorkflowAction('start');
+    setIsProcessing(true);
+    setPipelineError(null);
+    try {
+      await videoTranslatorApi.copyrightContinue(activeJobId);
+    } catch (err) {
+      setPipelineError(formatApiError(err, 'Không tiếp tục được sau kiểm tra bản quyền.'));
+      setIsProcessing(false);
     } finally {
       setLoadingWorkflowAction(null);
     }
@@ -805,7 +826,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   useEffect(() => {
     if (!activeJobId) return;
 
-    if (['completed', 'failed', 'cancelled', 'segment_editing'].includes(job?.status)) {
+    if (['completed', 'failed', 'cancelled', 'segment_editing', 'copyright_hold'].includes(job?.status)) {
       if (isProcessing) setIsProcessing(false);
     }
 
@@ -1010,6 +1031,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         original_audio_mode: originalAudioMode,
         auto_confirm_translation: autoConfirmTranslation,
         trim_filler_enabled: trimFillerEnabled,
+        copyright_check_enabled: copyrightCheckEnabled,
         watermark_enabled: watermarkEnabled,
         watermark_type: watermarkType,
         watermark_image_path: watermarkImagePath,
@@ -1221,6 +1243,23 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
             segments={segments}
           />
 
+          {job && (job.status === 'copyright_hold' || job.stage === 'COPYRIGHT_HOLD') && (
+            <div style={{ marginTop: '12px', padding: '12px 14px', background: '#7f1d1d', border: '1px solid #ef4444', borderRadius: '10px', color: '#fecaca' }}>
+              <div style={{ fontWeight: 700, marginBottom: '6px' }}>Rủi ro bản quyền CAO — đã dừng trước STT</div>
+              <div style={{ fontSize: '13px', whiteSpace: 'pre-wrap' }}>
+                {(job.copyright_check?.reasons || []).join('\n') || job.current_step}
+              </div>
+              <button
+                type="button"
+                onClick={handleCopyrightContinue}
+                disabled={!!loadingWorkflowAction}
+                style={{ marginTop: '10px', padding: '8px 12px', borderRadius: '8px', border: 'none', background: '#f97316', color: '#111', fontWeight: 700, cursor: 'pointer' }}
+              >
+                Tôi hiểu rủi ro, tiếp tục dịch
+              </button>
+            </div>
+          )}
+
           {/* Compact Input Video & Configuration Options */}
           <div className="compact-card">
             <div className="compact-card-header">
@@ -1373,6 +1412,15 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                     style={{ width: '16px', height: '16px', accentColor: '#10b981', cursor: 'pointer' }}
                   />
                   Tự cắt intro/outro thừa
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
+                  <input
+                    type="checkbox"
+                    checked={copyrightCheckEnabled}
+                    onChange={(e) => setCopyrightCheckEnabled(e.target.checked)}
+                    style={{ width: '16px', height: '16px', accentColor: '#10b981', cursor: 'pointer' }}
+                  />
+                  Kiểm tra bản quyền trước khi dịch
                 </label>
               </div>
             </div>

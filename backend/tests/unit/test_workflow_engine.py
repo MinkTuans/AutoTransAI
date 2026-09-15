@@ -53,6 +53,12 @@ def test_ingest_trims_filler_after_audio_extract():
     assert steps.index("trim_filler") > steps.index("extract_audio")
 
 
+def test_ingest_copyright_check_after_trim():
+    steps = IngestStage.STEPS
+    assert "copyright_check" in steps
+    assert steps.index("copyright_check") > steps.index("trim_filler")
+
+
 @pytest.mark.asyncio
 async def test_trim_filler_skipped_when_disabled():
     stage = IngestStage()
@@ -63,6 +69,16 @@ async def test_trim_filler_skipped_when_disabled():
     res = await stage._trim_filler(ctx)
     assert res["applied"] is False
     assert res["reason"] == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_copyright_check_skipped_when_disabled():
+    stage = IngestStage()
+    ctx = WorkflowContext(project_id="p-cc-off")
+    ctx.settings_snapshot = {"copyright_check_enabled": False}
+    res = await stage._copyright_check(ctx)
+    assert res["level"] == "skipped"
+    assert res["enabled"] is False
 
 
 def test_produce_generates_thumbnail_after_final_video():

@@ -22,6 +22,7 @@ class IngestStage:
         "store_asset",
         "extract_audio",
         "trim_filler",
+        "copyright_check",
     ]
 
     async def execute_step(self, step_name: str, ctx: WorkflowContext, db: Any) -> dict[str, Any]:
@@ -40,6 +41,8 @@ class IngestStage:
             return await self._extract_audio(ctx)
         elif step_name == "trim_filler":
             return await self._trim_filler(ctx)
+        elif step_name == "copyright_check":
+            return await self._copyright_check(ctx)
         else:
             raise ValueError(f"Unknown step in INGEST stage: {step_name}")
 
@@ -217,3 +220,31 @@ class IngestStage:
             ctx.audio_path = result.get("audio_path") or ctx.audio_path
             ctx.duration = float(result["end_sec"]) - float(result["start_sec"])
         return result
+
+    def _copyright_enabled(self, ctx: WorkflowContext) -> bool:
+        snapshot = ctx.settings_snapshot or {}
+        raw = snapshot.get("copyright_check_enabled")
+        if raw is None:
+            raw = getattr(ctx, "copyright_check_enabled", True)
+        if isinstance(raw, str):
+            return raw.strip().lower() in ("true", "1", "yes", "on")
+        return bool(raw) if raw is not None else True
+
+    async def _copyright_check(self, ctx: WorkflowContext) -> dict[str, Any]:
+        from app.config import get_settings
+        from app.services.video_translator.copyright_check import run_copyright_check
+
+        report = await run_copyright_check(
+            metadata={
+                "title": (ctx.video_metadata or {}).get("title"),
+                "duration": ctx.duration,
+                "url": ctx.video_url,
+                "domain": (ctx.video_metadata or {}).get("domain"),
+            },
+            audio_path=ctx.audio_path,
+            enabled=self._copyright_enabled(ctx),
+            acoustid_api_key=get_settings().ACOUSTID_API_KEY,
+        )
+        ctx.video_metadata = dict(ctx.video_metadata or {})
+        ctx.video_metadata["copyright_check"] = report
+        return report

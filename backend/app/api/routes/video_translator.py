@@ -146,6 +146,7 @@ class CreateJobRequest(BaseModel):
     original_audio_mode: str = "mute"
     auto_confirm_translation: bool = True
     trim_filler_enabled: bool = True
+    copyright_check_enabled: bool = True
     
     # Watermark Settings
     watermark_enabled: bool = False
@@ -535,10 +536,15 @@ async def create_translation_job(
 
     auto_confirm = _parse_bool(body.auto_confirm_translation, proj_settings.get("auto_confirm_translation", True))
     trim_filler = _parse_bool(getattr(body, "trim_filler_enabled", True), proj_settings.get("trim_filler_enabled", True))
+    copyright_check = _parse_bool(
+        getattr(body, "copyright_check_enabled", True),
+        proj_settings.get("copyright_check_enabled", True),
+    )
 
     settings_snapshot = {
         "auto_confirm_translation": auto_confirm,
         "trim_filler_enabled": trim_filler,
+        "copyright_check_enabled": copyright_check,
         "stt": {
             "provider": body.llm_provider_id or proj_settings.get("stt_provider_id", "gemini"),
             "model": proj_settings.get("stt_model", "gemini-2.0-flash"),
@@ -707,16 +713,39 @@ async def start_translation_pipeline(
                     job_dir = settings.DATA_DIR / "translator" / "jobs" / job_id
                     job_dir.mkdir(parents=True, exist_ok=True)
 
-                    # 1. Extract Audio
-                    current_stage = "EXTRACTING_AUDIO"
-                    b_job.status = TranslationJobStatus.EXTRACTING_AUDIO.value
-                    b_job.stage = "EXTRACTING_AUDIO"
-                    b_job.current_step = "Trích xuất audio từ video"
-                    b_job.stage_progress_pct = 0.0
-                    b_job.overall_progress_pct = calculate_overall_progress("EXTRACTING_AUDIO", 0.0)
-                    await bg_session.commit()
+                    snap = {}
+                    if b_job.settings_snapshot_json:
+                        try:
+                            snap = json.loads(b_job.settings_snapshot_json)
+                        except Exception:
+                            snap = {}
+                    cc_prev = snap.get("copyright_check") or {}
+                    skip_to_stt = bool(cc_prev.get("override")) and (
+                        b_job.last_checkpoint_stage == "COPYRIGHT_HOLD"
+                        or b_job.status == TranslationJobStatus.COPYRIGHT_HOLD.value
+                    )
 
                     extracted_audio_path = job_dir / "extracted_audio.wav"
+                    local_asset_path = Path(b_asset.file_path)
+                    if skip_to_stt:
+                        saved_audio = cc_prev.get("audio_path")
+                        saved_video = cc_prev.get("video_path")
+                        if saved_audio and Path(saved_audio).is_file():
+                            extracted_audio_path = Path(saved_audio)
+                        if saved_video and Path(saved_video).is_file():
+                            local_asset_path = Path(saved_video)
+                        log_job_event(job_id, "COPYRIGHT", "Override confirmed. Continuing to STT.")
+
+                    if not skip_to_stt:
+                        # 1. Extract Audio
+                        current_stage = "EXTRACTING_AUDIO"
+                        b_job.status = TranslationJobStatus.EXTRACTING_AUDIO.value
+                        b_job.stage = "EXTRACTING_AUDIO"
+                        b_job.current_step = "Trích xuất audio từ video"
+                        b_job.stage_progress_pct = 0.0
+                        b_job.overall_progress_pct = calculate_overall_progress("EXTRACTING_AUDIO", 0.0)
+                        await bg_session.commit()
+
 
                     def on_extract_progress(stats: dict):
                         pct = stats.get("progress_pct", 0.0)
@@ -726,8 +755,7 @@ async def start_translation_pipeline(
                     def on_extract_pid(pid: int):
                         asyncio.create_task(_update_pid(job_id, pid))
 
-                    local_asset_path = Path(b_asset.file_path)
-                    if not local_asset_path.exists() and getattr(b_asset, "r2_key", None):
+                    if not skip_to_stt and not local_asset_path.exists() and getattr(b_asset, "r2_key", None):
                         log_job_event(job_id, "DOWNLOADING", f"Local asset missing at {local_asset_path}. Downloading from R2 ({b_asset.r2_key})...")
                         local_asset_path.parent.mkdir(parents=True, exist_ok=True)
                         try:
@@ -735,36 +763,31 @@ async def start_translation_pipeline(
                         except Exception as download_err:
                             logger.warning("R2 asset download failed", error=str(download_err), job_id=job_id)
 
-                    try:
-                        await extract_audio_from_video(
-                            local_asset_path,
-                            extracted_audio_path,
-                            job_id=job_id,
-                            on_progress=on_extract_progress,
-                            on_pid=on_extract_pid,
-                        )
-                    except ValueError as ve:
-                        b_job.status = TranslationJobStatus.FAILED.value
-                        b_job.stage = "FAILED"
-                        b_job.error_message = f"❌ {str(ve)}"
-                        b_job.pid = None
-                        await bg_session.commit()
-                        log_job_event(job_id, "FAILED", f"Audio Extraction Error: {str(ve)}")
-                        return
+                    if not skip_to_stt:
+                        try:
+                            await extract_audio_from_video(
+                                local_asset_path,
+                                extracted_audio_path,
+                                job_id=job_id,
+                                on_progress=on_extract_progress,
+                                on_pid=on_extract_pid,
+                            )
+                        except ValueError as ve:
+                            b_job.status = TranslationJobStatus.FAILED.value
+                            b_job.stage = "FAILED"
+                            b_job.error_message = f"❌ {str(ve)}"
+                            b_job.pid = None
+                            await bg_session.commit()
+                            log_job_event(job_id, "FAILED", f"Audio Extraction Error: {str(ve)}")
+                            return
 
-                    now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
-                    b_job.last_checkpoint_stage = "EXTRACTING_AUDIO_DONE"
-                    b_job.last_checkpoint_at = now_dt
-                    await bg_session.commit()
+                        now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+                        b_job.last_checkpoint_stage = "EXTRACTING_AUDIO_DONE"
+                        b_job.last_checkpoint_at = now_dt
+                        await bg_session.commit()
 
                     # 1b. Trim intro/outro filler before STT
-                    snap = {}
-                    if b_job.settings_snapshot_json:
-                        try:
-                            snap = json.loads(b_job.settings_snapshot_json)
-                        except Exception:
-                            snap = {}
-                    trim_on = _parse_bool(snap.get("trim_filler_enabled"), True)
+                    trim_on = (not skip_to_stt) and _parse_bool(snap.get("trim_filler_enabled"), True)
                     if trim_on:
                         from app.services.video_translator.filler_detector import detect_and_trim_filler
                         from app.media.ffprobe import probe_duration_async
@@ -813,6 +836,56 @@ async def start_translation_pipeline(
                             b_job.current_step = trim_res.get("notice") or "Đã cắt intro/outro thừa"
                             log_job_event(job_id, "TRIM_FILLER", b_job.current_step)
                             await bg_session.commit()
+
+                    # 1c. Copyright risk check before STT
+                    if not skip_to_stt:
+                        from app.services.video_translator.copyright_check import (
+                            metadata_from_asset,
+                            run_copyright_check,
+                        )
+                        from app.config import get_settings as _get_settings
+
+                        cc_on = _parse_bool(snap.get("copyright_check_enabled"), True)
+                        b_job.current_step = "Đang kiểm tra bản quyền"
+                        await bg_session.commit()
+                        try:
+                            cc_meta = metadata_from_asset(b_asset, snap.get("source_metadata") or {})
+                            cc_report = await run_copyright_check(
+                                metadata=cc_meta,
+                                audio_path=str(extracted_audio_path) if Path(extracted_audio_path).is_file() else None,
+                                enabled=cc_on,
+                                acoustid_api_key=_get_settings().ACOUSTID_API_KEY,
+                            )
+                        except Exception as cc_err:
+                            logger.warning("Copyright check failed; continuing", error=str(cc_err), job_id=job_id)
+                            cc_report = {
+                                "level": "green",
+                                "reasons": [f"Kiểm tra bản quyền lỗi, bỏ qua: {cc_err}"],
+                                "enabled": cc_on,
+                                "hold": False,
+                                "notice": "Không kiểm tra được bản quyền, tiếp tục pipeline.",
+                            }
+                        cc_report["audio_path"] = str(extracted_audio_path)
+                        cc_report["video_path"] = str(local_asset_path)
+                        cc_report["override"] = False
+                        snap["copyright_check"] = cc_report
+                        b_job.settings_snapshot_json = json.dumps(snap)
+                        notice = str(cc_report.get("notice") or "")
+                        b_job.current_step = notice[:100] if notice else "Đã kiểm tra bản quyền"
+                        log_job_event(job_id, "COPYRIGHT", notice or f"level={cc_report.get('level')}")
+                        await bg_session.commit()
+                        if cc_report.get("hold") and cc_report.get("level") == "red":
+                            now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+                            b_job.status = TranslationJobStatus.COPYRIGHT_HOLD.value
+                            b_job.stage = "COPYRIGHT_HOLD"
+                            b_job.last_checkpoint_stage = "COPYRIGHT_HOLD"
+                            b_job.last_checkpoint_at = now_dt
+                            b_job.pid = None
+                            b_job.current_step = (notice or "Rủi ro bản quyền CAO — chờ xác nhận")[:100]
+                            await bg_session.commit()
+                            log_job_event(job_id, "COPYRIGHT_HOLD", "Paused before STT. Confirm to continue.")
+                            stop_job_heartbeat(job_id)
+                            return
 
                     # 2. STT & Language Detection
                     current_stage = "STT"
@@ -1099,8 +1172,23 @@ async def get_translation_job(
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     hb_age_sec = (now - job.last_heartbeat).total_seconds() if job.last_heartbeat else 999.0
 
-    is_terminal = job.status in [TranslationJobStatus.FAILED.value, TranslationJobStatus.COMPLETED.value, "cancelled", TranslationJobStatus.SEGMENT_EDITING.value, "segment_editing"]
+    is_terminal = job.status in [
+        TranslationJobStatus.FAILED.value,
+        TranslationJobStatus.COMPLETED.value,
+        "cancelled",
+        TranslationJobStatus.SEGMENT_EDITING.value,
+        "segment_editing",
+        TranslationJobStatus.COPYRIGHT_HOLD.value,
+        "copyright_hold",
+    ]
     heartbeat_active = (not is_terminal) and (hb_age_sec <= 30)
+
+    snap_out = {}
+    if job.settings_snapshot_json:
+        try:
+            snap_out = json.loads(job.settings_snapshot_json)
+        except Exception:
+            snap_out = {}
 
     process_status = "IDLE"
     if job.status == TranslationJobStatus.FAILED.value:
@@ -1109,6 +1197,8 @@ async def get_translation_job(
         process_status = "KILLED"
     elif job.status == TranslationJobStatus.COMPLETED.value:
         process_status = "COMPLETED"
+    elif job.status in (TranslationJobStatus.COPYRIGHT_HOLD.value, "copyright_hold"):
+        process_status = "PAUSED"
     elif is_terminal:
         process_status = "COMPLETED"
     elif job.pid:
@@ -1150,6 +1240,7 @@ async def get_translation_job(
             "voice_id": job.voice_id,
             "original_audio_mode": job.original_audio_mode,
             "auto_confirm_translation": job.auto_confirm_translation,
+            "copyright_check": snap_out.get("copyright_check"),
             "status": job.status,
             "stage": job.stage or "QUEUED",
             "stage_progress_pct": job.stage_progress_pct or 0.0,
@@ -1448,6 +1539,37 @@ async def resume_job_from_checkpoint_api(
     else:
         # Resume from Phase 1
         return await start_translation_pipeline(job_id, background_tasks, session)
+
+
+@router.post("/jobs/{job_id}/copyright-continue", response_model=dict)
+async def copyright_continue_api(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+):
+    """Override a red copyright hold and continue Phase 1 from STT."""
+    res = await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))
+    job = res.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="❌ Job không tồn tại.")
+    if job.status not in (TranslationJobStatus.COPYRIGHT_HOLD.value, "copyright_hold"):
+        raise HTTPException(status_code=400, detail="❌ Job không đang chờ xác nhận bản quyền.")
+
+    snap = {}
+    if job.settings_snapshot_json:
+        try:
+            snap = json.loads(job.settings_snapshot_json)
+        except Exception:
+            snap = {}
+    cc = dict(snap.get("copyright_check") or {})
+    cc["override"] = True
+    snap["copyright_check"] = cc
+    job.settings_snapshot_json = json.dumps(snap)
+    job.last_checkpoint_stage = "COPYRIGHT_HOLD"
+    job.current_step = "Đã xác nhận, tiếp tục dịch"
+    await session.commit()
+    log_job_event(job_id, "COPYRIGHT", "User overrode copyright hold.")
+    return await start_translation_pipeline(job_id, background_tasks, session)
 
 
 @router.post("/jobs/{job_id}/apply-settings", response_model=dict)
@@ -2038,6 +2160,7 @@ class StartWorkflowRequest(BaseModel):
     voice_id: Optional[str] = Field(None, description="Voice model ID")
     auto_confirm_translation: Optional[bool] = Field(True, description="Automatically confirm translation text segments and proceed to TTS dubbing render")
     trim_filler_enabled: Optional[bool] = Field(True, description="Auto-trim intro/outro filler before STT")
+    copyright_check_enabled: Optional[bool] = Field(True, description="Check copyright risk before STT (metadata + AcoustID)")
     watermark_enabled: Optional[bool] = Field(False, description="Enable watermark embedding")
     watermark_type: Optional[str] = Field("image", description="Watermark type: image or text")
     watermark_image_path: Optional[str] = Field(None, description="Watermark image path")

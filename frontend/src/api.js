@@ -105,6 +105,7 @@ export const videoTranslatorApi = {
   getAsset: (assetId) => api.get(`/video-translator/assets/${assetId}`).then(res => res.data),
   createJob: (data) => api.post('/video-translator/jobs', data).then(res => res.data),
   startJob: (jobId) => api.post(`/video-translator/jobs/${jobId}/start`).then(res => res.data),
+  copyrightContinue: (jobId) => api.post(`/video-translator/jobs/${jobId}/copyright-continue`).then(res => res.data),
   getJob: (jobId) => api.get(`/video-translator/jobs/${jobId}`).then(res => res.data),
   updateSegments: (jobId, segments) =>
     api.put(`/video-translator/jobs/${jobId}/segments`, { segments }).then(res => res.data),

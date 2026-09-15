@@ -68,6 +68,7 @@ class WorkflowContext:
     thumbnail_source: str = "ai"
     thumbnail_library_path: Optional[str] = None
     trim_filler_enabled: bool = True
+    copyright_check_enabled: bool = True
     settings_snapshot: dict[str, Any] = field(default_factory=dict)
 
     # QC Reports per stage
@@ -118,6 +119,7 @@ class WorkflowContext:
             "thumbnail_source": self.thumbnail_source,
             "thumbnail_library_path": self.thumbnail_library_path,
             "trim_filler_enabled": self.trim_filler_enabled,
+            "copyright_check_enabled": self.copyright_check_enabled,
             "settings_snapshot": self.settings_snapshot,
             "trim_filler": (self.video_metadata or {}).get("trim_applied"),
             "qc_reports": self.qc_reports,
@@ -189,6 +191,14 @@ class WorkflowContext:
             ctx.trim_filler_enabled = True
         else:
             ctx.trim_filler_enabled = bool(trim_raw)
+
+        cc_raw = data.get("copyright_check_enabled") if "copyright_check_enabled" in data else snapshot.get("copyright_check_enabled")
+        if isinstance(cc_raw, str):
+            ctx.copyright_check_enabled = cc_raw.strip().lower() in ("true", "1", "yes", "on")
+        elif cc_raw is None:
+            ctx.copyright_check_enabled = True
+        else:
+            ctx.copyright_check_enabled = bool(cc_raw)
 
         ctx.qc_reports = data.get("qc_reports", {})
         ctx.seo_metadata = data.get("seo_metadata", {})

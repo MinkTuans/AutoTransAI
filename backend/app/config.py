@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     KLING_API_KEY: str = ""
     KLING_API_SECRET: str = ""
     FAL_API_KEY: str = ""
+    ACOUSTID_API_KEY: str = ""
 
     # ── YouTube OAuth & Security ───────────────────────────────────────
     YOUTUBE_CLIENT_ID: str = ""

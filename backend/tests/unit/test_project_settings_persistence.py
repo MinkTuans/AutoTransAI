@@ -12,6 +12,7 @@ def test_default_project_settings_structure():
     assert normalized["target_language"] == "vi"
     assert normalized["stt_model"] is None
     assert normalized["trim_filler_enabled"] is True
+    assert normalized["copyright_check_enabled"] is True
 
 
 def test_normalize_project_settings_custom_values():
@@ -62,6 +63,8 @@ def test_boolean_string_parsing():
     assert normalize_project_settings({"watermark_enabled": False})["watermark_enabled"] is False
     assert normalize_project_settings({"trim_filler_enabled": "false"})["trim_filler_enabled"] is False
     assert normalize_project_settings({"trim_filler_enabled": "on"})["trim_filler_enabled"] is True
+    assert normalize_project_settings({"copyright_check_enabled": "false"})["copyright_check_enabled"] is False
+    assert normalize_project_settings({"copyright_check_enabled": "on"})["copyright_check_enabled"] is True
 
 
 def test_watermark_image_path_resolution():

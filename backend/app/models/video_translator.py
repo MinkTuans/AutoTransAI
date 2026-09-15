@@ -27,6 +27,7 @@ class TranslationJobStatus(str, enum.Enum):
     CHECKING = "checking"
     DOWNLOADING = "downloading"
     EXTRACTING_AUDIO = "extracting_audio"
+    COPYRIGHT_HOLD = "copyright_hold"
     STT = "stt"
     LANGUAGE_DETECTED = "language_detected"
     TRANSLATED = "translated"
