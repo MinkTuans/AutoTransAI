@@ -1782,18 +1782,22 @@ async def execute_job_render_pipeline(job_id: str) -> None:
             log_job_event(job_id, "GENERATING_TTS", f"Generating TTS for segment #{seg['segment_number']}/{len(segments_data)}")
 
             try:
-                res = await audio_provider.generate_audio(
-                    text=seg["translated_text"],
-                    voice_id=voice_id,
-                    output_path=seg_tts_path,
-                )
-                if not res.success or not seg_tts_path.exists():
-                    logger.warning(f"[VIDEO-SYNC] TTS failed for Segment #{seg['segment_number']}: {res.error_message}")
-                    log_job_event(job_id, "GENERATING_TTS", f"[VIDEO-SYNC] ⚠️ Segment #{seg['segment_number']} TTS failed: {res.error_message}. Fallback to silence.")
-                    seg["tts_audio_path"] = None
-                    seg["tts_audio_duration"] = 0.0
-                    seg["status"] = "failed"
-                else:
+                reused = seg_tts_path.exists() and seg_tts_path.stat().st_size > 0
+                if not reused:
+                    res = await audio_provider.generate_audio(
+                        text=seg["translated_text"] or "",
+                        voice_id=voice_id,
+                        output_path=seg_tts_path,
+                    )
+                    if not res.success or not seg_tts_path.exists():
+                        logger.warning(f"[VIDEO-SYNC] TTS failed for Segment #{seg['segment_number']}: {res.error_message}")
+                        log_job_event(job_id, "GENERATING_TTS", f"[VIDEO-SYNC] ⚠️ Segment #{seg['segment_number']} TTS failed: {res.error_message}. Fallback to silence.")
+                        seg["tts_audio_path"] = None
+                        seg["tts_audio_duration"] = 0.0
+                        seg["status"] = "failed"
+                    else:
+                        reused = True
+                if reused:
                     dur = await probe_duration_async(seg_tts_path)
                     seg["tts_audio_path"] = str(seg_tts_path)
                     seg["tts_audio_duration"] = dur
@@ -2686,19 +2690,23 @@ async def get_terminology_memory_api(project_id: str, session: AsyncSession = De
     stmt = select(ProjectTerminologyMemory).where(ProjectTerminologyMemory.project_id == project_id)
     res = await session.execute(stmt)
     terms = res.scalars().all()
+    from app.services.terminology_memory import filter_proper_names
+
+    serialized = [
+        {
+            "id": t.id,
+            "source_term": t.source_term,
+            "suggested_term": t.suggested_term,
+            "term_type": t.term_type,
+            "confidence": t.confidence,
+            "needs_review": t.needs_review,
+        }
+        for t in terms
+    ]
+    allowed = {item["source_term"] for item in filter_proper_names(serialized)}
     return {
         "success": True,
-        "data": [
-            {
-                "id": t.id,
-                "source_term": t.source_term,
-                "suggested_term": t.suggested_term,
-                "term_type": t.term_type,
-                "confidence": t.confidence,
-                "needs_review": t.needs_review,
-            }
-            for t in terms
-        ],
+        "data": [row for row in serialized if row["source_term"] in allowed],
     }
 
 

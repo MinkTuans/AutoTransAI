@@ -56,6 +56,39 @@ def test_heuristic_keeps_long_cjk_name_even_once():
     assert "青云城" in sources
 
 
+def test_heuristic_drops_cjk_sentence_fragments_not_proper_names():
+    """Studio screenshot: Auto Memory filled with Other 60% clauses, not names."""
+    text = (
+        "做异度。看来今天。我先走了。贪主努。都最佳状。"
+        "开始融合。涌出了无。只是想给。和我还。你叫什麼。"
+        "姜男来了。姜男走了。"
+    )
+    terms = heuristic_extract_terms(text, target_lang="vi")
+    sources = {t["source_term"] for t in terms}
+    assert "姜男" in sources
+    junk = {
+        "做异度", "看来今天", "我先走了", "贪主努", "都最佳状",
+        "开始融合", "涌出了无", "只是想给", "和我还", "你叫什麼",
+    }
+    assert sources.isdisjoint(junk)
+    assert all(t["term_type"] in {"character", "location", "organization"} for t in terms)
+
+
+def test_filter_proper_names_keeps_khương_nam_drops_other_phrases():
+    from app.services.terminology_memory import filter_proper_names
+
+    kept = filter_proper_names(
+        [
+            {"source_term": "姜男", "suggested_term": "Khương Nam", "term_type": "character", "confidence": 0.9},
+            {"source_term": "看来今天", "suggested_term": "看来今天", "term_type": "other", "confidence": 0.6},
+            {"source_term": "我先走了", "suggested_term": "我先走了", "term_type": "other", "confidence": 0.6},
+            {"source_term": "青云城", "suggested_term": "Thanh Vân Thành", "term_type": "location", "confidence": 0.88},
+        ]
+    )
+    sources = {t["source_term"] for t in kept}
+    assert sources == {"姜男", "青云城"}
+
+
 def test_segments_transcript_blob_joins_original_and_text():
     from app.services.terminology_memory import segments_transcript_blob
 

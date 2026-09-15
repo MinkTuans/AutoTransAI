@@ -27,6 +27,10 @@ logger = get_logger(__name__)
 _voices_cache: list[dict] | None = None
 _voices_cache_lock = asyncio.Lock()
 
+# One hung Microsoft request used to freeze DUB at e.g. 31/193 forever.
+TTS_SEGMENT_TIMEOUT_SEC = 45.0
+TTS_MAX_ATTEMPTS = 3
+
 
 class EdgeTTSProvider(AudioProvider):
     """
@@ -111,20 +115,51 @@ class EdgeTTSProvider(AudioProvider):
         Returns:
             GenerationResult with the saved audio file path.
         """
+        spoken = (text or "").strip()
+        if not spoken:
+            return GenerationResult(
+                success=False,
+                error_message="Empty text",
+                error_code="EMPTY_TEXT",
+                provider_id=self.provider_id,
+            )
+
         try:
-            for attempt in range(1, 4):
+            last_err: Exception | None = None
+            for attempt in range(1, TTS_MAX_ATTEMPTS + 1):
                 try:
                     output_path.parent.mkdir(parents=True, exist_ok=True)
                     if output_path.exists():
                         output_path.unlink()
 
-                    communicate = edge_tts.Communicate(text, voice_id)
-                    await communicate.save(str(output_path))
+                    communicate = edge_tts.Communicate(spoken, voice_id)
+                    await asyncio.wait_for(
+                        communicate.save(str(output_path)),
+                        timeout=TTS_SEGMENT_TIMEOUT_SEC,
+                    )
 
                     if output_path.exists() and output_path.stat().st_size > 0:
+                        last_err = None
                         break
+                except asyncio.TimeoutError as timeout_err:
+                    last_err = timeout_err
+                    logger.warning(
+                        "Edge TTS timed out",
+                        attempt=attempt,
+                        timeout_sec=TTS_SEGMENT_TIMEOUT_SEC,
+                        voice=voice_id,
+                    )
+                    if attempt == TTS_MAX_ATTEMPTS:
+                        return GenerationResult(
+                            success=False,
+                            error_message=f"Edge TTS timeout after {TTS_SEGMENT_TIMEOUT_SEC:.0f}s",
+                            error_code="TTS_TIMEOUT",
+                            provider_id=self.provider_id,
+                        )
+                    await asyncio.sleep(attempt * 1.0)
                 except Exception as attempt_err:
-                    if attempt == 3:
+                    last_err = attempt_err
+                    if attempt == TTS_MAX_ATTEMPTS:
                         raise attempt_err
                     await asyncio.sleep(attempt * 1.0)
 

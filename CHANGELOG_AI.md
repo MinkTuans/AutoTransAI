@@ -1,3 +1,7 @@
+- **Terminology Memory keeps proper names only; TTS no longer hangs DUB (2026-09-15)**:
+  - **Memory**: Heuristic CJK n-grams saved subtitle clauses as `Other 60%` (`看来今天`, `我先走了`) and required Duyệt vào Glossary. Extractor now keeps character/location/organization names only, skips function-word fragments, and does not set `needs_review`. GET hides leftover junk. Prompt tells Gemini: names only, no clauses.
+  - **DUB stall**: Job stuck at `Đang tạo giọng đọc TTS (31/193)` because `edge_tts.Communicate.save` had no timeout. Each segment now has a 45s timeout (3 attempts), empty text is skipped, already-written wav files are reused so Retry Stage DUB continues from 32/193.
+
 - **TikTok Login Kit OAuth + open Chrome tab, not the app window (2026-09-15)**:
   - **Ask**: Connect TikTok like YouTube, and stop OAuth from taking over the desktop app (pywebview / Edge `--app=`), which cannot return after TikTok/Google login.
   - **Auth**: `GET /api/tiktok/auth-url` builds `https://www.tiktok.com/v2/auth/authorize/` with desktop PKCE (hex SHA256 challenge). Callback exchanges code at `open.tiktokapis.com/v2/oauth/token/`, fetches display name, encrypts tokens into `tiktok_accounts`.

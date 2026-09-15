@@ -21,7 +21,57 @@ _CJK_RUN_RE = re.compile(r"[\u4e00-\u9fff]+")
 _CJK_STOP = {
     "一个", "我们", "他们", "什么", "不是", "可以", "因为", "所以", "这个", "那个",
     "没有", "已经", "现在", "自己", "知道", "出来", "起来", "时候", "这样", "那样",
+    "学校", "今天", "什么", "什麼", "怎么", "怎麼",
 }
+
+# Particles / function chars: n-grams containing these are clauses, not names.
+_CJK_FUNC_CHARS = set(
+    "了的是我不在有这那就会也和与把被要去来到从对给让还只很太最更"
+    "你他她它吗呢啊吧着过没可所因什麼么們们叫想走先看"
+)
+
+_CJK_NAME_SUFFIXES = (
+    "城", "宫", "殿", "宗", "派", "门", "幫", "帮", "谷", "山", "岛", "國", "国",
+    "府", "院", "寺", "观", "鎮", "镇", "村", "庄", "樓", "楼", "閣", "阁",
+    "峰", "湖", "海", "河", "江", "岛", "寨", "营", "盟",
+)
+
+PROPER_NAME_TYPES = frozenset({"character", "location", "organization"})
+
+
+def looks_like_cjk_name(term: str) -> bool:
+    """True for 张三 / 青云城; false for 我先走了 / 看来今天."""
+    if not term or not _CJK_RUN_RE.fullmatch(term):
+        return False
+    if term in _CJK_STOP:
+        return False
+    if any(ch in _CJK_FUNC_CHARS for ch in term):
+        return False
+    return 2 <= len(term) <= 6
+
+
+def filter_proper_names(terms: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep characters / places / orgs only. Drop Other sentence fragments."""
+    kept: list[dict[str, Any]] = []
+    for item in normalize_extracted_terms(terms):
+        source = item["source_term"]
+        term_type = item["term_type"] if item["term_type"] in PROPER_NAME_TYPES else ""
+        if _CJK_RUN_RE.fullmatch(source):
+            if not looks_like_cjk_name(source):
+                continue
+            if not term_type:
+                term_type = "location" if source.endswith(_CJK_NAME_SUFFIXES) else "character"
+        elif not term_type:
+            words = source.split()
+            if len(words) >= 2 and source[0].isupper() and not source.isupper():
+                term_type = "character"
+            else:
+                continue
+        if term_type not in PROPER_NAME_TYPES:
+            continue
+        item["term_type"] = term_type
+        kept.append(item)
+    return kept
 
 # Function words that look title-case in Vietnamese/English subtitles but are not names.
 _NAME_STOP = {
@@ -109,18 +159,17 @@ def heuristic_extract_terms(text: str, target_lang: str = "vi") -> list[dict[str
     counts = Counter(grams)
     raw: list[dict[str, Any]] = []
     for term, n in counts.items():
-        if term in _CJK_STOP:
+        if not looks_like_cjk_name(term):
             continue
-        if len(term) < 3 and n < 2:
-            continue
-        if n < 1:
+        has_place_suffix = term.endswith(_CJK_NAME_SUFFIXES)
+        if n < 2 and not has_place_suffix:
             continue
         raw.append(
             {
                 "source_term": term,
                 "suggested_term": term,
-                "term_type": "other",
-                "confidence": min(0.55 + 0.05 * n, 0.85),
+                "term_type": "location" if has_place_suffix else "character",
+                "confidence": min(0.55 + 0.05 * n + (0.15 if has_place_suffix else 0), 0.9),
                 "source_context": f"appeared {n} times",
             }
         )
@@ -187,13 +236,14 @@ async def llm_extract_terms(text: str, target_lang: str = "vi") -> list[dict[str
         if not llm:
             return []
         prompt = (
-            "Extract named entities (characters, locations, organizations, skills, titles) "
-            f"from these subtitle lines for a {target_lang} translation glossary.\n"
-            "Lines may include source transcript and the translation (names appear in either).\n"
+            "Extract ONLY proper names: people/characters, place names, and organizations.\n"
+            "Do NOT extract sentences, clauses, verbs, pronouns, or random subtitle fragments "
+            "(e.g. 我先走了, 看来今天, 只是想给).\n"
+            f"Lines may include source transcript and the {target_lang} translation.\n"
             'Return ONLY JSON: {{"terms":[{{"source_term":"...","suggested_term":"...","term_type":"character","confidence":0.9}}]}}\n'
-            "source_term is the original-language name; suggested_term is the form used in the "
-            f"{target_lang} translation (keep diacritics). "
-            "term_type one of: character, location, organization, skill, title, other.\n\n"
+            "source_term is the original-language name; suggested_term is the translated name "
+            f"(keep {target_lang} diacritics). "
+            "term_type must be one of: character, location, organization.\n\n"
             f"Subtitles:\n{blob[:6000]}"
         )
         model = getattr(llm, "_resolved_model_id", None)
@@ -214,7 +264,7 @@ async def persist_terminology_memory(
     if db is None or not project_id or project_id == "default_project" or not terms:
         return 0
     saved = 0
-    for item in normalize_extracted_terms(terms):
+    for item in filter_proper_names(terms):
         stmt = select(ProjectTerminologyMemory).where(
             ProjectTerminologyMemory.project_id == project_id,
             ProjectTerminologyMemory.source_term == item["source_term"],
@@ -229,7 +279,7 @@ async def persist_terminology_memory(
                 suggested_term=item["suggested_term"],
                 term_type=item["term_type"],
                 confidence=item["confidence"],
-                needs_review=item["suggested_term"] == item["source_term"],
+                needs_review=False,
                 source_context=item.get("source_context"),
             )
             db.add(row)
@@ -282,8 +332,8 @@ async def extract_and_persist_from_segments(
             project_id=project_id,
         )
         return 0
-    heuristic = heuristic_extract_terms(blob, target_lang)
-    llm_terms = await llm_extract_terms(blob, target_lang)
+    heuristic = filter_proper_names(heuristic_extract_terms(blob, target_lang))
+    llm_terms = filter_proper_names(await llm_extract_terms(blob, target_lang))
     llm_keys = {t["source_term"].casefold() for t in llm_terms}
     merged = llm_terms + [t for t in heuristic if t["source_term"].casefold() not in llm_keys]
     logger.info(
