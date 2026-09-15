@@ -216,7 +216,10 @@ async def enrich_bilibili_view(meta: dict[str, Any]) -> dict[str, Any]:
             return meta
         import httpx
 
-        api = f"https://api.bilibili.com/x/web-interface/view?bvid={ref['bvid']}"
+        if ref.get("bvid"):
+            api = f"https://api.bilibili.com/x/web-interface/view?bvid={ref['bvid']}"
+        else:
+            api = f"https://api.bilibili.com/x/web-interface/view?aid={int(ref['aid'])}"
         async with httpx.AsyncClient(timeout=12.0) as client:
             res = await client.get(
                 api,

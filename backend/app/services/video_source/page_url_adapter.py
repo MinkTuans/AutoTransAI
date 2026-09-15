@@ -173,16 +173,14 @@ def raise_yt_dlp_download_error(source_display: str, stderr: str | None, returnc
 
 
 _BVID_RE = re.compile(r"(BV[0-9A-Za-z]+)")
+_AVID_RE = re.compile(r"(?:/video/|/)?av(\d+)", re.IGNORECASE)
 
 
 def parse_bilibili_video_ref(url: str) -> dict[str, Any] | None:
-    """Extract BVID and 1-indexed part. Query `t` is a timestamp, not a page."""
+    """Extract BV id or AV/aid and 1-indexed part. Query `t` is a timestamp, not a page."""
     if not url or not isinstance(url, str):
         return None
     parsed = urlparse(url.strip())
-    match = _BVID_RE.search(parsed.path) or _BVID_RE.search(url)
-    if not match:
-        return None
     query = parse_qs(parsed.query)
     page = 1
     if "p" in query:
@@ -190,13 +188,49 @@ def parse_bilibili_video_ref(url: str) -> dict[str, Any] | None:
             page = max(1, int(query["p"][0]))
         except (TypeError, ValueError):
             page = 1
-    return {"bvid": match.group(1), "page": page}
+
+    bv = _BVID_RE.search(parsed.path) or _BVID_RE.search(url)
+    if bv:
+        return {"bvid": bv.group(1), "aid": None, "page": page}
+
+    aid = None
+    av = _AVID_RE.search(parsed.path) or _AVID_RE.search(url)
+    if av:
+        aid = int(av.group(1))
+    elif "aid" in query:
+        try:
+            aid = int(query["aid"][0])
+        except (TypeError, ValueError):
+            aid = None
+    if not aid:
+        return None
+    return {"bvid": None, "aid": aid, "page": page}
+
+
+def bilibili_pagelist_api(ref: dict[str, Any]) -> str:
+    if ref.get("bvid"):
+        return f"https://api.bilibili.com/x/player/pagelist?bvid={ref['bvid']}"
+    if ref.get("aid"):
+        return f"https://api.bilibili.com/x/player/pagelist?aid={int(ref['aid'])}"
+    raise ValueError("Không nhận diện được mã video Bilibili từ URL.")
+
+
+def _bilibili_id_query(ref: dict[str, Any] | None = None, *, bvid: str | None = None, aid: int | None = None) -> str:
+    if ref:
+        bvid = bvid or ref.get("bvid")
+        aid = aid if aid is not None else ref.get("aid")
+    if bvid:
+        return f"bvid={bvid}"
+    if aid:
+        return f"aid={int(aid)}"
+    raise ValueError("Thiếu bvid/aid Bilibili.")
 
 
 def metadata_from_bilibili_pagelist(
     pages: list[dict[str, Any]],
     page: int,
-    bvid: str,
+    bvid: str | None = None,
+    aid: int | None = None,
 ) -> dict[str, Any]:
     """Map Bilibili pagelist JSON to check-url metadata. Duration is seconds."""
     if not pages:
@@ -209,7 +243,8 @@ def metadata_from_bilibili_pagelist(
     if duration <= 0:
         raise ValueError("Bilibili không trả về thời lượng video.")
     dim = entry.get("dimension") or {}
-    title = (entry.get("part") or "").strip() or f"Bilibili {bvid}"
+    slug = bvid or (f"av{aid}" if aid else "video")
+    title = (entry.get("part") or "").strip() or f"Bilibili {slug}"
     cid = entry.get("cid")
     return {
         "source": "Bilibili",
@@ -221,9 +256,10 @@ def metadata_from_bilibili_pagelist(
         "format": "mp4",
         "file_size": None,
         "audio_available": True,
-        "url": f"https://www.bilibili.com/video/{bvid}?p={page}",
+        "url": f"https://www.bilibili.com/video/{slug}?p={page}",
         "mime_type": "video/mp4",
         "bvid": bvid,
+        "aid": aid,
         "page": page,
         "page_count": len(pages),
         "cid": cid,
@@ -254,14 +290,19 @@ def _bili_http_headers() -> dict[str, str]:
     }
 
 
-async def fetch_bilibili_mp4_playurl(bvid: str, cid: int) -> dict[str, Any]:
+async def fetch_bilibili_mp4_playurl(
+    cid: int,
+    bvid: str | None = None,
+    aid: int | None = None,
+) -> dict[str, Any]:
     timeout = httpx.Timeout(20.0, connect=8.0)
+    id_q = _bilibili_id_query(bvid=bvid, aid=aid)
     async with httpx.AsyncClient(timeout=timeout, headers=_bili_http_headers()) as client:
         last_err = "unknown"
         for qn in (64, 32, 16):
             api = (
                 f"https://api.bilibili.com/x/player/playurl"
-                f"?bvid={bvid}&cid={cid}&qn={qn}&fnval=1&fnver=0"
+                f"?{id_q}&cid={cid}&qn={qn}&fnval=1&fnver=0"
             )
             res = await client.get(api)
             if res.status_code >= 400:
@@ -397,9 +438,10 @@ async def download_bilibili_native(
     meta = await fetch_bilibili_page_metadata(url)
     cid = meta.get("cid")
     bvid = meta.get("bvid")
-    if not cid or not bvid:
-        raise ValueError("Thiếu cid/bvid Bilibili để lấy playurl.")
-    play = await fetch_bilibili_mp4_playurl(str(bvid), int(cid))
+    aid = meta.get("aid")
+    if not cid or not (bvid or aid):
+        raise ValueError("Thiếu cid/bvid/aid Bilibili để lấy playurl.")
+    play = await fetch_bilibili_mp4_playurl(int(cid), bvid=bvid, aid=aid)
     size = await download_http_with_resume(
         play["url"],
         output_path,
@@ -436,7 +478,7 @@ async def fetch_bilibili_page_metadata(url: str) -> dict[str, Any]:
     ref = parse_bilibili_video_ref(url)
     if not ref:
         raise ValueError("Không nhận diện được mã video Bilibili từ URL.")
-    api = f"https://api.bilibili.com/x/player/pagelist?bvid={ref['bvid']}"
+    api = bilibili_pagelist_api(ref)
     timeout = httpx.Timeout(15.0, connect=8.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         res = await client.get(
@@ -453,7 +495,9 @@ async def fetch_bilibili_page_metadata(url: str) -> dict[str, Any]:
         raise ValueError(
             f"Bilibili pagelist lỗi: {payload.get('message') or payload.get('code')}"
         )
-    return metadata_from_bilibili_pagelist(payload["data"], ref["page"], ref["bvid"])
+    return metadata_from_bilibili_pagelist(
+        payload["data"], ref["page"], bvid=ref.get("bvid"), aid=ref.get("aid")
+    )
 
 
 async def run_yt_dlp_with_progress_async(

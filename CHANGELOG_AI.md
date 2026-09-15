@@ -1,3 +1,6 @@
+- **Bilibili `/video/av…` URLs resolve duration without yt-dlp (2026-09-15)**:
+  - Studio `Kiểm tra URL` on `https://www.bilibili.com/video/av14901263585041?t=26.0` returned HTTP 400 `Không lấy được thời lượng Bilibili` because the parser only accepted `BV…`. AV/aid now uses `pagelist?aid=` and playurl/view APIs the same way.
+
 - **Studio Auto actually generates the YouTube thumbnail (2026-09-15)**:
   - Checkbox `Tự Động Tạo Thumbnail AI` was saved on the Studio form but dropped by `CreateJobRequest` and never run in `execute_job_render_pipeline` (only WorkflowEngine PRODUCE). Snapshot now stores the flag; after render Auto calls Pollinations. YouTube modal generates on open if missing, plus nút `Tạo thumbnail AI ngay`.
 

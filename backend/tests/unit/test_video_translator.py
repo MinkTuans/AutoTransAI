@@ -253,6 +253,24 @@ def test_parse_bilibili_video_ref_ignores_timestamp_query():
     assert ref_p2["page"] == 2
 
 
+def test_parse_bilibili_av_url_like_studio_check():
+    """Studio pasted /video/av14901263585041 — not BV. Must not fall through to yt-dlp."""
+    from app.services.video_source.page_url_adapter import (
+        bilibili_pagelist_api,
+        parse_bilibili_video_ref,
+    )
+
+    url = "https://www.bilibili.com/video/av14901263585041?t=26.0"
+    ref = parse_bilibili_video_ref(url)
+    assert ref is not None
+    assert ref["aid"] == 14901263585041
+    assert not ref.get("bvid")
+    assert ref["page"] == 1
+    api = bilibili_pagelist_api(ref)
+    assert "aid=14901263585041" in api
+    assert "bvid=" not in api
+
+
 def test_bilibili_pagelist_maps_part_duration():
     """Check-url must use pagelist duration (893s), not the dummy 00:00 fallback."""
     from app.services.video_source.page_url_adapter import metadata_from_bilibili_pagelist
