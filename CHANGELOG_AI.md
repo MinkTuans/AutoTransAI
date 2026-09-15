@@ -1,3 +1,6 @@
+- **Studio Auto actually generates the YouTube thumbnail (2026-09-15)**:
+  - Checkbox `Tự Động Tạo Thumbnail AI` was saved on the Studio form but dropped by `CreateJobRequest` and never run in `execute_job_render_pipeline` (only WorkflowEngine PRODUCE). Snapshot now stores the flag; after render Auto calls Pollinations. YouTube modal generates on open if missing, plus nút `Tạo thumbnail AI ngay`.
+
 - **Tighten Auto Memory: drop verbs/kinship/conjunction n-grams (2026-09-15)**:
   - Screenshot still showed `爬上`, `弟子`, `哥哥`, `上车`, `而且門派` as Character/Location. 2-char CJK now requires a common surname (`张三`, `姜男`, `李四`); `派`/`门` alone is not a place; prefixes like `而且` are rejected. `李飞羽` → Lý Phi Vũ and toponyms like `基途河` stay.
 

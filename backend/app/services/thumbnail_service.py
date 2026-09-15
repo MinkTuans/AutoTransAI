@@ -433,6 +433,63 @@ class ThumbnailService:
             return record
 
     @classmethod
+    def snapshot_wants_thumbnail(cls, snapshot: Optional[Dict[str, Any]]) -> bool:
+        """Studio checkbox `Tự Động Tạo Thumbnail AI` stored on the Auto job snapshot."""
+        if not snapshot:
+            return False
+        raw = snapshot.get("thumbnail_enabled")
+        if isinstance(raw, str):
+            return raw.strip().lower() in ("true", "1", "yes", "on")
+        return bool(raw)
+
+    @classmethod
+    async def maybe_generate_for_job(cls, db: Optional[AsyncSession], job: VideoTranslationJob) -> Dict[str, Any]:
+        """Used by Studio Auto after render. No-op when the checkbox was off."""
+        snap: Dict[str, Any] = {}
+        raw_json = getattr(job, "settings_snapshot_json", None)
+        if raw_json:
+            try:
+                parsed = json.loads(raw_json)
+                if isinstance(parsed, dict):
+                    snap = parsed
+            except json.JSONDecodeError:
+                snap = {}
+        if not cls.snapshot_wants_thumbnail(snap):
+            return {"generated": False, "reason": "disabled"}
+
+        source = str(snap.get("thumbnail_source") or "ai").strip().lower()
+        if source == "library":
+            picked = Path(str(snap.get("thumbnail_library_path") or ""))
+            if not picked.is_file():
+                return {"generated": False, "error": "Chưa chọn ảnh có sẵn trong thư mục dự án."}
+            root = settings.STORAGE_ROOT.resolve()
+            try:
+                rel = picked.resolve().relative_to(root)
+                url = f"/api/storage/files/{rel.as_posix()}"
+            except Exception:
+                url = f"/api/storage/files/{picked.as_posix()}"
+            return {"generated": True, "source": "library", "thumbnail_url": url}
+
+        if db is None:
+            return {"generated": False, "error": "no db session"}
+        record = await cls.create_thumbnail(
+            db=db,
+            project_id=getattr(job, "project_id", None),
+            job_id=getattr(job, "id", None),
+            asset_id=getattr(job, "asset_id", None),
+            selected_style=snap.get("thumbnail_style") or "auto",
+            custom_instruction=snap.get("thumbnail_custom_instruction") or None,
+            provider_id=snap.get("thumbnail_provider") or "pollinations",
+        )
+        url = getattr(record, "thumbnail_url", None)
+        return {
+            "generated": bool(url),
+            "thumbnail_url": url,
+            "status": getattr(record, "status", None),
+            "error": getattr(record, "error_message", None),
+        }
+
+    @classmethod
     async def delete_thumbnail(cls, db: AsyncSession, thumbnail_id: str) -> bool:
         """Delete thumbnail record and purge storage object."""
         stmt = select(VideoThumbnail).where(VideoThumbnail.id == thumbnail_id)

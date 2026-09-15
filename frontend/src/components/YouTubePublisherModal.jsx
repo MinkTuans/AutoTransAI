@@ -21,6 +21,8 @@ export default function YouTubePublisherModal({ jobId, videoPath, videoUrl, thum
   const [publishedUrl, setPublishedUrl] = useState(null);
   const [previewVideo, setPreviewVideo] = useState(resolveMediaSrc(videoUrl || videoPath));
   const [previewThumb, setPreviewThumb] = useState(resolveMediaSrc(thumbnailUrl));
+  const [thumbBusy, setThumbBusy] = useState(false);
+  const [thumbError, setThumbError] = useState(null);
   const pollingRef = useRef(null);
 
   useEffect(() => {
@@ -41,14 +43,39 @@ export default function YouTubePublisherModal({ jobId, videoPath, videoUrl, thum
           if (!job) return;
           const src = resolveMediaSrc(job.output_url || job.output_video_path);
           if (src) setPreviewVideo(src);
+          if (job.thumbnail_url) setPreviewThumb(resolveMediaSrc(job.thumbnail_url));
         })
         .catch(() => {});
 
+      const pickThumb = (res) => {
+        const items = res?.thumbnails || res?.data || [];
+        const active = items.find((t) => t.is_active && t.thumbnail_url) || items.find((t) => t.thumbnail_url);
+        return active?.thumbnail_url || null;
+      };
+
       thumbnailApi.getByJob(jobId)
-        .then((res) => {
-          const items = res?.thumbnails || [];
-          const active = items.find((t) => t.is_active && t.thumbnail_url) || items.find((t) => t.thumbnail_url);
-          if (active?.thumbnail_url) setPreviewThumb(resolveMediaSrc(active.thumbnail_url));
+        .then(async (res) => {
+          const existing = pickThumb(res);
+          if (existing) {
+            setPreviewThumb(resolveMediaSrc(existing));
+            return;
+          }
+          setThumbBusy(true);
+          setThumbError(null);
+          try {
+            const gen = await thumbnailApi.generate({
+              job_id: jobId,
+              selected_style: 'auto',
+              provider_id: 'pollinations',
+            });
+            const url = gen?.thumbnail?.thumbnail_url;
+            if (url) setPreviewThumb(resolveMediaSrc(url));
+            else setThumbError(gen?.thumbnail?.error_message || 'Không tạo được thumbnail.');
+          } catch (err) {
+            setThumbError(err.response?.data?.detail || err.message || 'Không tạo được thumbnail.');
+          } finally {
+            setThumbBusy(false);
+          }
         })
         .catch(() => {});
     }
@@ -219,7 +246,36 @@ export default function YouTubePublisherModal({ jobId, videoPath, videoUrl, thum
                     <img src={previewThumb} alt="Thumbnail" />
                   ) : (
                     <div style={{ padding: '1.5rem', textAlign: 'center', color: '#94a3b8', border: '1px dashed #334155', borderRadius: '8px' }}>
-                      Chưa có thumbnail. Bật “Tự Động Tạo Thumbnail AI” trước khi chạy Auto — ảnh được tạo sau bước Produce.
+                      {thumbBusy
+                        ? 'Đang tạo thumbnail AI (Pollinations)…'
+                        : (thumbError || 'Chưa có thumbnail. Auto sẽ tạo sau bước Produce khi checkbox bật; hoặc bấm nút bên dưới.')}
+                      <div style={{ marginTop: '0.75rem' }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          disabled={thumbBusy}
+                          onClick={async () => {
+                            setThumbBusy(true);
+                            setThumbError(null);
+                            try {
+                              const gen = await thumbnailApi.generate({
+                                job_id: jobId,
+                                selected_style: 'auto',
+                                provider_id: 'pollinations',
+                              });
+                              const url = gen?.thumbnail?.thumbnail_url;
+                              if (url) setPreviewThumb(resolveMediaSrc(url));
+                              else setThumbError(gen?.thumbnail?.error_message || 'Không tạo được thumbnail.');
+                            } catch (err) {
+                              setThumbError(err.response?.data?.detail || err.message || 'Không tạo được thumbnail.');
+                            } finally {
+                              setThumbBusy(false);
+                            }
+                          }}
+                        >
+                          {thumbBusy ? 'Đang tạo…' : 'Tạo thumbnail AI ngay'}
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

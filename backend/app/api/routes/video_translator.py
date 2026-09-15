@@ -147,7 +147,13 @@ class CreateJobRequest(BaseModel):
     auto_confirm_translation: bool = True
     trim_filler_enabled: bool = True
     copyright_check_enabled: bool = True
-    
+    thumbnail_enabled: bool = False
+    thumbnail_provider: str = "pollinations"
+    thumbnail_style: str = "auto"
+    thumbnail_custom_instruction: Optional[str] = None
+    thumbnail_source: str = "ai"
+    thumbnail_library_path: Optional[str] = None
+
     # Watermark Settings
     watermark_enabled: bool = False
     watermark_type: str = "image"
@@ -581,7 +587,22 @@ async def create_translation_job(
             "enable_burned_subtitles": _parse_bool(proj_settings.get("enable_burned_subtitles"), True),
             "enable_bgm_ducking": _parse_bool(proj_settings.get("enable_bgm_ducking"), True),
             "bgm_volume_db": proj_settings.get("bgm_volume_db", -18.0),
-        }
+        },
+        "thumbnail_enabled": _parse_bool(
+            getattr(body, "thumbnail_enabled", False),
+            proj_settings.get("thumbnail_enabled", False),
+        ),
+        "thumbnail_provider": getattr(body, "thumbnail_provider", None)
+        or proj_settings.get("thumbnail_provider", "pollinations"),
+        "thumbnail_style": getattr(body, "thumbnail_style", None)
+        or proj_settings.get("thumbnail_style", "auto"),
+        "thumbnail_custom_instruction": getattr(body, "thumbnail_custom_instruction", None)
+        or proj_settings.get("thumbnail_custom_instruction")
+        or None,
+        "thumbnail_source": getattr(body, "thumbnail_source", None)
+        or proj_settings.get("thumbnail_source", "ai"),
+        "thumbnail_library_path": getattr(body, "thumbnail_library_path", None)
+        or proj_settings.get("thumbnail_library_path"),
     }
 
     initial_studio_state = {
@@ -2031,6 +2052,46 @@ async def execute_job_render_pipeline(job_id: str) -> None:
             )
             await final_session.commit()
         log_job_event(job_id, "COMPLETED", f"Final video ready at {output_url or final_video_path}")
+
+        try:
+            from app.services.thumbnail_service import ThumbnailService
+
+            async with async_session_factory() as thumb_session:
+                job_row = (
+                    await thumb_session.execute(
+                        select(VideoTranslationJob).where(VideoTranslationJob.id == job_id)
+                    )
+                ).scalar_one_or_none()
+                if job_row and ThumbnailService.snapshot_wants_thumbnail(
+                    json.loads(job_row.settings_snapshot_json or "{}")
+                    if job_row.settings_snapshot_json
+                    else {}
+                ):
+                    await thumb_session.execute(
+                        update(VideoTranslationJob)
+                        .where(VideoTranslationJob.id == job_id)
+                        .values(current_step="Đang tạo Thumbnail AI…")
+                    )
+                    await thumb_session.commit()
+                    thumb_res = await ThumbnailService.maybe_generate_for_job(thumb_session, job_row)
+                    log_job_event(
+                        job_id,
+                        "THUMBNAIL",
+                        f"Auto thumbnail: generated={thumb_res.get('generated')} url={thumb_res.get('thumbnail_url')} err={thumb_res.get('error')}",
+                    )
+                    if thumb_res.get("thumbnail_url"):
+                        await thumb_session.execute(
+                            update(VideoTranslationJob)
+                            .where(VideoTranslationJob.id == job_id)
+                            .values(
+                                thumbnail_url=thumb_res["thumbnail_url"],
+                                current_step="Hoàn tất lồng tiếng video",
+                            )
+                        )
+                        await thumb_session.commit()
+        except Exception as thumb_err:
+            logger.warning("Auto thumbnail after render failed", job_id=job_id, error=str(thumb_err))
+            log_job_event(job_id, "THUMBNAIL", f"Auto thumbnail skipped: {thumb_err}")
 
     except Exception as e:
         tb_str = traceback.format_exc()

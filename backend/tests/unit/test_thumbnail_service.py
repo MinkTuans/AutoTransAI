@@ -169,3 +169,58 @@ async def test_create_and_delete_thumbnail_db_flow():
             assert deleted is True
 
     await db_engine.dispose()
+
+
+def test_snapshot_wants_thumbnail_reads_studio_checkbox():
+    assert ThumbnailService.snapshot_wants_thumbnail({"thumbnail_enabled": True}) is True
+    assert ThumbnailService.snapshot_wants_thumbnail({"thumbnail_enabled": "true"}) is True
+    assert ThumbnailService.snapshot_wants_thumbnail({"thumbnail_enabled": False}) is False
+    assert ThumbnailService.snapshot_wants_thumbnail({}) is False
+    assert ThumbnailService.snapshot_wants_thumbnail(None) is False
+
+
+@pytest.mark.asyncio
+async def test_maybe_generate_for_job_skips_when_checkbox_off():
+    job = VideoTranslationJob(
+        id="job-no-thumb",
+        project_id="p1",
+        asset_id="a1",
+        settings_snapshot_json=json.dumps({"thumbnail_enabled": False}),
+    )
+    with patch.object(ThumbnailService, "create_thumbnail", new_callable=AsyncMock) as mock_create:
+        res = await ThumbnailService.maybe_generate_for_job(db=None, job=job)
+    assert res["generated"] is False
+    mock_create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_maybe_generate_for_job_calls_create_when_enabled():
+    job = VideoTranslationJob(
+        id="job-yes-thumb",
+        project_id="p1",
+        asset_id="a1",
+        settings_snapshot_json=json.dumps(
+            {
+                "thumbnail_enabled": True,
+                "thumbnail_provider": "pollinations",
+                "thumbnail_style": "cinematic",
+            }
+        ),
+    )
+    fake = VideoThumbnail(
+        id="th1",
+        job_id=job.id,
+        project_id="p1",
+        thumbnail_url="/api/storage/files/t.webp",
+        status=ThumbnailStatus.COMPLETED.value,
+        is_active=True,
+    )
+    with patch.object(ThumbnailService, "create_thumbnail", new_callable=AsyncMock, return_value=fake) as mock_create:
+        res = await ThumbnailService.maybe_generate_for_job(db=object(), job=job)
+    assert res["generated"] is True
+    assert res["thumbnail_url"] == fake.thumbnail_url
+    mock_create.assert_awaited_once()
+    kwargs = mock_create.await_args.kwargs
+    assert kwargs["job_id"] == "job-yes-thumb"
+    assert kwargs["provider_id"] == "pollinations"
+    assert kwargs["selected_style"] == "cinematic"
