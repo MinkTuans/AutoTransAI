@@ -84,6 +84,10 @@ The central engine (`app.workflow.workflow_engine.WorkflowEngine`) orchestrates 
 - **Automatic Translation Model Resolution & Double Safety Nets**:
   - `translate_transcript_segments` accepts an optional `db` parameter and automatically invokes `AIModelResolver.resolve_model(db, capability="TRANSLATION")` if `translation_model_id` is omitted.
   - `GeminiLLMProvider.generate_text` features a secondary safety net invoking `AIModelResolver` if `model` is `None` at runtime, preventing `AI_CONFIGURATION_ERROR` pipeline crashes.
+- **AI Image Generation & Pollinations AI Integration**:
+  - `PollinationsImageProvider` (`app.providers.image.pollinations_provider`) is registered as a free, keyless AI Image Generation provider (`IMAGE_GENERATION` capability) in the global provider registry.
+  - `SettingsService.get_eligible_providers_for_function` lists `pollinations` alongside `fal` and `openai` as compatible candidates for `image_generation`.
+  - Default image generation routing (`DEFAULT_AI_FUNCTIONS`) sets `pollinations` (`pollinations-default`) as the primary zero-config image provider for thumbnails and visual assets.
 - **Runtime Request Trace Logging**:
   - All AI Model resolutions log diagnostic details: capability, selected provider, selected model ID, model name, resolution source, and fallback status.
 

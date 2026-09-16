@@ -96,8 +96,8 @@ DEFAULT_AI_FUNCTIONS = [
         "function_id": "image_generation",
         "function_name": "Image & Asset Generation",
         "capability": "IMAGE_GENERATION",
-        "primary_provider_id": "fal",
-        "model_id": "fal-ai/flux",
+        "primary_provider_id": "pollinations",
+        "model_id": "pollinations-default",
         "fallback_enabled": False,
         "fallback_provider_id": None,
     },
@@ -119,7 +119,7 @@ DEFAULT_AI_MODELS = [
     # Video & Image
     {"id": "kling-v1", "provider_id": "kling", "model_name": "Kling AI Text2Video v1.0", "capabilities": json.dumps(["VIDEO_GENERATION"]), "is_default": True},
     {"id": "fal-ai/hunyuan-video", "provider_id": "fal", "model_name": "Hunyuan Video (fal.ai)", "capabilities": json.dumps(["VIDEO_GENERATION"]), "is_default": True},
-    {"id": "fal-ai/flux", "provider_id": "fal", "model_name": "Flux Image Gen (fal.ai)", "capabilities": json.dumps(["IMAGE_GENERATION"]), "is_default": True},
+    {"id": "fal-ai/flux", "provider_id": "fal", "model_name": "Flux Image Gen (fal.ai)", "capabilities": json.dumps(["IMAGE_GENERATION"]), "is_default": False},
     {"id": "pollinations-default", "provider_id": "pollinations", "model_name": "Pollinations AI Image", "capabilities": json.dumps(["IMAGE_GENERATION"]), "is_default": True},
     {"id": "dall-e-3", "provider_id": "openai", "model_name": "DALL-E 3", "capabilities": json.dumps(["IMAGE_GENERATION"]), "is_default": False},
 ]
@@ -136,8 +136,35 @@ class SettingsService:
             # Check if AI models catalog is already initialized
             stmt_check = select(AIModel.id).limit(1)
             res_check = await db.execute(stmt_check)
-            if res_check.scalar_one_or_none():
-                return  # Database already initialized — respect user modifications and deletions!
+            already_seeded = res_check.scalar_one_or_none() is not None
+
+            if already_seeded:
+                # Ensure pollinations-default model exists even in pre-existing DBs
+                stmt_pol = select(AIModel).where(AIModel.id == "pollinations-default")
+                res_pol = await db.execute(stmt_pol)
+                if not res_pol.scalar_one_or_none():
+                    db.add(AIModel(
+                        id="pollinations-default",
+                        provider_id="pollinations",
+                        model_name="Pollinations AI Image",
+                        capabilities=json.dumps(["IMAGE_GENERATION"]),
+                        is_default=True,
+                    ))
+
+                # If image_generation function config is set to fal without key, auto-switch to pollinations
+                stmt_img_fn = select(AIFunctionConfig).where(AIFunctionConfig.function_id == "image_generation")
+                res_img_fn = await db.execute(stmt_img_fn)
+                img_fn = res_img_fn.scalar_one_or_none()
+                if img_fn and img_fn.primary_provider_id == "fal":
+                    key_mgr = get_key_manager()
+                    fal_keys = await key_mgr.get_keys_for_provider("fal")
+                    has_fal_key = len(fal_keys) > 0 and any(k.get("status") not in ("disabled", "invalid") for k in fal_keys)
+                    if not has_fal_key:
+                        img_fn.primary_provider_id = "pollinations"
+                        img_fn.model_id = "pollinations-default"
+
+                await db.commit()
+                return
 
             # Seed system settings
             for key, val in DEFAULT_SYSTEM_SETTINGS.items():
@@ -275,12 +302,13 @@ class SettingsService:
         # Build list of all system known providers
         known_providers = [
             {"id": "gemini", "name": "Google Gemini", "type": "llm", "caps": ["STT", "LLM", "TRANSLATION"], "free": False},
-            {"id": "openai", "name": "OpenAI", "type": "llm", "caps": ["STT", "LLM", "TRANSLATION"], "free": False},
+            {"id": "openai", "name": "OpenAI", "type": "llm", "caps": ["STT", "LLM", "TRANSLATION", "IMAGE_GENERATION"], "free": False},
             {"id": "edge_tts", "name": "Edge TTS", "type": "audio", "caps": ["TTS"], "free": True},
             {"id": "google_cloud_tts", "name": "Google Cloud TTS", "type": "audio", "caps": ["TTS"], "free": False},
             {"id": "elevenlabs", "name": "ElevenLabs", "type": "audio", "caps": ["TTS"], "free": False},
             {"id": "kling", "name": "Kling AI", "type": "video", "caps": ["VIDEO_GENERATION"], "free": False},
             {"id": "fal", "name": "fal.ai", "type": "video", "caps": ["VIDEO_GENERATION", "IMAGE_GENERATION"], "free": False},
+            {"id": "pollinations", "name": "Pollinations AI (Free)", "type": "image", "caps": ["IMAGE_GENERATION"], "free": True},
         ]
 
         eligible = []

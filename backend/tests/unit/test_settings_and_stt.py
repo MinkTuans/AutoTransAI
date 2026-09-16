@@ -56,10 +56,16 @@ async def test_ai_function_configs_and_eligibility(async_db: AsyncSession):
     assert stt_fn["primary_provider_id"] == "gemini"
     assert stt_fn["fallback_enabled"] is False
 
-    # Check eligible providers
-    eligible = await SettingsService.get_eligible_providers_for_function(async_db, "stt")
-    provider_ids = [p["id"] for p in eligible]
-    assert "gemini" in provider_ids
+    # Check eligible providers for STT and IMAGE_GENERATION
+    eligible_stt = await SettingsService.get_eligible_providers_for_function(async_db, "stt")
+    stt_provider_ids = [p["id"] for p in eligible_stt]
+    assert "gemini" in stt_provider_ids
+
+    eligible_img = await SettingsService.get_eligible_providers_for_function(async_db, "image_generation")
+    img_provider_ids = [p["id"] for p in eligible_img]
+    assert "pollinations" in img_provider_ids
+    assert "fal" in img_provider_ids
+    assert "openai" in img_provider_ids
 
     # Update STT function config
     updated = await SettingsService.update_function_config(

@@ -1,3 +1,8 @@
+- **Pollinations AI Image Provider added to AI Function Config options (2026-09-16)**:
+  - **Status**: Verified Pollinations AI image generation (`https://image.pollinations.ai/prompt/...`) is 100% functional, free, and requires no API key.
+  - **Fix**: Added `pollinations` to `known_providers` in `SettingsService.get_eligible_providers_for_function` so it now populates as a selectable provider option for capability `IMAGE_GENERATION` in Settings -> AI Function Config -> `Image & Asset Generation`.
+  - **Defaults**: Updated `DEFAULT_AI_FUNCTIONS` for `image_generation` to default to `pollinations` (`pollinations-default`), and added auto-fallback logic in `ensure_defaults_seeded` for existing databases initialized with unconfigured `fal`.
+
 - **Translate STT as one numbered JSON and save names (2026-09-15)**:
   - Auto gửi `{"lines":[{"n":1,"text":"..."}]}` (n = thứ tự STT) và nhận cùng dạng kèm `names` (nhân vật/địa danh/tổ chức). Gắn dịch lại đúng câu. Tên lưu terminology memory. JSON quá dài vẫn tách lô như cũ.
 
