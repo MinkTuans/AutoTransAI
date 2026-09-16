@@ -16,6 +16,49 @@ from app.services.video_translator.translator_service import (
     parse_translation_envelope,
     translate_transcript_segments,
 )
+
+
+def test_translation_prompt_contains_canonical_glossary_rule():
+    from app.services.video_translator.translator_service import _translation_json_prompt
+
+    prompt = _translation_json_prompt(
+        {"lines": [{"n": 1, "text": "李道天来了"}]},
+        "Tiếng Trung",
+        "Tiếng Việt",
+        {"李道天": "Lý Đạo Thiên"},
+    )
+
+    assert "李道天 → Lý Đạo Thiên" in prompt
+    assert "BẮT BUỘC" in prompt
+
+
+def test_glossary_validation_rejects_noncanonical_translation():
+    from app.services.video_translator.translator_service import find_glossary_violations
+
+    violations = find_glossary_violations(
+        [{"text": "李道天来了", "translated_text": "Lý Đạo Thiện đã đến"}],
+        {"李道天": "Lý Đạo Thiên"},
+    )
+
+    assert violations == [{"segment": 1, "source_term": "李道天", "required": "Lý Đạo Thiên"}]
+
+
+def test_glossary_validation_accepts_case_and_unicode_equivalent_target():
+    from app.services.video_translator.translator_service import find_glossary_violations
+
+    assert find_glossary_violations(
+        [{"text": "李道天来了", "translated_text": "LÝ  ĐẠO THIÊN đã đến"}],
+        {"李道天": "Lý Đạo Thiên"},
+    ) == []
+
+
+def test_glossary_validation_prefers_longest_overlapping_source_term():
+    from app.services.video_translator.translator_service import find_glossary_violations
+
+    assert find_glossary_violations(
+        [{"text": "他进入青云城", "translated_text": "Anh ấy vào Thành Thanh Vân"}],
+        {"青云": "Vân Tông", "青云城": "Thành Thanh Vân"},
+    ) == []
 from app.providers.base import LLMProvider
 
 
@@ -126,7 +169,7 @@ async def test_translate_one_json_attaches_by_n_and_saves_names():
 
     with patch("app.services.video_translator.translator_service.get_registry") as mock_reg:
         with patch(
-            "app.services.terminology_memory.persist_terminology_memory",
+            "app.services.terminology_extractor.persist_detected_terms",
             fake_persist,
         ):
             reg_instance = MagicMock()

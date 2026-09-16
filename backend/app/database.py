@@ -134,6 +134,30 @@ def _sync_schema_sync(sync_conn):
                 logger.error(f"Failed adding column '{real_col_name}' to table '{matched_real_table}': {str(ex)}")
 
 
+def _run_glossary_single_source_migration(sync_conn) -> None:
+    """Run the idempotent glossary data/constraint migration for startup-managed schemas."""
+    import importlib.util
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    revision_path = (
+        Path(__file__).resolve().parent.parent
+        / "alembic/versions/20260916_glossary_single_source.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "autotransai_glossary_single_source_migration", revision_path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Cannot load glossary migration: {revision_path}")
+    revision = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(revision)
+    revision.op = Operations(MigrationContext.configure(sync_conn))
+    try:
+        revision.upgrade()
+    except Exception as exc:
+        raise RuntimeError(f"GLOSSARY_MIGRATION_FAILED: {exc}") from exc
+
+
 
 async def init_db() -> None:
     """Create all tables and run dialect-agnostic schema migrations."""
@@ -154,10 +178,11 @@ async def init_db() -> None:
                 if "already exists" not in str(ex).lower():
                     raise ex
 
+            await conn.run_sync(_run_glossary_single_source_migration)
             # Run dynamic DDL schema migration across all dialects (Postgres, SQLite, MySQL)
             await conn.run_sync(_sync_schema_sync)
     except Exception as ex:
-        if is_mysql:
+        if is_mysql and "GLOSSARY_MIGRATION_" not in str(ex):
             logger.warning(f"MySQL connection failed ({str(ex)}). Falling back to local SQLite database...")
             fallback_db_url = f"sqlite+aiosqlite:///{settings.DATA_DIR / settings.DB_FILENAME}"
             _ensure_db_directory()
@@ -169,6 +194,7 @@ async def init_db() -> None:
                 await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
                 await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
                 await conn.run_sync(Base.metadata.create_all)
+                await conn.run_sync(_run_glossary_single_source_migration)
                 await conn.run_sync(_sync_schema_sync)
         else:
             raise ex

@@ -1,8 +1,8 @@
-"""Tests for AI Auto Terminology Memory extraction and persistence helpers."""
+"""Tests for terminology extraction into the canonical project glossary."""
 
 import pytest
 
-from app.services.terminology_memory import (
+from app.services.terminology_extractor import (
     extract_and_persist_from_segments,
     heuristic_extract_terms,
     normalize_extracted_terms,
@@ -10,11 +10,14 @@ from app.services.terminology_memory import (
 
 
 @pytest.mark.asyncio
-async def test_extract_and_persist_from_segments_saves_heuristic_terms(monkeypatch):
+async def test_extract_and_persist_from_segments_saves_translated_terms(monkeypatch):
     saved = []
 
     async def fake_llm(*_a, **_k):
-        return []
+        return [
+            {"source_term": "张三", "suggested_term": "Trương Tam", "term_type": "character"},
+            {"source_term": "青云城", "suggested_term": "Thành Thanh Vân", "term_type": "location"},
+        ]
 
     async def fake_persist(_db, project_id, terms):
         assert project_id == "proj-1"
@@ -22,11 +25,11 @@ async def test_extract_and_persist_from_segments_saves_heuristic_terms(monkeypat
         return len(terms)
 
     monkeypatch.setattr(
-        "app.services.terminology_memory.llm_extract_terms",
+        "app.services.terminology_extractor.llm_extract_terms",
         fake_llm,
     )
     monkeypatch.setattr(
-        "app.services.terminology_memory.persist_terminology_memory",
+        "app.services.terminology_extractor.persist_detected_terms",
         fake_persist,
     )
     n = await extract_and_persist_from_segments(
@@ -75,7 +78,7 @@ def test_heuristic_drops_cjk_sentence_fragments_not_proper_names():
 
 
 def test_filter_proper_names_keeps_khương_nam_drops_other_phrases():
-    from app.services.terminology_memory import filter_proper_names
+    from app.services.terminology_extractor import filter_proper_names
 
     kept = filter_proper_names(
         [
@@ -91,7 +94,7 @@ def test_filter_proper_names_keeps_khương_nam_drops_other_phrases():
 
 def test_filter_keeps_ly_phi_vu_drops_verbs_and_common_nouns():
     """Second Studio screenshot: 李飞羽 is a name; 爬上/弟子/哥哥/而且門派 are not."""
-    from app.services.terminology_memory import filter_proper_names
+    from app.services.terminology_extractor import filter_proper_names
 
     kept = filter_proper_names(
         [
@@ -118,7 +121,7 @@ def test_filter_keeps_ly_phi_vu_drops_verbs_and_common_nouns():
 
 
 def test_segments_transcript_blob_joins_original_and_text():
-    from app.services.terminology_memory import segments_transcript_blob
+    from app.services.terminology_extractor import segments_transcript_blob
 
     blob = segments_transcript_blob(
         [
@@ -131,7 +134,7 @@ def test_segments_transcript_blob_joins_original_and_text():
 
 
 def test_segments_transcript_blob_includes_translated_text_even_when_source_exists():
-    from app.services.terminology_memory import segments_transcript_blob
+    from app.services.terminology_extractor import segments_transcript_blob
 
     blob = segments_transcript_blob(
         [
@@ -173,8 +176,8 @@ async def test_extract_persists_names_from_translation_when_llm_empty(monkeypatc
         saved.extend(terms)
         return len(terms)
 
-    monkeypatch.setattr("app.services.terminology_memory.llm_extract_terms", fake_llm)
-    monkeypatch.setattr("app.services.terminology_memory.persist_terminology_memory", fake_persist)
+    monkeypatch.setattr("app.services.terminology_extractor.llm_extract_terms", fake_llm)
+    monkeypatch.setattr("app.services.terminology_extractor.persist_detected_terms", fake_persist)
 
     n = await extract_and_persist_from_segments(
         object(),
@@ -216,3 +219,35 @@ def test_normalize_extracted_terms_dedupes_and_drops_short():
     assert len(terms) == 1
     assert terms[0]["source_term"] == "张三"
     assert terms[0]["suggested_term"] == "Trương Tam"
+
+
+def test_filter_keeps_creatures_skills_and_important_terms():
+    from app.services.terminology_extractor import filter_terminology
+
+    kept = filter_terminology(
+        [
+            {"source_term": "九尾狐", "suggested_term": "Cửu Vĩ Hồ", "term_type": "creature"},
+            {"source_term": "青莲剑诀", "suggested_term": "Thanh Liên Kiếm Quyết", "term_type": "skill"},
+            {"source_term": "灵根", "suggested_term": "Linh Căn", "term_type": "other"},
+        ]
+    )
+    assert {item["term_type"] for item in kept} == {"creature", "skill", "other"}
+
+
+@pytest.mark.asyncio
+async def test_untranslated_cjk_heuristic_is_not_written_as_canonical_mapping(monkeypatch):
+    persisted = []
+
+    async def fake_llm(*_args, **_kwargs):
+        return []
+
+    async def fake_persist(_db, _project_id, terms):
+        persisted.extend(terms)
+        return len(terms)
+
+    monkeypatch.setattr("app.services.terminology_extractor.llm_extract_terms", fake_llm)
+    monkeypatch.setattr("app.services.terminology_extractor.persist_detected_terms", fake_persist)
+    await extract_and_persist_from_segments(
+        object(), "project-1", [{"text": "张三来了。张三走了。"}], "vi"
+    )
+    assert persisted == []

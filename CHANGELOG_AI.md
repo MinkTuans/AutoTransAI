@@ -1,3 +1,9 @@
+- **Project Glossary is the single terminology source of truth (2026-09-16)**:
+  - Removed the AI Auto Terminology Memory model, runtime table, endpoints, UI tab, and dual-source translation lookup.
+  - AI terminology detection now writes directly through the canonical Glossary service before translation.
+  - NFKC/invisible/whitespace/case normalization plus two project-scoped unique keys enforce a 1:1 source/translation mapping under retries and races.
+  - Added conflict-safe add/edit APIs, legacy-data migration audit, Studio/Unified prompt enforcement, and a pre-TTS canonical validation gate.
+
 - **Pollinations AI Image Provider added to AI Function Config options (2026-09-16)**:
   - **Status**: Verified Pollinations AI image generation (`https://image.pollinations.ai/prompt/...`) is 100% functional, free, and requires no API key.
   - **Fix**: Added `pollinations` to `known_providers` in `SettingsService.get_eligible_providers_for_function` so it now populates as a selectable provider option for capability `IMAGE_GENERATION` in Settings -> AI Function Config -> `Image & Asset Generation`.

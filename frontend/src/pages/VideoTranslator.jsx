@@ -1769,7 +1769,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
 
       {/* BELOW VIEWPORT SECTION: GLOSSARY MANAGER (DEFAULT CLOSED) */}
       <div style={{ marginTop: '20px' }}>
-        <CollapsibleCard title="📖 Quản Lý Thuật Ngữ Dự Án (Glossary & Terminology Memory)" icon="📖" defaultOpen>
+        <CollapsibleCard title="📖 Glossary Dự Án" icon="📖" defaultOpen>
           <ProjectGlossaryManager
             projectId={activeProjectId}
             refreshKey={`${job?.status || ''}-${job?.last_checkpoint_stage || ''}-${job?.overall_progress_pct || 0}-${segments.length}`}

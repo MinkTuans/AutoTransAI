@@ -1,4 +1,4 @@
-"""Integration tests for Unified Workflow Pre-flight Check, Project Settings, and Terminology Memory."""
+"""Integration tests for Unified Workflow Pre-flight Check, Project Settings, and Glossary."""
 
 import pytest
 from httpx import AsyncClient, ASGITransport
@@ -60,19 +60,18 @@ async def test_preflight_and_project_settings_flow():
         assert "checks" in pf_data
         assert len(pf_data["checks"]) > 0
 
-        # 5. Add Terminology Memory
-        add_tm_res = await client.post(f"/api/video-translator/projects/{project_id}/terminology-memory", json={
+        # 5. Add directly to the single canonical Glossary.
+        add_tm_res = await client.post(f"/api/video-translator/projects/{project_id}/glossary", json={
             "source_term": "青云城",
-            "suggested_term": "Thành Thanh Vân",
+            "translated_term": "Thành Thanh Vân",
             "term_type": "location",
-            "confidence": 0.95,
         })
         assert add_tm_res.status_code == 200
 
-        # 6. Get Terminology Memory
-        get_tm_res = await client.get(f"/api/video-translator/projects/{project_id}/terminology-memory")
+        # 6. Read the same Glossary used by translation.
+        get_tm_res = await client.get(f"/api/video-translator/projects/{project_id}/glossary")
         assert get_tm_res.status_code == 200
         tm_list = get_tm_res.json()["data"]
         assert len(tm_list) == 1
         assert tm_list[0]["source_term"] == "青云城"
-        assert tm_list[0]["suggested_term"] == "Thành Thanh Vân"
+        assert tm_list[0]["translated_term"] == "Thành Thanh Vân"

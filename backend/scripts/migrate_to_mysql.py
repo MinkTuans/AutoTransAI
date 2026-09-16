@@ -47,7 +47,6 @@ TABLE_MIGRATION_ORDER = [
     "youtube_publications",
     "tiktok_accounts",
     "project_glossaries",
-    "project_terminology_memory",
     "speaker_voice_mappings",
     "workflow_executions",
     "workflow_stage_executions",

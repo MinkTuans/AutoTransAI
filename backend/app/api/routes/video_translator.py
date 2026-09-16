@@ -939,7 +939,20 @@ async def start_translation_pipeline(
                     b_job.overall_progress_pct = calculate_overall_progress("TRANSLATING", 50.0)
                     await bg_session.commit()
 
-                    # 3. Translate
+                    # 3. Detect terminology into the canonical project glossary before translation.
+                    if b_job.project_id and b_job.project_id != "default_project":
+                        from app.services.terminology_extractor import extract_and_persist_from_segments
+
+                        b_job.current_step = "Đang cập nhật Glossary"
+                        await bg_session.commit()
+                        await extract_and_persist_from_segments(
+                            bg_session,
+                            b_job.project_id,
+                            segments_raw,
+                            b_job.target_language or "vi",
+                        )
+
+                    # 4. Translate with the project glossary loaded by the service.
                     translated_segs = await translate_transcript_segments(
                         segments_raw,
                         source_language=detected_lang,
@@ -999,31 +1012,6 @@ async def start_translation_pipeline(
                         row.voice_provider = assignment.get("voice_provider")
                         row.voice_id = assignment.get("voice_id")
                     character_voice_needs_review = mapping_result.requires_review or voice_result.requires_review
-
-                    try:
-                        from app.services.terminology_memory import extract_and_persist_from_segments
-
-                        term_project_id = b_job.project_id
-                        if term_project_id and term_project_id != "default_project":
-                            b_job.current_step = "Đang ghi AI Terminology Memory"
-                            await bg_session.commit()
-                            saved_terms = await extract_and_persist_from_segments(
-                                bg_session,
-                                term_project_id,
-                                translated_segs,
-                                b_job.target_language or "vi",
-                            )
-                            log_job_event(
-                                job_id,
-                                "TERMINOLOGY",
-                                f"AI Auto Terminology Memory saved {saved_terms} terms for project {term_project_id}",
-                            )
-                    except Exception as term_err:
-                        logger.warning(
-                            "Terminology memory extract failed for job %s: %s",
-                            job_id,
-                            term_err,
-                        )
 
                     now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
                     auto_confirm = getattr(b_job, "auto_confirm_translation", True)
@@ -2282,9 +2270,14 @@ async def smart_retry_job_api(
 # ── Unified 6-Stage Workflow & Glossary Routes ──────────────────────
 
 from app.workflow.workflow_engine import WorkflowEngine
+from app.services.glossary_service import (
+    GlossaryConflictError,
+    create_glossary_entry,
+    serialize_glossary_entry,
+    update_glossary_entry,
+)
 from app.models.workflow_engine import (
     ProjectGlossary,
-    ProjectTerminologyMemory,
     SpeakerVoiceMapping,
     CharacterVoiceProfile,
     VoicePoolEntry,
@@ -2771,16 +2764,7 @@ async def get_project_glossary_api(project_id: str, session: AsyncSession = Depe
     terms = res.scalars().all()
     return {
         "success": True,
-        "data": [
-            {
-                "id": t.id,
-                "source_term": t.source_term,
-                "translated_term": t.translated_term,
-                "term_type": t.term_type,
-                "approved": t.approved,
-            }
-            for t in terms
-        ],
+        "data": [serialize_glossary_entry(t) for t in terms],
     }
 
 
@@ -2788,18 +2772,46 @@ async def get_project_glossary_api(project_id: str, session: AsyncSession = Depe
 async def add_project_glossary_api(
     project_id: str, payload: GlossaryTermCreate, session: AsyncSession = Depends(get_session)
 ):
-    """Add a new term to the project glossary."""
-    term = ProjectGlossary(
-        id=str(uuid.uuid4()),
-        project_id=project_id,
-        source_term=payload.source_term,
-        translated_term=payload.translated_term,
-        term_type=payload.term_type,
-        approved=True,
-    )
-    session.add(term)
-    await session.commit()
-    return {"success": True, "data": {"id": term.id, "source_term": term.source_term}}
+    """Create an idempotent canonical term or return a structured conflict."""
+    try:
+        term, created = await create_glossary_entry(
+            session,
+            project_id,
+            payload.source_term,
+            payload.translated_term,
+            payload.term_type,
+        )
+    except GlossaryConflictError as exc:
+        raise HTTPException(status_code=409, detail=exc.to_detail()) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"success": True, "data": {**serialize_glossary_entry(term), "created": created}}
+
+
+@router.patch("/projects/{project_id}/glossary/{term_id}", response_model=dict)
+async def update_project_glossary_api(
+    project_id: str,
+    term_id: str,
+    payload: GlossaryTermCreate,
+    session: AsyncSession = Depends(get_session),
+):
+    """Edit source, translation, and type without bypassing 1:1 constraints."""
+    try:
+        term = await update_glossary_entry(
+            session,
+            project_id,
+            term_id,
+            payload.source_term,
+            payload.translated_term,
+            payload.term_type,
+        )
+    except GlossaryConflictError as exc:
+        raise HTTPException(status_code=409, detail=exc.to_detail()) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"success": True, "data": serialize_glossary_entry(term)}
 
 
 @router.delete("/projects/{project_id}/glossary/{term_id}", response_model=dict)
@@ -2810,89 +2822,6 @@ async def delete_project_glossary_api(
     await session.execute(
         delete(ProjectGlossary).where(
             ProjectGlossary.id == term_id, ProjectGlossary.project_id == project_id
-        )
-    )
-    await session.commit()
-    return {"success": True, "data": {"deleted": True}}
-
-
-# ── Terminology Memory Endpoints ────────────────────────────────────
-
-class TerminologyMemoryCreate(BaseModel):
-    source_term: str = Field(..., description="Source term")
-    suggested_term: str = Field(..., description="Suggested/translated term")
-    term_type: str = Field("other", description="character, location, organization, skill, weapon, title, other")
-    confidence: float = Field(0.9, description="Confidence score")
-    needs_review: bool = Field(False, description="Requires human review")
-
-
-@router.get("/projects/{project_id}/terminology-memory", response_model=dict)
-async def get_terminology_memory_api(project_id: str, session: AsyncSession = Depends(get_session)):
-    """List AI auto-detected terminology memory terms."""
-    stmt = select(ProjectTerminologyMemory).where(ProjectTerminologyMemory.project_id == project_id)
-    res = await session.execute(stmt)
-    terms = res.scalars().all()
-    from app.services.terminology_memory import filter_proper_names
-
-    serialized = [
-        {
-            "id": t.id,
-            "source_term": t.source_term,
-            "suggested_term": t.suggested_term,
-            "term_type": t.term_type,
-            "confidence": t.confidence,
-            "needs_review": t.needs_review,
-        }
-        for t in terms
-    ]
-    allowed = {item["source_term"] for item in filter_proper_names(serialized)}
-    return {
-        "success": True,
-        "data": [row for row in serialized if row["source_term"] in allowed],
-    }
-
-
-@router.post("/projects/{project_id}/terminology-memory", response_model=dict)
-async def add_terminology_memory_api(
-    project_id: str, payload: TerminologyMemoryCreate, session: AsyncSession = Depends(get_session)
-):
-    """Add or update term in terminology memory."""
-    stmt = select(ProjectTerminologyMemory).where(
-        ProjectTerminologyMemory.project_id == project_id,
-        ProjectTerminologyMemory.source_term == payload.source_term,
-    )
-    res = await session.execute(stmt)
-    term = res.scalars().first()
-
-    if not term:
-        term = ProjectTerminologyMemory(
-            id=str(uuid.uuid4()),
-            project_id=project_id,
-            source_term=payload.source_term,
-            suggested_term=payload.suggested_term,
-            term_type=payload.term_type,
-            confidence=payload.confidence,
-            needs_review=payload.needs_review,
-        )
-        session.add(term)
-    else:
-        term.suggested_term = payload.suggested_term
-        term.term_type = payload.term_type
-        term.confidence = payload.confidence
-        term.needs_review = payload.needs_review
-
-    await session.commit()
-    return {"success": True, "data": {"id": term.id, "source_term": term.source_term}}
-
-
-@router.delete("/projects/{project_id}/terminology-memory/{term_id}", response_model=dict)
-async def delete_terminology_memory_api(
-    project_id: str, term_id: str, session: AsyncSession = Depends(get_session)
-):
-    """Delete a terminology memory item."""
-    await session.execute(
-        delete(ProjectTerminologyMemory).where(
-            ProjectTerminologyMemory.id == term_id, ProjectTerminologyMemory.project_id == project_id
         )
     )
     await session.commit()

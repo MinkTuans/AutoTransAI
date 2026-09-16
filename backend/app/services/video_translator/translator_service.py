@@ -875,7 +875,7 @@ def parse_translation_envelope(text: str) -> Tuple[Dict[int, str], List[Dict[str
         lines_map = _safe_parse_json_translation(text)
     names: List[Dict[str, Any]] = []
     if isinstance(names_raw, list):
-        from app.services.terminology_memory import normalize_extracted_terms
+        from app.services.terminology_extractor import normalize_extracted_terms
 
         names = normalize_extracted_terms([x for x in names_raw if isinstance(x, dict)])
     return lines_map, names
@@ -903,7 +903,21 @@ def _translation_json_prompt(
     payload: Dict[str, Any],
     source_lang_name: str,
     target_lang_name: str,
+    glossary: Optional[Dict[str, str]] = None,
 ) -> str:
+    glossary_rules = ""
+    if glossary:
+        pairs = "\n".join(
+            f"- {source} → {target}"
+            for source, target in sorted(
+                glossary.items(), key=lambda item: len(item[0]), reverse=True
+            )
+        )
+        glossary_rules = (
+            "GLOSSARY CANONICAL — BẮT BUỘC dùng đúng translation bên phải "
+            "mỗi khi source bên trái xuất hiện:\n"
+            f"{pairs}\n\n"
+        )
     return (
         "Bạn là dịch giả phim chuyên nghiệp.\n"
         f"Dịch TOÀN BỘ các câu thoại từ {source_lang_name} sang {target_lang_name}.\n"
@@ -913,6 +927,7 @@ def _translation_json_prompt(
         f"2. Field 'text' ở output là bản dịch {target_lang_name} (tự nhiên, hợp lồng tiếng).\n"
         "3. Trong 'names' chỉ liệt kê TÊN RIÊNG (người/nhân vật, địa danh, tổ chức) kèm bản dịch. "
         "Không đưa động từ, đại từ, câu thoại thường.\n"
+        f"{glossary_rules}"
         "Output đúng dạng:\n"
         '{"lines":[{"n":1,"text":"..."},{"n":2,"text":"..."}],'
         '"names":[{"source":"...","translation":"...","type":"character"}]}\n\n'
@@ -920,12 +935,51 @@ def _translation_json_prompt(
     )
 
 
+def find_glossary_violations(
+    segments: List[Dict[str, Any]], glossary: Optional[Dict[str, str]]
+) -> List[Dict[str, Any]]:
+    if not glossary:
+        return []
+    from app.services.glossary_service import normalize_glossary_text
+
+    violations: List[Dict[str, Any]] = []
+    for index, segment in enumerate(segments, start=1):
+        source_text = normalize_glossary_text(
+            str(segment.get("text") or segment.get("original_text") or "")
+        )
+        translated_text = normalize_glossary_text(
+            str(segment.get("translated_text") or "")
+        )
+        occupied: list[tuple[int, int]] = []
+        matches: list[tuple[str, str]] = []
+        ordered_terms = sorted(
+            glossary.items(),
+            key=lambda item: len(normalize_glossary_text(item[0])),
+            reverse=True,
+        )
+        for source_term, required in ordered_terms:
+            normalized_source = normalize_glossary_text(source_term)
+            start = source_text.find(normalized_source)
+            while start >= 0:
+                end = start + len(normalized_source)
+                if not any(start < used_end and end > used_start for used_start, used_end in occupied):
+                    occupied.append((start, end))
+                    matches.append((source_term, required))
+                start = source_text.find(normalized_source, start + 1)
+        for source_term, required in matches:
+            if normalize_glossary_text(required) not in translated_text:
+                violations.append(
+                    {"segment": index, "source_term": source_term, "required": required}
+                )
+    return violations
+
+
 async def _persist_translation_names(db: Optional[Any], project_id: Optional[str], names: List[Dict[str, Any]]) -> int:
     if not db or not project_id or project_id == "default_project" or not names:
         return 0
-    from app.services.terminology_memory import filter_proper_names, persist_terminology_memory
+    from app.services.terminology_extractor import filter_terminology, persist_detected_terms
 
-    return await persist_terminology_memory(db, project_id, filter_proper_names(names))
+    return await persist_detected_terms(db, project_id, filter_terminology(names))
 
 
 async def _translate_sub_batch(
@@ -935,6 +989,7 @@ async def _translate_sub_batch(
     target_lang_name: str,
     job_id: str,
     batch_label: str,
+    glossary: Optional[Dict[str, str]] = None,
 ) -> List[str]:
     """Helper to translate a sub-batch of segments with structured IDs and targeted retries."""
     if not sub_segments:
@@ -942,7 +997,7 @@ async def _translate_sub_batch(
 
     payload = build_numbered_dialogue_payload(sub_segments)
     numbers = [item["n"] for item in payload["lines"]]
-    prompt = _translation_json_prompt(payload, source_lang_name, target_lang_name)
+    prompt = _translation_json_prompt(payload, source_lang_name, target_lang_name, glossary)
 
     parsed_map: Dict[int, str] = {}
     last_err = None
@@ -965,9 +1020,10 @@ async def _translate_sub_batch(
                     "lines": [item for item in payload["lines"] if item["n"] in missing_ids]
                 }
                 rec_prompt = (
-                    f"CẢNH BÁO: Thiếu câu thoại n={missing_ids}. Dịch bắt buộc sang {target_lang_name}:\n"
-                    f"{json.dumps(missing_items, ensure_ascii=False)}\n"
-                    'Trả về JSON {"lines":[{"n":X,"text":"..."}],"names":[]}'
+                    f"CẢNH BÁO: Thiếu câu thoại n={missing_ids}.\n"
+                    + _translation_json_prompt(
+                        missing_items, source_lang_name, target_lang_name, glossary
+                    )
                 )
                 try:
                     rec_resp = await llm.generate_text(rec_prompt, model=getattr(llm, '_resolved_model_id', None))
@@ -989,8 +1045,8 @@ async def _translate_sub_batch(
     if len(sub_segments) > 5:
         logger.warning(f"Sub-batch {batch_label} failed ({last_err}). Splitting sub-batch of size {len(sub_segments)} into smaller halves...")
         half = len(sub_segments) // 2
-        part1 = await _translate_sub_batch(llm, sub_segments[:half], source_lang_name, target_lang_name, job_id, f"{batch_label}a")
-        part2 = await _translate_sub_batch(llm, sub_segments[half:], source_lang_name, target_lang_name, job_id, f"{batch_label}b")
+        part1 = await _translate_sub_batch(llm, sub_segments[:half], source_lang_name, target_lang_name, job_id, f"{batch_label}a", glossary)
+        part2 = await _translate_sub_batch(llm, sub_segments[half:], source_lang_name, target_lang_name, job_id, f"{batch_label}b", glossary)
         return part1 + part2
 
     raise ValueError(f"Sub-batch translation failed: {last_err}")
@@ -1006,6 +1062,7 @@ async def translate_transcript_segments(
     translation_model_id: Optional[str] = None,
     db: Optional[AsyncSession] = None,
     project_id: Optional[str] = None,
+    glossary: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Translate transcript text segments to target language using LLM Provider (Gemini / OpenAI).
@@ -1015,6 +1072,21 @@ async def translate_transcript_segments(
     """
     if not segments:
         return segments
+
+    if (
+        glossary is None
+        and db is not None
+        and hasattr(db, "execute")
+        and project_id
+        and project_id != "default_project"
+    ):
+        from app.services.glossary_service import load_project_glossary
+
+        glossary = {
+            row.source_term: row.translated_term
+            for row in await load_project_glossary(db, project_id)
+        }
+    glossary = glossary or {}
 
     registry = get_registry()
     settings = get_settings()
@@ -1102,7 +1174,7 @@ async def translate_transcript_segments(
                 batch_segments = segments[start_i:end_i]
                 payload = build_numbered_dialogue_payload(batch_segments)
                 numbers = [item["n"] for item in payload["lines"]]
-                prompt = _translation_json_prompt(payload, source_lang_name, target_lang_name)
+                prompt = _translation_json_prompt(payload, source_lang_name, target_lang_name, glossary)
 
                 translated_list = None
                 batch_error = None
@@ -1142,9 +1214,12 @@ async def translate_transcript_segments(
                             }
                             rec_prompt = (
                                 f"CẢNH BÁO: Thiếu câu thoại n={missing_ids} trong bản dịch trước.\n"
-                                f"Bắt buộc dịch sang {target_lang_name} và giữ nguyên 'n':\n"
-                                f"{json.dumps(missing_payload, ensure_ascii=False)}\n"
-                                'Trả về JSON {"lines":[{"n":X,"text":"..."}],"names":[]}'
+                                + _translation_json_prompt(
+                                    missing_payload,
+                                    source_lang_name,
+                                    target_lang_name,
+                                    glossary,
+                                )
                             )
                             try:
                                 rec_resp = await llm.generate_text(rec_prompt)
@@ -1177,11 +1252,11 @@ async def translate_transcript_segments(
                     try:
                         if len(batch_segments) > 1:
                             half = len(batch_segments) // 2
-                            part1 = await _translate_sub_batch(llm, batch_segments[:half], source_lang_name, target_lang_name, job_id, f"B{batch_idx+1}a")
-                            part2 = await _translate_sub_batch(llm, batch_segments[half:], source_lang_name, target_lang_name, job_id, f"B{batch_idx+1}b")
+                            part1 = await _translate_sub_batch(llm, batch_segments[:half], source_lang_name, target_lang_name, job_id, f"B{batch_idx+1}a", glossary)
+                            part2 = await _translate_sub_batch(llm, batch_segments[half:], source_lang_name, target_lang_name, job_id, f"B{batch_idx+1}b", glossary)
                             translated_list = part1 + part2
                         else:
-                            translated_list = await _translate_sub_batch(llm, batch_segments, source_lang_name, target_lang_name, job_id, f"B{batch_idx+1}")
+                            translated_list = await _translate_sub_batch(llm, batch_segments, source_lang_name, target_lang_name, job_id, f"B{batch_idx+1}", glossary)
                         log_job_event(job_id, "TRANSLATING", f"[Gemini Sub-batch Fallback] Successfully translated batch {batch_idx+1}/{total_batches} via sub-batch splitting.")
                     except Exception as sub_ex:
                         batch_error = f"Sub-batch splitting failed: {sub_ex}"
@@ -1199,9 +1274,10 @@ async def translate_transcript_segments(
                 if verbatim_echo_count > max(1, int(len(batch_segments) * 0.3)):
                     logger.warning(f"Batch {batch_idx+1}/{total_batches} on {llm.provider_id} had {verbatim_echo_count} verbatim echoes. Retrying batch with strict prompt...")
                     strict_prompt = (
-                        f"CẢNH BÁO: Bạn đã trả về nguyên văn {source_lang_name}. HÃY DỊCH BẮT BUỘC SANG {target_lang_name}.\n"
-                        f"{json.dumps(payload, ensure_ascii=False)}\n"
-                        'Chỉ trả về JSON {"lines":[{"n":1,"text":"..."}],"names":[]}'
+                        f"CẢNH BÁO: Bạn đã trả về nguyên văn {source_lang_name}.\n"
+                        + _translation_json_prompt(
+                            payload, source_lang_name, target_lang_name, glossary
+                        )
                     )
                     try:
                         retry_resp = await llm.generate_text(strict_prompt)
@@ -1234,6 +1310,13 @@ async def translate_transcript_segments(
 
                 for seg, trans in zip(segments, translated_results):
                     seg["translated_text"] = trans
+
+                violations = find_glossary_violations(segments, glossary)
+                if violations:
+                    raise RuntimeError(
+                        "GLOSSARY_ENFORCEMENT_FAILED: "
+                        + json.dumps(violations, ensure_ascii=False)
+                    )
 
                 saved = await _persist_translation_names(db, project_id, collected_names)
                 log_job_event(

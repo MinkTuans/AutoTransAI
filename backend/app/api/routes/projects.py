@@ -27,7 +27,7 @@ from app.models.project import Project, WorkflowStatus
 from app.models.segment import Segment, SegmentStatus
 from app.models.video_translator import VideoTranslationJob, VideoAsset, VideoTranslationSegment
 from app.models.asset import Asset
-from app.models.workflow_engine import ProjectGlossary, ProjectTerminologyMemory, WorkflowExecution
+from app.models.workflow_engine import ProjectGlossary, WorkflowExecution
 from app.services.storage_service import storage_service
 from app.schemas.project import (
     ProjectCreate,
@@ -575,11 +575,6 @@ async def get_project(
         )
         glossary_count = gloss_count_res.scalar() or 0
 
-        term_count_res = await session.execute(
-            select(func.count(ProjectTerminologyMemory.id)).where(ProjectTerminologyMemory.project_id == project_id)
-        )
-        terminology_count = term_count_res.scalar() or 0
-
         normalized_settings = normalize_project_settings(project.settings_json or {})
 
         return {
@@ -599,7 +594,6 @@ async def get_project(
                 "segments": segments_data,
                 "videos": videos_data,
                 "glossary_count": glossary_count,
-                "terminology_count": terminology_count,
                 "created_at": project.created_at.isoformat() if project.created_at else None,
                 "updated_at": project.updated_at.isoformat() if project.updated_at else None,
             },

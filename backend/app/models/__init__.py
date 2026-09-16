@@ -31,7 +31,6 @@ from app.models.video_merger import (
 )
 from app.models.workflow_engine import (
     ProjectGlossary,
-    ProjectTerminologyMemory,
     SpeakerVoiceMapping,
     CharacterVoiceProfile,
     VoicePoolEntry,
@@ -72,7 +71,6 @@ __all__ = [
     "VideoMergeAsset",
     "MergeJobStatus",
     "ProjectGlossary",
-    "ProjectTerminologyMemory",
     "SpeakerVoiceMapping",
     "CharacterVoiceProfile",
     "VoicePoolEntry",
@@ -87,6 +85,5 @@ __all__ = [
     "AIModel",
     "SocialAccount",
 ]
-
 
 

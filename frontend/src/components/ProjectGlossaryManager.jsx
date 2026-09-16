@@ -1,279 +1,102 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { videoTranslatorApi } from '../api';
 
+const EMPTY_FORM = { source_term: '', translated_term: '', term_type: 'character' };
+
 export default function ProjectGlossaryManager({ projectId, refreshKey }) {
-  const [activeTab, setActiveTab] = useState('manual');
   const [terms, setTerms] = useState([]);
-  const [memoryTerms, setMemoryTerms] = useState([]);
-  const [sourceTerm, setSourceTerm] = useState('');
-  const [translatedTerm, setTranslatedTerm] = useState('');
-  const [termType, setTermType] = useState('character');
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [editingId, setEditingId] = useState(null);
+  const [error, setError] = useState('');
 
   const fetchGlossary = async () => {
     if (!projectId) return;
     try {
-      const data = await videoTranslatorApi.getGlossary(projectId);
-      if (data.success) {
-        setTerms(data.data || []);
-      }
+      const response = await videoTranslatorApi.getGlossary(projectId);
+      if (response.success) setTerms(response.data || []);
     } catch (err) {
-      console.error('Failed fetching glossary', err);
-    }
-  };
-
-  const fetchMemory = async () => {
-    if (!projectId) return;
-    try {
-      const data = await videoTranslatorApi.getTerminologyMemory(projectId);
-      if (data.success) {
-        const rows = data.data || [];
-        setMemoryTerms(rows);
-        if (rows.length > 0) setActiveTab('memory');
-      }
-    } catch (err) {
-      console.error('Failed fetching terminology memory', err);
+      setError(err.response?.data?.detail?.message || 'Không thể tải Glossary.');
     }
   };
 
   useEffect(() => {
-    if (projectId) {
-      fetchGlossary();
-      fetchMemory();
-    }
+    fetchGlossary();
   }, [projectId, refreshKey]);
 
-  const handleAddTerm = async (e) => {
-    e.preventDefault();
-    if (!sourceTerm.trim() || !translatedTerm.trim()) return;
+  const resetForm = () => {
+    setForm(EMPTY_FORM);
+    setEditingId(null);
+    setError('');
+  };
 
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    if (!form.source_term.trim() || !form.translated_term.trim()) return;
+    setError('');
     try {
-      const data = await videoTranslatorApi.addGlossary(projectId, {
-        source_term: sourceTerm,
-        translated_term: translatedTerm,
-        term_type: termType,
-      });
-      if (data.success) {
-        setSourceTerm('');
-        setTranslatedTerm('');
-        fetchGlossary();
-      }
+      if (editingId) await videoTranslatorApi.updateGlossary(projectId, editingId, form);
+      else await videoTranslatorApi.addGlossary(projectId, form);
+      resetForm();
+      await fetchGlossary();
     } catch (err) {
-      console.error('Failed adding term', err);
+      const detail = err.response?.data?.detail;
+      const existing = detail?.existing;
+      setError(existing
+        ? `${detail.message}: ${existing.source_term} → ${existing.translated_term}`
+        : detail || 'Không thể lưu Glossary.');
     }
   };
 
-  const handleDeleteTerm = async (termId) => {
+  const startEdit = (term) => {
+    setEditingId(term.id);
+    setForm({ source_term: term.source_term, translated_term: term.translated_term, term_type: term.term_type });
+    setError('');
+  };
+
+  const handleDelete = async (termId) => {
     try {
-      const data = await videoTranslatorApi.deleteGlossary(projectId, termId);
-      if (data.success) {
-        fetchGlossary();
-      }
+      await videoTranslatorApi.deleteGlossary(projectId, termId);
+      if (editingId === termId) resetForm();
+      await fetchGlossary();
     } catch (err) {
-      console.error('Failed deleting term', err);
+      setError(err.response?.data?.detail || 'Không thể xóa Glossary entry.');
     }
   };
 
-  const handleDeleteMemoryTerm = async (termId) => {
-    try {
-      const data = await videoTranslatorApi.deleteTerminologyMemory(projectId, termId);
-      if (data.success) {
-        fetchMemory();
-      }
-    } catch (err) {
-      console.error('Failed deleting memory term', err);
-    }
-  };
-
-  const handlePromoteMemoryToGlossary = async (item) => {
-    try {
-      await videoTranslatorApi.addGlossary(projectId, {
-        source_term: item.source_term,
-        translated_term: item.suggested_term,
-        term_type: item.term_type,
-      });
-      fetchGlossary();
-    } catch (err) {
-      console.error('Failed promoting memory term', err);
-    }
-  };
+  const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
 
   return (
     <div className="card" style={{ marginTop: '1.5rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-        <h3 className="card-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          📖 Project Glossary & Terminology Memory
-        </h3>
-        
-        {/* Sub-tabs */}
-        <div style={{ display: 'flex', gap: '0.25rem', background: '#0f1117', padding: '0.25rem', borderRadius: '6px' }}>
-          <button
-            onClick={() => setActiveTab('manual')}
-            style={{
-              padding: '0.35rem 0.85rem',
-              borderRadius: '4px',
-              border: 'none',
-              fontSize: '0.85rem',
-              fontWeight: 500,
-              cursor: 'pointer',
-              background: activeTab === 'manual' ? '#3b82f6' : 'transparent',
-              color: activeTab === 'manual' ? '#fff' : '#94a3b8',
-            }}
-          >
-            ✏️ Glossary Thủ Công ({terms.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('memory')}
-            style={{
-              padding: '0.35rem 0.85rem',
-              borderRadius: '4px',
-              border: 'none',
-              fontSize: '0.85rem',
-              fontWeight: 500,
-              cursor: 'pointer',
-              background: activeTab === 'memory' ? '#10b981' : 'transparent',
-              color: activeTab === 'memory' ? '#fff' : '#94a3b8',
-            }}
-          >
-            🤖 AI Auto Terminology Memory ({memoryTerms.length})
-          </button>
-        </div>
-      </div>
-
-      {activeTab === 'manual' ? (
-        <>
-          {/* Form */}
-          <form onSubmit={handleAddTerm} style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem', alignItems: 'center', width: '100%', flexWrap: 'wrap' }}>
-            <input
-              type="text"
-              className="form-control"
-              placeholder="Source Term (e.g. 张三)"
-              value={sourceTerm}
-              onChange={(e) => setSourceTerm(e.target.value)}
-              style={{ flex: 1, minWidth: '150px' }}
-            />
-            <input
-              type="text"
-              className="form-control"
-              placeholder="Vietnamese Translation (e.g. Trương Tam)"
-              value={translatedTerm}
-              onChange={(e) => setTranslatedTerm(e.target.value)}
-              style={{ flex: 1, minWidth: '150px' }}
-            />
-            <select
-              className="form-select"
-              value={termType}
-              onChange={(e) => setTermType(e.target.value)}
-              style={{ width: '150px', flexShrink: 0 }}
-            >
-              <option value="character">Character</option>
-              <option value="location">Location</option>
-              <option value="organization">Organization</option>
-              <option value="skill">Skill / Weapon</option>
-              <option value="title">Title</option>
-              <option value="other">Other</option>
-            </select>
-            <button type="submit" className="btn btn-primary" style={{ backgroundColor: '#10b981', flexShrink: 0, whiteSpace: 'nowrap' }}>
-              + Add Term
-            </button>
-          </form>
-
-          {/* Manual Glossary Table */}
-          <table className="table" style={{ fontSize: '0.85rem' }}>
-            <thead>
-              <tr>
-                <th>Source Term</th>
-                <th>Vietnamese Translation</th>
-                <th>Type</th>
-                <th style={{ textAlign: 'right' }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {terms.length === 0 ? (
-                <tr>
-                  <td colSpan={4} style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                    Chưa có từ điển thủ công nào.
-                  </td>
-                </tr>
-              ) : (
-                terms.map((t) => (
-                  <tr key={t.id}>
-                    <td style={{ fontWeight: 'bold' }}>{t.source_term}</td>
-                    <td style={{ color: '#60a5fa' }}>{t.translated_term}</td>
-                    <td style={{ textTransform: 'capitalize', color: 'var(--text-secondary)' }}>{t.term_type}</td>
-                    <td style={{ textAlign: 'right' }}>
-                      <button
-                        type="button"
-                        className="btn btn-danger"
-                        onClick={() => handleDeleteTerm(t.id)}
-                        style={{ padding: '0.25rem 0.625rem', fontSize: '0.8rem' }}
-                      >
-                        🗑️ Delete
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </>
-      ) : (
-        <>
-          <p style={{ fontSize: '0.85rem', color: '#94a3b8', marginBottom: '1rem' }}>
-            💡 Danh sách thuật ngữ tên riêng, địa danh, kỹ năng do AI tự động phát hiện trong quá trình phân tích kịch bản video.
-          </p>
-          <table className="table" style={{ fontSize: '0.85rem' }}>
-            <thead>
-              <tr>
-                <th>Source Term</th>
-                <th>AI Suggested Translation</th>
-                <th>Type</th>
-                <th>Confidence</th>
-                <th style={{ textAlign: 'right' }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {memoryTerms.length === 0 ? (
-                <tr>
-                  <td colSpan={5} style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                    Chưa có thuật ngữ tự động nào được ghi nhớ.
-                  </td>
-                </tr>
-              ) : (
-                memoryTerms.map((tm) => (
-                  <tr key={tm.id}>
-                    <td style={{ fontWeight: 'bold' }}>{tm.source_term}</td>
-                    <td style={{ color: '#34d399' }}>{tm.suggested_term}</td>
-                    <td style={{ textTransform: 'capitalize', color: 'var(--text-secondary)' }}>{tm.term_type}</td>
-                    <td>
-                      <span className="badge badge-info" style={{ fontSize: '0.75rem' }}>
-                        {Math.round(tm.confidence * 100)}%
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'right', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-primary"
-                        onClick={() => handlePromoteMemoryToGlossary(tm)}
-                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#10b981' }}
-                      >
-                        ✓ Duyệt vào Glossary
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-danger"
-                        onClick={() => handleDeleteMemoryTerm(tm.id)}
-                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
-                      >
-                        🗑️
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </>
-      )}
+      <h3 className="card-title" style={{ marginBottom: '1rem' }}>📖 Glossary ({terms.length})</h3>
+      <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '0.75rem', marginBottom: '0.75rem', alignItems: 'center', width: '100%', flexWrap: 'wrap' }}>
+        <input className="form-control" value={form.source_term} onChange={(e) => setField('source_term', e.target.value)} placeholder="Source (ví dụ: 李道天)" style={{ flex: 1, minWidth: '150px' }} />
+        <input className="form-control" value={form.translated_term} onChange={(e) => setField('translated_term', e.target.value)} placeholder="Canonical translation (ví dụ: Lý Đạo Thiên)" style={{ flex: 1, minWidth: '180px' }} />
+        <select className="form-select" value={form.term_type} onChange={(e) => setField('term_type', e.target.value)} style={{ width: '150px' }}>
+          <option value="character">Character</option><option value="creature">Creature</option>
+          <option value="location">Location</option><option value="organization">Organization</option>
+          <option value="skill">Skill</option><option value="weapon">Weapon</option>
+          <option value="item">Item</option><option value="technique">Technique</option>
+          <option value="title">Title</option><option value="other">Important Term</option>
+        </select>
+        <button type="submit" className="btn btn-primary">{editingId ? 'Save Edit' : '+ Add Term'}</button>
+        {editingId && <button type="button" className="btn" onClick={resetForm}>Cancel</button>}
+      </form>
+      {error && <div className="alert alert-danger" role="alert" style={{ marginBottom: '1rem' }}>{String(error)}</div>}
+      <table className="table" style={{ fontSize: '0.85rem' }}>
+        <thead><tr><th>Source</th><th>Canonical Translation</th><th>Type</th><th style={{ textAlign: 'right' }}>Actions</th></tr></thead>
+        <tbody>{terms.length === 0 ? (
+          <tr><td colSpan={4} style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>Chưa có Glossary entry.</td></tr>
+        ) : terms.map((term) => (
+          <tr key={term.id}>
+            <td style={{ fontWeight: 'bold' }}>{term.source_term}</td><td style={{ color: '#60a5fa' }}>{term.translated_term}</td>
+            <td style={{ textTransform: 'capitalize' }}>{term.term_type}</td>
+            <td style={{ textAlign: 'right' }}>
+              <button type="button" className="btn btn-sm" onClick={() => startEdit(term)} style={{ marginRight: '0.5rem' }}>Edit</button>
+              <button type="button" className="btn btn-sm btn-danger" onClick={() => handleDelete(term.id)}>Delete</button>
+            </td>
+          </tr>
+        ))}</tbody>
+      </table>
     </div>
   );
 }

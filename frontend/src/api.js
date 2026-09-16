@@ -143,10 +143,8 @@ export const videoTranslatorApi = {
   // Terminology & Glossary
   getGlossary: (projectId) => api.get(`/video-translator/projects/${projectId}/glossary`).then(res => res.data),
   addGlossary: (projectId, data) => api.post(`/video-translator/projects/${projectId}/glossary`, data).then(res => res.data),
+  updateGlossary: (projectId, termId, data) => api.patch(`/video-translator/projects/${projectId}/glossary/${termId}`, data).then(res => res.data),
   deleteGlossary: (projectId, termId) => api.delete(`/video-translator/projects/${projectId}/glossary/${termId}`).then(res => res.data),
-  getTerminologyMemory: (projectId) => api.get(`/video-translator/projects/${projectId}/terminology-memory`).then(res => res.data),
-  addTerminologyMemory: (projectId, data) => api.post(`/video-translator/projects/${projectId}/terminology-memory`, data).then(res => res.data),
-  deleteTerminologyMemory: (projectId, termId) => api.delete(`/video-translator/projects/${projectId}/terminology-memory/${termId}`).then(res => res.data),
   getCharacterVoiceReview: (jobId) => api.get(`/video-translator/jobs/${jobId}/character-voice-review`).then(res => res.data),
   updateCharacterVoiceReview: (jobId, data) => api.put(`/video-translator/jobs/${jobId}/character-voice-review`, data).then(res => res.data),
   validateCharacterVoiceReview: (jobId) => api.post(`/video-translator/jobs/${jobId}/character-voice-review/validate`).then(res => res.data),
@@ -218,6 +216,5 @@ export const videoMergerApi = {
   retryJob: (jobId) => api.post(`/video-merger/jobs/${jobId}/retry`).then(res => res.data),
   deleteJob: (jobId) => api.delete(`/video-merger/jobs/${jobId}`).then(res => res.data),
 };
-
 
 

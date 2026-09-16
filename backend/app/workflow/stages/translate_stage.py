@@ -5,9 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from sqlalchemy import select
 from app.workflow.workflow_context import WorkflowContext
-from app.models.workflow_engine import ProjectGlossary, ProjectTerminologyMemory
+from app.services.glossary_service import load_project_glossary
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +16,8 @@ class TranslateStage:
 
     STAGE_NAME = "TRANSLATE"
     STEPS = [
-        "create_load_glossary",
         "extract_entities",
-        "detect_names_locations",
+        "create_load_glossary",
         "translate_transcript",
         "validate_segment_ids",
         "check_consistency",
@@ -34,8 +32,6 @@ class TranslateStage:
             return await self._create_load_glossary(ctx, db)
         elif step_name == "extract_entities":
             return await self._extract_entities(ctx, db)
-        elif step_name == "detect_names_locations":
-            return await self._detect_names_locations(ctx, db)
         elif step_name == "translate_transcript":
             return await self._translate_transcript(ctx, db)
         elif step_name == "validate_segment_ids":
@@ -83,10 +79,7 @@ class TranslateStage:
     async def _create_load_glossary(self, ctx: WorkflowContext, db: Any) -> dict[str, Any]:
         glossary_list = []
         if db:
-            result = await db.execute(
-                select(ProjectGlossary).where(ProjectGlossary.project_id == ctx.project_id)
-            )
-            terms = result.scalars().all()
+            terms = await load_project_glossary(db, ctx.project_id)
             glossary_list = [
                 {
                     "source_term": t.source_term,
@@ -95,61 +88,25 @@ class TranslateStage:
                     "approved": t.approved,
                     "priority": 1,
                 }
-                for t in terms if t.approved
+                for t in terms
             ]
-
-            manual_sources = {t["source_term"].lower() for t in glossary_list}
-            tm_res = await db.execute(
-                select(ProjectTerminologyMemory).where(ProjectTerminologyMemory.project_id == ctx.project_id)
-            )
-            tm_terms = tm_res.scalars().all()
-            for tm in tm_terms:
-                if tm.source_term.lower() not in manual_sources:
-                    glossary_list.append({
-                        "source_term": tm.source_term,
-                        "translated_term": tm.suggested_term,
-                        "term_type": tm.term_type,
-                        "approved": True,
-                        "priority": 2,
-                    })
 
         ctx.glossary = glossary_list
         return {"glossary_count": len(ctx.glossary)}
 
     async def _extract_entities(self, ctx: WorkflowContext, db: Any) -> dict[str, Any]:
-        from app.services.terminology_memory import (
-            heuristic_extract_terms,
-            llm_extract_terms,
-            persist_terminology_memory,
-            transcript_blob,
+        from app.services.terminology_extractor import extract_and_persist_from_segments
+
+        segments = list(ctx.source_segments or [])
+        if not segments and ctx.raw_transcript:
+            segments = [{"text": ctx.raw_transcript}]
+        saved = await extract_and_persist_from_segments(
+            db, ctx.project_id, segments, ctx.target_language
         )
-
-        text = transcript_blob(ctx)
-        heuristic = heuristic_extract_terms(text, ctx.target_language)
-        llm_terms = await llm_extract_terms(text, ctx.target_language)
-        merged = llm_terms + [
-            t
-            for t in heuristic
-            if t["source_term"].casefold() not in {x["source_term"].casefold() for x in llm_terms}
-        ]
-        saved = await persist_terminology_memory(db, ctx.project_id, merged)
-        ctx.extracted_terms = merged
-        return {"entities_extracted": True, "term_count": len(merged), "saved": saved}
-
-    async def _detect_names_locations(self, ctx: WorkflowContext, db: Any) -> dict[str, Any]:
-        from app.services.terminology_memory import persist_terminology_memory
-
-        extra = [
-            t
-            for t in (getattr(ctx, "extracted_terms", None) or [])
-            if t.get("term_type") in ("location", "character", "organization")
-        ]
-        saved = await persist_terminology_memory(db, ctx.project_id, extra)
-        return {"names_locations_detected": True, "saved": saved}
+        return {"entities_extracted": True, "saved": saved}
 
     async def _translate_transcript(self, ctx: WorkflowContext, db: Any = None) -> dict[str, Any]:
-        from app.services.video_translator.translator_service import VideoTranslatorService
-        svc = VideoTranslatorService()
+        from app.services.video_translator.translator_service import translate_transcript_segments
 
         # Format glossary dictionary for translator prompt
         glossary_dict = {
@@ -158,35 +115,18 @@ class TranslateStage:
         }
 
         # Perform translation preserving cross-batch context
-        translated = await svc.translate_segments(
+        translated = await translate_transcript_segments(
             segments=ctx.source_segments,
-            target_lang=ctx.target_language,
+            source_language=ctx.source_language,
+            target_language=ctx.target_language,
+            job_id=ctx.job_id or ctx.workflow_id or "WORKFLOW",
             glossary=glossary_dict,
+            db=db,
+            project_id=ctx.project_id,
         )
 
         ctx.translated_segments = translated
 
-        saved = 0
-        if db is not None:
-            try:
-                from app.services.terminology_memory import extract_and_persist_from_segments
-
-                pairs = []
-                sources = ctx.source_segments or []
-                for idx, tgt in enumerate(ctx.translated_segments or []):
-                    src = sources[idx] if idx < len(sources) else {}
-                    pairs.append(
-                        {
-                            "text": src.get("text") or src.get("original_text") or tgt.get("text") or "",
-                            "translated_text": tgt.get("translated_text") or tgt.get("text") or "",
-                        }
-                    )
-                saved = await extract_and_persist_from_segments(
-                    db, ctx.project_id, pairs, ctx.target_language or "vi"
-                )
-            except Exception as exc:
-                logger.warning("Post-translate terminology extract failed: %s", exc)
-        
         if ctx.progress_callback:
             await ctx.progress_callback(
                 self.STAGE_NAME,
@@ -196,32 +136,22 @@ class TranslateStage:
                 "Translation completed, validating..."
             )
             
-        return {"translated_count": len(ctx.translated_segments), "terminology_saved": saved}
+        return {"translated_count": len(ctx.translated_segments)}
 
     async def _validate_segment_ids(self, ctx: WorkflowContext) -> dict[str, Any]:
-        from app.services.video_translator.translator_service import VideoTranslatorService
-        svc = VideoTranslatorService()
-        
-        # Run targeted missing ID recovery if any segment IDs were dropped by LLM
-        recovered = await svc.recover_missing_segments(
-            source_segments=ctx.source_segments,
-            translated_segments=ctx.translated_segments,
-            target_lang=ctx.target_language,
-            glossary={item["source_term"]: item["translated_term"] for item in ctx.glossary},
-        )
-        ctx.translated_segments = recovered
+        if len(ctx.translated_segments) != len(ctx.source_segments):
+            raise RuntimeError(
+                f"TRANSLATION_SEGMENT_MISMATCH: {len(ctx.translated_segments)}/{len(ctx.source_segments)}"
+            )
         return {"validated_count": len(ctx.translated_segments)}
 
     async def _check_consistency(self, ctx: WorkflowContext) -> dict[str, Any]:
-        # Enforce glossary term consistency across translated text
+        from app.services.video_translator.translator_service import find_glossary_violations
+
         glossary_dict = {item["source_term"]: item["translated_term"] for item in ctx.glossary}
-        for seg in ctx.translated_segments:
-            txt = seg.get("translated_text", "")
-            for src, tgt in glossary_dict.items():
-                if src.lower() in seg.get("text", "").lower() and tgt not in txt:
-                    # Enforce glossary substitution if missing
-                    logger.info(f"Applying glossary enforcement: {src} -> {tgt}")
-                    
+        violations = find_glossary_violations(ctx.translated_segments, glossary_dict)
+        if violations:
+            raise RuntimeError(f"GLOSSARY_ENFORCEMENT_FAILED: {violations}")
         return {"consistency_checked": True}
 
     async def _translation_qc(self, ctx: WorkflowContext) -> dict[str, Any]:

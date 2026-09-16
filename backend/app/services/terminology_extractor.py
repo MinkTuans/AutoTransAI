@@ -1,18 +1,16 @@
-"""Extract and persist AI Auto Terminology Memory terms from transcripts."""
+"""Extract terminology from transcripts and write it to the project glossary."""
 
 from __future__ import annotations
 
 import json
 import re
-import uuid
 from collections import Counter
 from typing import Any, Iterable, Optional
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import get_logger
-from app.models.workflow_engine import ProjectTerminologyMemory
+from app.services.glossary_service import create_glossary_entry
 
 logger = get_logger(__name__)
 
@@ -65,6 +63,7 @@ _CJK_NAME_SUFFIXES = (
 )
 
 PROPER_NAME_TYPES = frozenset({"character", "location", "organization"})
+EXTENDED_TERM_TYPES = frozenset({"creature", "skill", "weapon", "item", "technique", "title", "other"})
 
 
 def looks_like_cjk_name(term: str) -> bool:
@@ -110,6 +109,23 @@ def filter_proper_names(terms: Iterable[dict[str, Any]]) -> list[dict[str, Any]]
         item["term_type"] = term_type
         kept.append(item)
     return kept
+
+
+def filter_terminology(terms: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep proper names plus explicitly translated domain terminology."""
+    normalized = normalize_extracted_terms(terms)
+    extended = [
+        item
+        for item in normalized
+        if item["term_type"] in EXTENDED_TERM_TYPES
+        and item["suggested_term"].casefold() != item["source_term"].casefold()
+    ]
+    extended_sources = {item["source_term"].casefold() for item in extended}
+    return extended + [
+        item
+        for item in filter_proper_names(normalized)
+        if item["source_term"].casefold() not in extended_sources
+    ]
 
 # Function words that look title-case in Vietnamese/English subtitles but are not names.
 _NAME_STOP = {
@@ -274,14 +290,16 @@ async def llm_extract_terms(text: str, target_lang: str = "vi") -> list[dict[str
         if not llm:
             return []
         prompt = (
-            "Extract ONLY proper names: people/characters, place names, and organizations.\n"
+            "Extract important canonical terminology: people/characters, creatures, place names, "
+            "organizations, skills, weapons, items, techniques, titles, and important domain terms.\n"
             "Do NOT extract sentences, clauses, verbs, pronouns, or random subtitle fragments "
             "(e.g. 我先走了, 看来今天, 只是想给).\n"
             f"Lines may include source transcript and the {target_lang} translation.\n"
             'Return ONLY JSON: {{"terms":[{{"source_term":"...","suggested_term":"...","term_type":"character","confidence":0.9}}]}}\n'
             "source_term is the original-language name; suggested_term is the translated name "
             f"(keep {target_lang} diacritics). "
-            "term_type must be one of: character, location, organization.\n\n"
+            "term_type must be one of: character, creature, location, organization, skill, weapon, "
+            "item, technique, title, other.\n\n"
             f"Subtitles:\n{blob[:6000]}"
         )
         model = getattr(llm, "_resolved_model_id", None)
@@ -294,7 +312,7 @@ async def llm_extract_terms(text: str, target_lang: str = "vi") -> list[dict[str
         return []
 
 
-async def persist_terminology_memory(
+async def persist_detected_terms(
     db: Optional[AsyncSession],
     project_id: str,
     terms: list[dict[str, Any]],
@@ -302,37 +320,17 @@ async def persist_terminology_memory(
     if db is None or not project_id or project_id == "default_project" or not terms:
         return 0
     saved = 0
-    for item in filter_proper_names(terms):
-        stmt = select(ProjectTerminologyMemory).where(
-            ProjectTerminologyMemory.project_id == project_id,
-            ProjectTerminologyMemory.source_term == item["source_term"],
+    for item in filter_terminology(terms):
+        await create_glossary_entry(
+            db,
+            project_id,
+            item["source_term"],
+            item["suggested_term"],
+            item["term_type"],
+            confidence=item["confidence"],
+            source_context=item.get("source_context"),
         )
-        res = await db.execute(stmt)
-        row = res.scalars().first()
-        if not row:
-            row = ProjectTerminologyMemory(
-                id=str(uuid.uuid4()),
-                project_id=project_id,
-                source_term=item["source_term"],
-                suggested_term=item["suggested_term"],
-                term_type=item["term_type"],
-                confidence=item["confidence"],
-                needs_review=False,
-                source_context=item.get("source_context"),
-            )
-            db.add(row)
-            saved += 1
-        else:
-            if item["suggested_term"] and item["suggested_term"] != item["source_term"]:
-                row.suggested_term = item["suggested_term"]
-            row.term_type = item["term_type"] or row.term_type
-            row.confidence = max(row.confidence or 0, item["confidence"])
-            saved += 1
-    try:
-        await db.commit()
-    except Exception:
-        await db.rollback()
-        raise
+        saved += 1
     return saved
 
 
@@ -370,9 +368,18 @@ async def extract_and_persist_from_segments(
             project_id=project_id,
         )
         return 0
-    heuristic = filter_proper_names(heuristic_extract_terms(blob, target_lang))
-    llm_terms = filter_proper_names(await llm_extract_terms(blob, target_lang))
+    heuristic = filter_terminology(heuristic_extract_terms(blob, target_lang))
+    llm_terms = filter_terminology(await llm_extract_terms(blob, target_lang))
     llm_keys = {t["source_term"].casefold() for t in llm_terms}
+    heuristic = [
+        item
+        for item in heuristic
+        if not (
+            _CJK_RUN_RE.fullmatch(item["source_term"])
+            and item["source_term"] == item["suggested_term"]
+            and str(target_lang).lower() not in {"zh", "chinese"}
+        )
+    ]
     merged = llm_terms + [t for t in heuristic if t["source_term"].casefold() not in llm_keys]
     logger.info(
         "Terminology extract merged terms",
@@ -382,7 +389,7 @@ async def extract_and_persist_from_segments(
         llm=len(llm_terms),
         blob_chars=len(blob),
     )
-    return await persist_terminology_memory(db, project_id, merged)
+    return await persist_detected_terms(db, project_id, merged)
 
 
 def transcript_blob(ctx: Any) -> str:
