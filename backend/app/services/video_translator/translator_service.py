@@ -206,6 +206,7 @@ def validate_and_clean_timeline_segments(
             "start_time": round(st, 2),
             "end_time": round(et, 2),
             "text": txt,
+            "speaker_id": str(seg.get("speaker_id") or seg.get("speaker") or f"UNRESOLVED_{len(cleaned_segments) + 1:04d}"),
         })
 
     if not cleaned_segments:
@@ -597,6 +598,7 @@ async def transcribe_audio_with_gemini(
                                         "start_time": st,
                                         "end_time": et,
                                         "text": txt,
+                                        "speaker_id": str(s.get("speaker_id") or s.get("speaker") or f"UNRESOLVED_{len(all_segments) + 1:04d}"),
                                     })
                     else:
                         # Non-200 response — raise structured PipelineError
@@ -1327,8 +1329,10 @@ async def render_dubbed_video(
             )
         segment_dicts.append({
             "number": s.segment_number,
-            "start_time": s.start_time,
-            "end_time": s.end_time,
+            "start_time": s.scheduled_start if s.scheduled_start is not None else s.start_time,
+            "end_time": s.scheduled_end if s.scheduled_end is not None else s.end_time,
+            "voice_id": s.voice_id,
+            "schedule_action": s.schedule_action,
             "audio_path": s.synced_audio_path or s.tts_audio_path,
         })
 

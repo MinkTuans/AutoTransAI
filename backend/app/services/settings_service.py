@@ -39,6 +39,12 @@ DEFAULT_SYSTEM_SETTINGS = {
     "default_source_language": "auto",
     "default_target_language": "vi",
     "default_tts_voice": "vi-VN-HoaiMyNeural",
+    "character_mapping_confidence_threshold": "0.85",
+    "character_scene_proximity_seconds": "1.0",
+    "scheduler_small_overlap_seconds": "0.25",
+    "scheduler_max_reschedule_seconds": "3.0",
+    "scheduler_max_tempo": "1.85",
+    "scheduler_ducking_gain": "0.45",
     "default_video_provider": "kling",
     # Social Strategy
     "social_account_strategy": "priority",

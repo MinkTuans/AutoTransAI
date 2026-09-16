@@ -524,3 +524,11 @@
 - `.env.example`
 - `PROJECT_KNOWLEDGE_BASE.md`
 - `CHANGELOG_AI.md`
+# Character Voice Mapping and Timeline Scheduling (2026-09-16)
+- Added persistent `CharacterVoiceProfile` and provider-neutral `VoicePoolEntry`; extended existing `SpeakerVoiceMapping` without removing legacy API fields.
+- Preserved STT speaker metadata and immutable source timeline fields on translation segments.
+- Added whole-transcript conservative Character Mapping, project profile reuse, voice conflict validation, and a `needs_review` gate that also applies when translation auto-confirm is enabled.
+- Added per-segment TTS provider/voice selection, FFprobe-measured TTS duration, bounded overlap-aware scheduling, same-voice serialization, supporting-character ducking, and PCM same-voice overlap rejection.
+- Added Character/Voice review, validation, confirm/resume, profile, and voice-pool APIs plus Studio review fields and controls.
+- Added Alembic revision `20260916_character_voice_timeline` and focused schema/STT/mapping/assignment/scheduler/backward-compatibility tests.
+- Verification: 30 focused backend tests passed; legacy `/voice-map` real-SQLite integration test passed; frontend production build passed. Full backend suite: 262 passed, 7 skipped, 1 pre-existing preflight seed failure (`AI_MODEL_NOT_FOUND`). The historical clean Alembic chain also fails before the new revision because the initial migration lacks `video_translation_jobs` expected by `20260822_sync_schema`. A real three-speaker video mux could not run in this Linux environment because the `ffmpeg` executable is absent; scheduler and PCM behavior remain covered by generated-WAV/unit tests.

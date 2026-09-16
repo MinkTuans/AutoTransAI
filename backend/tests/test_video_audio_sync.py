@@ -20,6 +20,18 @@ from app.services.video_translator.sync_service import (
 )
 
 
+def test_pcm_timeline_rejects_same_voice_overlap(tmp_path):
+    with pytest.raises(ValueError, match="SAME_VOICE_OVERLAP"):
+        VideoAudioSyncService.build_dubbed_audio_timeline(
+            [
+                {"number": 1, "start_time": 0.0, "end_time": 2.0, "voice_id": "same"},
+                {"number": 2, "start_time": 1.0, "end_time": 3.0, "voice_id": "same"},
+            ],
+            4.0,
+            tmp_path / "same-voice.wav",
+        )
+
+
 def create_dummy_wav(path: Path, duration_sec: float = 2.0, freq: float = 440.0):
     """Generate a valid 44.1kHz 16-bit stereo PCM WAV file with a sine wave tone."""
     path.parent.mkdir(parents=True, exist_ok=True)

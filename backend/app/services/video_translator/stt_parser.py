@@ -219,7 +219,7 @@ def _normalize_stt_schema(obj: Any, chunk_dur: float = 0.0, default_lang: str = 
 
     norm_segments: List[Dict[str, Any]] = []
     if isinstance(raw_segments, list):
-        for s in raw_segments:
+        for segment_index, s in enumerate(raw_segments, start=1):
             if isinstance(s, dict):
                 txt = ""
                 for txt_key in ["text", "content", "transcript", "sentence", "val", "line"]:
@@ -248,16 +248,22 @@ def _normalize_stt_schema(obj: Any, chunk_dur: float = 0.0, default_lang: str = 
                         except (ValueError, TypeError):
                             pass
 
+                speaker_id = next(
+                    (str(s[key]).strip() for key in ("speaker_id", "speaker", "speaker_label", "speaker_tag", "diarization_label") if s.get(key) is not None and str(s[key]).strip()),
+                    f"UNRESOLVED_{segment_index:04d}",
+                )
                 norm_segments.append({
                     "start_time": max(0.0, st),
                     "end_time": max(st + 0.1, et),
                     "text": txt,
+                    "speaker_id": speaker_id,
                 })
             elif isinstance(s, str) and s.strip():
                 norm_segments.append({
                     "start_time": 0.0,
                     "end_time": chunk_dur or 4.0,
                     "text": s.strip(),
+                    "speaker_id": f"UNRESOLVED_{segment_index:04d}",
                 })
 
     return {

@@ -1086,6 +1086,31 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     setSegments(prev => prev.map(s => s.id === segmentId ? { ...s, translated_text: text } : s));
   };
 
+  const handleSegmentFieldChange = (segmentId, field, value) => {
+    setSegments(prev => prev.map(s => s.id === segmentId ? { ...s, [field]: value } : s));
+  };
+
+  const handleValidateAndResumeCharacterVoices = async () => {
+    const reviewSegments = segments.filter(s => s.speaker_id);
+    await videoTranslatorApi.updateCharacterVoiceReview(job.id, {
+      mappings: reviewSegments.map(s => ({
+        speaker_id: s.speaker_id,
+        character_id: s.character_id || `character-${s.speaker_id.toLowerCase()}`,
+        character_name: s.character_name || s.character_id || s.speaker_id,
+        gender: s.gender || 'unknown', role: s.role || 'supporting',
+        voice_provider: s.voice_provider || audioProviderId,
+        voice_id: s.voice_id || voiceId,
+      })),
+    });
+    const validation = await videoTranslatorApi.validateCharacterVoiceReview(job.id);
+    if (!validation.data?.passed) {
+      setPipelineError(`Character/Voice chưa hợp lệ: ${(validation.data?.issues || []).map(i => i.reason).join(', ')}`);
+      return;
+    }
+    await videoTranslatorApi.confirmCharacterVoiceReview(job.id);
+    setIsProcessing(true);
+  };
+
   const handleRenderFinalVideo = async () => {
     if (!activeJobId) return;
     setIsProcessing(true);
@@ -1776,6 +1801,15 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                 <div style={{ fontSize: '12px', color: '#cbd5e1', marginBottom: '6px', fontStyle: 'italic' }}>
                   Gốc ({job.detected_language || 'Auto'}): "{seg.original_text}"
                 </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '6px', marginBottom: '8px', fontSize: '11px' }}>
+                  <label>Speaker<input value={seg.speaker_id || ''} readOnly style={{ width: '100%' }} /></label>
+                  <label>Character<input value={seg.character_id || ''} onChange={(e) => handleSegmentFieldChange(seg.id, 'character_id', e.target.value)} style={{ width: '100%' }} /></label>
+                  <label>Provider<input value={seg.voice_provider || ''} onChange={(e) => handleSegmentFieldChange(seg.id, 'voice_provider', e.target.value)} style={{ width: '100%' }} /></label>
+                  <label>Voice<input value={seg.voice_id || ''} onChange={(e) => handleSegmentFieldChange(seg.id, 'voice_id', e.target.value)} style={{ width: '100%' }} /></label>
+                </div>
+                <div style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '6px' }}>
+                  Confidence: {Math.round((seg.confidence || 0) * 100)}% · Conflict: {(seg.overlap_with || []).join(', ') || 'None'} · Original: {formatTime(seg.original_start ?? seg.start_time)}–{formatTime(seg.original_end ?? seg.end_time)} · Scheduled: {seg.scheduled_start == null ? 'Pending' : `${formatTime(seg.scheduled_start)}–${formatTime(seg.scheduled_end)}`} · Action: {seg.schedule_action || 'Pending'}
+                </div>
                 <div>
                   <textarea
                     rows={2}
@@ -1814,6 +1848,11 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
               }}
             >
               🎙️ Xác Nhận Bản Dịch & Render Video Lồng Tiếng
+            </button>
+          )}
+          {job.status === 'needs_review' && (
+            <button onClick={handleValidateAndResumeCharacterVoices} disabled={isProcessing} style={{ marginTop: '16px', width: '100%', padding: '12px', borderRadius: '8px', background: '#d97706', color: '#fff', fontWeight: 'bold', border: 'none' }}>
+              Validate Character/Voice & Resume TTS
             </button>
           )}
         </div>
@@ -2206,4 +2245,3 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     </div>
   );
 }
-

@@ -92,6 +92,16 @@ The central engine (`app.workflow.workflow_engine.WorkflowEngine`) orchestrates 
   - All AI Model resolutions log diagnostic details: capability, selected provider, selected model ID, model name, resolution source, and fallback status.
 
 ### Gemini STT Robust Parsing & Resilient Pipeline Architecture
+
+### Character Voice Profiles & Post-TTS Scheduling
+- Production integration remains in `app/api/routes/video_translator.py`; no parallel pipeline was introduced.
+- STT segments preserve upstream `speaker_id`/speaker labels. Missing diarization becomes a distinct `UNRESOLVED_####` speaker so uncertain speakers are never merged automatically.
+- `SpeakerVoiceMapping` remains backward-compatible and links project speakers to `CharacterVoiceProfile`, the authoritative project-scoped provider/voice assignment reused across episodes.
+- `VoicePoolEntry` inventories voices independently of Character Mapping. EdgeTTS preferences are `vi-VN-NamMinhNeural` for main male and `vi-VN-HoaiMyNeural` for main female.
+- Character Mapping runs after translation. Low confidence or voice conflicts set the job to `needs_review`; `auto_confirm_translation` cannot bypass this gate.
+- Segment source timestamps are copied to `original_start/original_end` and never replaced by TTS timing. Measured `tts_duration` feeds `timeline_scheduler.py`, which writes `scheduled_start/scheduled_end`, overlap metadata, and a stable schedule action.
+- Small different-voice overlaps may remain; same-voice overlaps are serialized. Bounded scheduling returns `cannot_fit` and review instead of extending indefinitely. PCM assembly rejects any same-voice overlap that escapes scheduling.
+- Review APIs under `/api/video-translator/jobs/{job_id}/character-voice-review` allow edit, validate, and confirm/resume. `/projects/{project_id}/character-profiles` and `/voice-pool` expose persistent profiles and available voices. Existing `/voice-map` keys and payloads remain supported.
 - **Multi-Stage Response Parsing (`app.services.video_translator.stt_parser`)**:
   - `parse_gemini_stt_response` processes raw Gemini API responses through 6 sequential fallback stages:
     1. Strict JSON parsing (`json.loads`).
@@ -135,4 +145,3 @@ The central engine (`app.workflow.workflow_engine.WorkflowEngine`) orchestrates 
 - **Unused Directory & Model Cleanup**: Removed obsolete directories `PIPER_MODELS/` (offline TTS experiment), `mdx_models/` (245MB legacy UVR/MDX ONNX models), `scratch/` (temporary test scripts), `docs/` & `PROJECT_KNOWLEDGE_BASE.docx`, and `data/r2_storage/`.
 - **Frontend Asset Optimization**: Removed unused starter assets (`hero.png`, `typescript.svg`, `favicon.svg`, `icons.svg`).
 - **Backend Dependency & Code Hygiene**: Removed `asyncpg` dependency from `requirements.txt`, removed legacy Postgres string replacement in `database.py`, removed duplicate imports in `main.py`, removed unused imports in `projects.py` and `video_translator.py`, and deleted obsolete scripts (`apply_db_schema.py`, `init_mysql_db.py`).
-

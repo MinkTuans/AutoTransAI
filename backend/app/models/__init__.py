@@ -33,6 +33,8 @@ from app.models.workflow_engine import (
     ProjectGlossary,
     ProjectTerminologyMemory,
     SpeakerVoiceMapping,
+    CharacterVoiceProfile,
+    VoicePoolEntry,
     WorkflowExecution,
     WorkflowStageExecution,
     WorkflowStepExecution,
@@ -72,6 +74,8 @@ __all__ = [
     "ProjectGlossary",
     "ProjectTerminologyMemory",
     "SpeakerVoiceMapping",
+    "CharacterVoiceProfile",
+    "VoicePoolEntry",
     "WorkflowExecution",
     "WorkflowStageExecution",
     "WorkflowStepExecution",
@@ -83,7 +87,6 @@ __all__ = [
     "AIModel",
     "SocialAccount",
 ]
-
 
 
 

@@ -958,17 +958,47 @@ async def start_translation_pipeline(
                     )
                     bg_session.expire(b_job, ["segments"])
 
+                    created_segment_rows = []
                     for seg in translated_segs:
                         db_seg = VideoTranslationSegment(
                             job_id=job_id,
                             segment_number=seg["number"],
                             start_time=seg["start_time"],
                             end_time=seg["end_time"],
+                            original_start=seg["start_time"],
+                            original_end=seg["end_time"],
+                            speaker_id=seg.get("speaker_id") or f"UNRESOLVED_{seg['number']:04d}",
                             original_text=seg["text"],
                             translated_text=seg.get("translated_text", seg["text"]),
                             status="translated",
                         )
                         bg_session.add(db_seg)
+                        created_segment_rows.append(db_seg)
+
+                    await bg_session.flush()
+                    from app.services.video_translator.character_mapping_service import map_and_persist
+                    from app.services.video_translator.voice_assignment_service import assign_project_voices
+                    llm = get_registry().get_llm(b_job.llm_provider_id or "gemini")
+                    mapping_result = await map_and_persist(bg_session, b_job.project_id, translated_segs, llm)
+                    segment_rows = created_segment_rows
+                    for row, source in zip(segment_rows, translated_segs):
+                        decision = mapping_result.by_speaker[source.get("speaker_id") or row.speaker_id]
+                        row.character_id = decision["character_id"]
+                        row.mapping_confidence = decision["confidence"]
+                    voice_result = await assign_project_voices(
+                        bg_session,
+                        b_job.project_id,
+                        [{
+                            "character_id": row.character_id,
+                            "original_start": row.original_start,
+                            "original_end": row.original_end,
+                        } for row in segment_rows],
+                    )
+                    for row in segment_rows:
+                        assignment = voice_result.assignments.get(row.character_id, {})
+                        row.voice_provider = assignment.get("voice_provider")
+                        row.voice_id = assignment.get("voice_id")
+                    character_voice_needs_review = mapping_result.requires_review or voice_result.requires_review
 
                     try:
                         from app.services.terminology_memory import extract_and_persist_from_segments
@@ -1009,7 +1039,14 @@ async def start_translation_pipeline(
                     b_job.last_checkpoint_at = now_dt
 
                     should_launch_render = False
-                    if auto_confirm:
+                    if character_voice_needs_review:
+                        b_job.status = TranslationJobStatus.NEEDS_REVIEW.value
+                        b_job.stage = "CHARACTER_VOICE_REVIEW"
+                        b_job.current_step = "Cần kiểm tra Character / Voice trước TTS"
+                        b_job.studio_state_json = json.dumps({"active_step": "character_voice_review", "active_tab": "editor"})
+                        await bg_session.commit()
+                        stop_job_heartbeat(job_id)
+                    elif auto_confirm:
                         for db_seg in bg_session.new:
                             if isinstance(db_seg, VideoTranslationSegment):
                                 db_seg.status = "confirmed"
@@ -1201,6 +1238,7 @@ async def get_translation_job(
         TranslationJobStatus.SEGMENT_EDITING.value,
         "segment_editing",
         TranslationJobStatus.COPYRIGHT_HOLD.value,
+        TranslationJobStatus.NEEDS_REVIEW.value,
         "copyright_hold",
     ]
     heartbeat_active = (not is_terminal) and (hb_age_sec <= 30)
@@ -1310,6 +1348,18 @@ async def get_translation_job(
                     "original_text": s.original_text,
                     "translated_text": s.translated_text,
                     "status": s.status,
+                    "speaker_id": s.speaker_id,
+                    "character_id": s.character_id,
+                    "voice_provider": s.voice_provider,
+                    "voice_id": s.voice_id,
+                    "confidence": s.mapping_confidence,
+                    "original_start": s.original_start if s.original_start is not None else s.start_time,
+                    "original_end": s.original_end if s.original_end is not None else s.end_time,
+                    "scheduled_start": s.scheduled_start,
+                    "scheduled_end": s.scheduled_end,
+                    "tts_duration": s.tts_duration,
+                    "overlap_with": s.overlap_with or [],
+                    "schedule_action": s.schedule_action,
                 }
                 for s in segments
             ],
@@ -1746,6 +1796,12 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                     "tts_audio_path": s.tts_audio_path,
                     "tts_audio_duration": s.tts_audio_duration or 0.0,
                     "synced_audio_path": s.synced_audio_path,
+                    "speaker_id": s.speaker_id,
+                    "character_id": s.character_id,
+                    "voice_provider": s.voice_provider,
+                    "voice_id": s.voice_id,
+                    "original_start": s.original_start if s.original_start is not None else s.start_time,
+                    "original_end": s.original_end if s.original_end is not None else s.end_time,
                 }
                 for s in raw_segments
             ]
@@ -1806,9 +1862,10 @@ async def execute_job_render_pipeline(job_id: str) -> None:
             try:
                 reused = seg_tts_path.exists() and seg_tts_path.stat().st_size > 0
                 if not reused:
-                    res = await audio_provider.generate_audio(
+                    segment_provider = registry.get_audio(seg.get("voice_provider") or audio_provider_id) or audio_provider
+                    res = await segment_provider.generate_audio(
                         text=seg["translated_text"] or "",
-                        voice_id=voice_id,
+                        voice_id=seg.get("voice_id") or voice_id,
                         output_path=seg_tts_path,
                     )
                     if not res.success or not seg_tts_path.exists():
@@ -1823,6 +1880,7 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                     dur = await probe_duration_async(seg_tts_path)
                     seg["tts_audio_path"] = str(seg_tts_path)
                     seg["tts_audio_duration"] = dur
+                    seg["tts_duration"] = dur
                     seg["status"] = "tts_completed"
             except Exception as tts_err:
                 logger.warning(f"[VIDEO-SYNC] TTS exception for Segment #{seg['segment_number']}: {str(tts_err)}")
@@ -1840,6 +1898,7 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                     .values(
                         tts_audio_path=seg["tts_audio_path"],
                         tts_audio_duration=seg["tts_audio_duration"],
+                        tts_duration=seg.get("tts_duration", 0.0),
                         status=seg["status"],
                     )
                 )
@@ -1858,6 +1917,25 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                     )
                 )
                 await step_session.commit()
+
+        from app.services.video_translator.timeline_scheduler import SchedulePolicy, schedule_segments
+        schedule_result = schedule_segments(segments_data, float(b_asset.duration or await probe_duration_async(asset_file_path)), SchedulePolicy())
+        async with async_session_factory() as schedule_session:
+            for scheduled in schedule_result.segments:
+                seg = next(item for item in segments_data if item["id"] == scheduled["id"])
+                seg.update(scheduled)
+                await schedule_session.execute(update(VideoTranslationSegment).where(VideoTranslationSegment.id == seg["id"]).values(
+                    scheduled_start=seg["scheduled_start"], scheduled_end=seg["scheduled_end"],
+                    overlap_with=seg["overlap_with"], schedule_action=seg["schedule_action"],
+                ))
+            if schedule_result.requires_review:
+                await schedule_session.execute(update(VideoTranslationJob).where(VideoTranslationJob.id == job_id).values(
+                    status=TranslationJobStatus.NEEDS_REVIEW.value, stage="AUDIO_SCHEDULE_REVIEW",
+                    current_step="Không thể xếp lịch TTS an toàn; cần kiểm tra thủ công",
+                ))
+            await schedule_session.commit()
+        if schedule_result.requires_review:
+            return
 
         # Step 2: Audio Synchronization Stage
         current_stage = "SYNCING_AUDIO"
@@ -1881,7 +1959,7 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                 logger.info(f"[JOB-CANCEL] Job {job_id} cancelled during Audio Sync. Stopping pipeline.")
                 return
 
-            target_dur = max(1.0, seg["end_time"] - seg["start_time"])
+            target_dur = max(0.1, seg["scheduled_end"] - seg["scheduled_start"])
             synced_path = sync_dir / f"seg_{seg['segment_number']:03d}_synced.wav"
 
             def on_sync_progress(stats: dict):
@@ -2208,6 +2286,8 @@ from app.models.workflow_engine import (
     ProjectGlossary,
     ProjectTerminologyMemory,
     SpeakerVoiceMapping,
+    CharacterVoiceProfile,
+    VoicePoolEntry,
     WorkflowExecution,
     WorkflowStageExecution,
     WorkflowStepExecution,
@@ -2826,6 +2906,8 @@ class VoiceMapPayload(BaseModel):
     speaker_name: Optional[str] = Field(None, description="Display name for speaker")
     voice_provider: str = Field("edge", description="edge, google, elevenlabs")
     voice_id: str = Field(..., description="Voice identifier e.g. vi-VN-HoaiMyNeural")
+    character_id: Optional[str] = None
+    confidence: Optional[float] = None
 
 
 @router.get("/projects/{project_id}/voice-map", response_model=dict)
@@ -2843,6 +2925,9 @@ async def get_speaker_voice_map_api(project_id: str, session: AsyncSession = Dep
                 "speaker_name": m.speaker_name,
                 "voice_provider": m.voice_provider,
                 "voice_id": m.voice_id,
+                "character_id": m.character_id,
+                "confidence": m.confidence,
+                "needs_review": m.needs_review,
             }
             for m in mappings
         ],
@@ -2869,13 +2954,122 @@ async def save_speaker_voice_map_api(
             speaker_name=payload.speaker_name or payload.speaker_id,
             voice_provider=payload.voice_provider,
             voice_id=payload.voice_id,
+            character_id=payload.character_id,
+            confidence=payload.confidence or 0.0,
         )
         session.add(mapping)
     else:
         mapping.speaker_name = payload.speaker_name or payload.speaker_id
         mapping.voice_provider = payload.voice_provider
         mapping.voice_id = payload.voice_id
+        if payload.character_id is not None:
+            mapping.character_id = payload.character_id
+        if payload.confidence is not None:
+            mapping.confidence = payload.confidence
 
     await session.commit()
     return {"success": True, "data": {"id": mapping.id, "speaker_id": mapping.speaker_id}}
 
+
+class CharacterVoiceEdit(BaseModel):
+    speaker_id: str
+    character_id: str
+    character_name: Optional[str] = None
+    gender: str = "unknown"
+    role: str = "supporting"
+    voice_provider: str
+    voice_id: str
+
+
+class CharacterVoiceReviewUpdate(BaseModel):
+    mappings: List[CharacterVoiceEdit]
+
+
+async def _character_voice_review_data(job_id: str, session: AsyncSession) -> dict:
+    job = (await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))).scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    rows = (await session.execute(select(VideoTranslationSegment).where(VideoTranslationSegment.job_id == job_id).order_by(VideoTranslationSegment.segment_number))).scalars().all()
+    return {"job_id": job_id, "status": job.status, "passed": job.status != TranslationJobStatus.NEEDS_REVIEW.value, "segments": [{
+        "id": row.id, "speaker_id": row.speaker_id, "character_id": row.character_id,
+        "voice_provider": row.voice_provider, "voice_id": row.voice_id,
+        "confidence": row.mapping_confidence, "conflict": row.overlap_with or [],
+        "original_start": row.original_start, "original_end": row.original_end,
+        "scheduled_start": row.scheduled_start, "scheduled_end": row.scheduled_end,
+        "schedule_action": row.schedule_action,
+    } for row in rows]}
+
+
+@router.get("/jobs/{job_id}/character-voice-review")
+async def get_character_voice_review(job_id: str, session: AsyncSession = Depends(get_session)):
+    return {"success": True, "data": await _character_voice_review_data(job_id, session)}
+
+
+@router.put("/jobs/{job_id}/character-voice-review")
+async def update_character_voice_review(job_id: str, body: CharacterVoiceReviewUpdate, session: AsyncSession = Depends(get_session)):
+    job = (await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))).scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    for item in body.mappings:
+        profile = (await session.execute(select(CharacterVoiceProfile).where(CharacterVoiceProfile.project_id == job.project_id, CharacterVoiceProfile.character_id == item.character_id))).scalar_one_or_none()
+        if not profile:
+            profile = CharacterVoiceProfile(id=str(uuid.uuid4()), project_id=job.project_id, character_id=item.character_id, name=item.character_name or item.character_id)
+            session.add(profile)
+        profile.gender, profile.role = item.gender, item.role
+        profile.voice_provider, profile.voice_id = item.voice_provider, item.voice_id
+        await session.execute(update(VideoTranslationSegment).where(VideoTranslationSegment.job_id == job_id, VideoTranslationSegment.speaker_id == item.speaker_id).values(character_id=item.character_id, voice_provider=item.voice_provider, voice_id=item.voice_id))
+        mapping = (await session.execute(select(SpeakerVoiceMapping).where(SpeakerVoiceMapping.project_id == job.project_id, SpeakerVoiceMapping.speaker_id == item.speaker_id))).scalar_one_or_none()
+        if mapping:
+            mapping.character_id, mapping.voice_provider, mapping.voice_id = item.character_id, item.voice_provider, item.voice_id
+            mapping.needs_review = False
+    await session.commit()
+    return {"success": True, "data": await _character_voice_review_data(job_id, session)}
+
+
+@router.post("/jobs/{job_id}/character-voice-review/validate")
+async def validate_character_voice_review(job_id: str, session: AsyncSession = Depends(get_session)):
+    data = await _character_voice_review_data(job_id, session)
+    missing = [s["id"] for s in data["segments"] if not s["character_id"] or not s["voice_id"]]
+    issues = [{"reason": "missing_assignment", "segment_ids": missing}] if missing else []
+    ordered = sorted(data["segments"], key=lambda s: s["original_start"] or 0)
+    for index, left in enumerate(ordered):
+        for right in ordered[index + 1:]:
+            if (right["original_start"] or 0) >= (left["original_end"] or 0):
+                break
+            if left["character_id"] != right["character_id"] and left["voice_id"] == right["voice_id"]:
+                issues.append({"reason": "voice_conflict", "segment_ids": [left["id"], right["id"]]})
+    return {"success": True, "data": {**data, "passed": not issues, "issues": issues}}
+
+
+@router.post("/jobs/{job_id}/character-voice-review/confirm-resume")
+async def confirm_character_voice_review(job_id: str, background_tasks: BackgroundTasks, session: AsyncSession = Depends(get_session)):
+    validation = await validate_character_voice_review(job_id, session)
+    if not validation["data"]["passed"]:
+        raise HTTPException(status_code=409, detail=validation["data"])
+    job = (await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))).scalar_one()
+    profiles = (await session.execute(select(CharacterVoiceProfile).where(CharacterVoiceProfile.project_id == job.project_id))).scalars().all()
+    for profile in profiles:
+        profile.confirmed_by_user = True
+    job.status, job.stage = TranslationJobStatus.GENERATING_TTS.value, "DUB"
+    await session.commit()
+    background_tasks.add_task(execute_job_render_pipeline, job_id)
+    return {"success": True, "data": {"job_id": job_id, "resumed": True}}
+
+
+@router.get("/projects/{project_id}/character-profiles")
+async def list_character_profiles(project_id: str, session: AsyncSession = Depends(get_session)):
+    rows = (await session.execute(select(CharacterVoiceProfile).where(CharacterVoiceProfile.project_id == project_id))).scalars().all()
+    return {"success": True, "data": [{"character_id": r.character_id, "name": r.name, "gender": r.gender, "role": r.role, "voice_provider": r.voice_provider, "voice_id": r.voice_id, "confirmed_by_user": r.confirmed_by_user} for r in rows]}
+
+
+@router.get("/voice-pool")
+async def list_voice_pool(provider: Optional[str] = None, language: Optional[str] = None, gender: Optional[str] = None, session: AsyncSession = Depends(get_session)):
+    stmt = select(VoicePoolEntry).where(VoicePoolEntry.enabled.is_(True))
+    if provider:
+        stmt = stmt.where(VoicePoolEntry.provider == provider)
+    if language:
+        stmt = stmt.where(VoicePoolEntry.language == language)
+    if gender:
+        stmt = stmt.where(VoicePoolEntry.gender == gender)
+    rows = (await session.execute(stmt)).scalars().all()
+    return {"success": True, "data": [{"provider": r.provider, "language": r.language, "gender": r.gender, "voice_id": r.voice_id, "name": r.display_name} for r in rows]}

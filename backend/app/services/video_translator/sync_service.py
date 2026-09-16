@@ -172,6 +172,15 @@ class VideoAudioSyncService:
         # Sort segments by start time
         sorted_segments = sorted(segments, key=lambda s: s.get("start_time", 0.0))
 
+        for pos, left in enumerate(sorted_segments):
+            for right in sorted_segments[pos + 1:]:
+                if float(right.get("start_time", 0.0)) >= float(left.get("end_time", 0.0)):
+                    break
+                if left.get("voice_id") and left.get("voice_id") == right.get("voice_id"):
+                    raise ValueError(
+                        f"SAME_VOICE_OVERLAP: segments {left.get('number')} and {right.get('number')} use {left.get('voice_id')}"
+                    )
+
         last_end_frame = 0
 
         for idx, seg in enumerate(sorted_segments):
@@ -236,6 +245,10 @@ class VideoAudioSyncService:
 
             seg_num_frames = len(seg_pcm_bytes) // BYTES_PER_FRAME
             seg_audio_duration = seg_num_frames / SAMPLE_RATE
+            gain = float(seg.get("gain", 0.45 if seg.get("schedule_action") == "ducked_supporting" else 1.0))
+            if gain != 1.0 and seg_pcm_bytes:
+                samples = struct.unpack(f"<{len(seg_pcm_bytes) // 2}h", seg_pcm_bytes)
+                seg_pcm_bytes = bytearray(struct.pack(f"<{len(samples)}h", *(max(-32768, min(32767, int(sample * gain))) for sample in samples)))
 
             start_byte = start_frame * BYTES_PER_FRAME
             end_byte = min(total_bytes, start_byte + len(seg_pcm_bytes))

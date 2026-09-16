@@ -6,7 +6,7 @@ import enum
 from datetime import datetime, timezone
 from typing import Optional, Any
 
-from sqlalchemy import String, Text, DateTime, Boolean, Float, Integer, ForeignKey, JSON
+from sqlalchemy import String, Text, DateTime, Boolean, Float, Integer, ForeignKey, JSON, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -104,6 +104,9 @@ class SpeakerVoiceMapping(Base):
     voice_provider: Mapped[str] = mapped_column(String(50), default="edge")  # edge, google, elevenlabs
     voice_id: Mapped[str] = mapped_column(String(100), nullable=False)
     voice_settings: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    character_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
@@ -113,6 +116,41 @@ class SpeakerVoiceMapping(Base):
         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
         onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
     )
+
+class CharacterVoiceProfile(Base):
+    """Authoritative voice assignment for one character within a project."""
+    __tablename__ = "character_voice_profiles"
+    __table_args__ = (UniqueConstraint("project_id", "character_id", name="uq_character_profile_project_character"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    character_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    gender: Mapped[str] = mapped_column(String(20), default="unknown")
+    role: Mapped[str] = mapped_column(String(20), default="supporting")
+    voice_provider: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    voice_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    mapping_confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    confirmed_by_user: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+
+
+class VoicePoolEntry(Base):
+    """Provider-neutral inventory of voices eligible for character assignment."""
+    __tablename__ = "voice_pool_entries"
+    __table_args__ = (UniqueConstraint("provider", "voice_id", name="uq_voice_pool_provider_voice"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    language: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    gender: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    voice_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    provider_metadata: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 class WorkflowExecution(Base):

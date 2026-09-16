@@ -44,6 +44,8 @@ class WorkflowContext:
     tts_voice_id: str = "vi-VN-HoaiMyNeural"
     dubbed_audio_path: Optional[str] = None
     audio_segments_info: list[dict[str, Any]] = field(default_factory=list)
+    character_voice_requires_review: bool = False
+    character_voice_issues: list[dict[str, Any]] = field(default_factory=list)
 
     # Production & Watermark
     subtitle_files: dict[str, str] = field(default_factory=dict)  # srt, ass, vtt paths

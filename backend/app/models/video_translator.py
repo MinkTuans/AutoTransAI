@@ -11,7 +11,7 @@ import enum
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Integer, String, Text, Float, Boolean, DateTime, ForeignKey
+from sqlalchemy import Integer, String, Text, Float, Boolean, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -37,6 +37,7 @@ class TranslationJobStatus(str, enum.Enum):
     RENDERING = "rendering"
     COMPLETED = "completed"
     FAILED = "failed"
+    NEEDS_REVIEW = "needs_review"
 
 
 class AudioMixMode(str, enum.Enum):
@@ -179,6 +180,18 @@ class VideoTranslationSegment(Base):
     tts_audio_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     tts_audio_duration: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     synced_audio_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    speaker_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    character_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    voice_provider: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    voice_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    original_start: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    original_end: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    scheduled_start: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    scheduled_end: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    tts_duration: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    overlap_with: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    schedule_action: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    mapping_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="pending")
 
     # Relationships

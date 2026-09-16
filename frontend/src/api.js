@@ -147,6 +147,12 @@ export const videoTranslatorApi = {
   getTerminologyMemory: (projectId) => api.get(`/video-translator/projects/${projectId}/terminology-memory`).then(res => res.data),
   addTerminologyMemory: (projectId, data) => api.post(`/video-translator/projects/${projectId}/terminology-memory`, data).then(res => res.data),
   deleteTerminologyMemory: (projectId, termId) => api.delete(`/video-translator/projects/${projectId}/terminology-memory/${termId}`).then(res => res.data),
+  getCharacterVoiceReview: (jobId) => api.get(`/video-translator/jobs/${jobId}/character-voice-review`).then(res => res.data),
+  updateCharacterVoiceReview: (jobId, data) => api.put(`/video-translator/jobs/${jobId}/character-voice-review`, data).then(res => res.data),
+  validateCharacterVoiceReview: (jobId) => api.post(`/video-translator/jobs/${jobId}/character-voice-review/validate`).then(res => res.data),
+  confirmCharacterVoiceReview: (jobId) => api.post(`/video-translator/jobs/${jobId}/character-voice-review/confirm-resume`).then(res => res.data),
+  listCharacterProfiles: (projectId) => api.get(`/video-translator/projects/${projectId}/character-profiles`).then(res => res.data),
+  listVoicePool: (params = {}) => api.get('/video-translator/voice-pool', { params }).then(res => res.data),
 };
 
 export const videoEditorApi = {
@@ -212,7 +218,6 @@ export const videoMergerApi = {
   retryJob: (jobId) => api.post(`/video-merger/jobs/${jobId}/retry`).then(res => res.data),
   deleteJob: (jobId) => api.delete(`/video-merger/jobs/${jobId}`).then(res => res.data),
 };
-
 
 
 

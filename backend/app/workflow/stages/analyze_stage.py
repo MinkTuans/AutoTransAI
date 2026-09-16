@@ -95,7 +95,7 @@ class AnalyzeStage:
         # Extract unique speakers if populated by STT
         speaker_ids = set()
         for seg in ctx.source_segments:
-            spk = seg.get("speaker", "SPEAKER_00")
+            spk = seg.get("speaker_id") or seg.get("speaker") or "UNRESOLVED_0001"
             speaker_ids.add(spk)
 
         ctx.speakers = [{"speaker_id": spk, "speaker_name": f"Speaker {spk}"} for spk in sorted(speaker_ids)]
