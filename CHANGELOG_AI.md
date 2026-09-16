@@ -1,3 +1,8 @@
+- **Fail-fast Windows Shortcut launcher with visible startup diagnostics (2026-09-16)**:
+  - **Symptom**: Opening the Shortcut displayed the Vite UI, but project creation and Local Storage tests failed through the proxy because FastAPI had already stopped; `pythonw.exe` and `DEVNULL` hid the traceback.
+  - **Fix**: `app_launcher.py` now logs backend/frontend startup to `data/launcher_logs/`, requires a live launcher-owned backend before starting Vite, requires a live launcher-owned Vite process before opening pywebview, and shows the failed component plus diagnostic detail/log path in a Windows error dialog.
+  - **Process safety**: Removed Uvicorn `--reload`, refuses pre-existing listeners on ports 8000/5173, and removes broad port-owner termination so cleanup only targets child process trees created by this launcher. Added regression tests for readiness/process-exit failure, occupied-port ownership, log setup/capture, backend spawn failure, and reloader exclusion.
+
 - **Project Glossary is the single terminology source of truth (2026-09-16)**:
   - Removed the AI Auto Terminology Memory model, runtime table, endpoints, UI tab, and dual-source translation lookup.
   - AI terminology detection now writes directly through the canonical Glossary service before translation.

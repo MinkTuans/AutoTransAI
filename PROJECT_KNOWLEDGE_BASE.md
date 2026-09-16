@@ -120,6 +120,11 @@ The central engine (`app.workflow.workflow_engine.WorkflowEngine`) orchestrates 
 - Top nav (`Navbar.jsx`): Studio, Ghép Video, Dự án, Cài đặt. Active item is a filled pill.
 - Dashboard lists projects as cards (not a dense table). Settings and Project Detail use a shared pill tab bar.
 
+### Windows Desktop Launcher Reliability
+- The Shortcut path remains `AutoTransAI Studio.lnk` → `AutoTransAi.vbs` → `app_launcher.py`.
+- The launcher starts FastAPI without the development reloader and writes startup output to `data/launcher_logs/backend.log`; Vite output goes to `data/launcher_logs/frontend.log`.
+- Backend `/api/system/health` must return HTTP 200 from the launcher-owned live process before Vite starts, and Vite must return HTTP 200 from its launcher-owned process before pywebview opens. Pre-existing listeners are refused, cleanup targets only child process trees created by this launcher, and startup/log/spawn failures show a Windows error dialog instead of opening a frontend that cannot reach its backend.
+
 ### Frontend Workflow UI Controls & Smart Retry Flow
 - **Button State Machine**:
   - `not_started`, `completed`, `cancelled`, `failed`: Displays only `Start` button.
