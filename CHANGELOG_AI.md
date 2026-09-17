@@ -1,3 +1,37 @@
+- **Fix Smart Retry and `CHARACTER_VOICE_REVIEW` stage mapping alignment (2026-09-17)**:
+  - **Symptom**: When a job completed Phase 1 translation but speaker mapping confidence was low or voice conflicts occurred, the stage stuck on `INGEST` (Stage 1) despite 60% completion. Clicking `Retry` or `Retry Stage` failed to reset/retry the job, leaving the red error `Character/Voice chưa hợp lệ: voice_conflict, voice_conflict` permanently on screen.
+  - **Root Cause**:
+    1. `STAGE_MAP` in `get_workflow_status_api` omitted `"CHARACTER_VOICE_REVIEW"`, causing `STAGE_MAP.get(job.stage)` to fall back to `("INGEST", 1)`.
+    2. `retry_stage_api` checked `job.status in [FAILED, SEGMENT_EDITING, CREATED]` but omitted `NEEDS_REVIEW`, causing retry calls on jobs in `needs_review` to be ignored without restarting the pipeline or clearing `error_message`.
+    3. `assign_voices` and `assign_project_voices` in `voice_assignment_service.py` failed to auto-resolve voice conflicts for unconfirmed speakers when retrying.
+  - **Fix**:
+    1. Mapped `"CHARACTER_VOICE_REVIEW": ("TRANSLATE", 3)` in `STAGE_MAP` and aligned `st_status` in `get_workflow_status_api`.
+    2. Added `TranslationJobStatus.NEEDS_REVIEW.value` to `retry_stage_api` allowed restart statuses.
+    3. Enhanced `assign_voices` to auto-resolve unconfirmed voice conflicts by selecting distinct available pool voices for overlapping speakers.
+  - **Verification**: Verified clean React build (`npm run build` 100% clean) and backend test suite (`pytest` unit/integration tests passed).
+
+- **Enforce Single Cover Photo Selection Mode for Project Default Thumbnails (2026-09-17)**:
+  - **Symptom**: Selecting/uploading default project thumbnails accumulated multiple images in a grid gallery instead of managing 1 single active cover photo.
+  - **Fix**:
+    1. **Backend** (`app/api/routes/thumbnail.py`): Updated `upload_default_thumbnail` to automatically purge previous cover photos in `storage/projects/{id}/default_thumbnails/` before saving the new file, and updated `list_default_thumbnails` to return only the single latest cover photo.
+    2. **Frontend** (`VideoTranslator.jsx` & `api.js`): Replaced multi-thumbnail grid with a clean Single Cover Photo Component (displays single image preview card, image details, `📷 Thay đổi ảnh` replace button, and `🗑️ Xóa ảnh` button, or a single upload dropzone when empty). Added `deleteLibrary` API call.
+  - **Verification**: Verified clean React build (`npm run build` 100% clean) and backend unit tests (`pytest test_workflow_engine.py` 100% pass).
+
+- **Fix `needs_review` state polling reset and unclickable confirm button (2026-09-17)**:
+  - **Symptom**: When a job completed Phase 1 translation but speaker mapping confidence was low or voice conflicts occurred, the backend placed the job into `needs_review` status. However, the confirm button was permanently disabled (`isProcessing = true`) and unclickable, and the Segment Editor card failed to render.
+  - **Root Cause**:
+    1. `VideoTranslator.jsx` status polling omitted `'needs_review'` from the list of terminal/review statuses that call `setIsProcessing(false)`, leaving `isProcessing` stuck as `true`.
+    2. `SegmentEditor` render condition checked `job.status === 'segment_editing'` but omitted `'needs_review'`, hiding the segment editor and character/voice input fields.
+    3. `handleValidateAndResumeCharacterVoices` lacked a `try...catch...finally` wrapper, throwing unhandled exceptions and failing to clear `isProcessing` on validation failure.
+  - **Fix**: Added `'needs_review'` to `setIsProcessing(false)` status checks, included `'needs_review'` in Segment Editor render condition and `WorkflowTimeline` status mappings, wrapped `handleValidateAndResumeCharacterVoices` with `try...catch...finally`, and updated the button label and state handling.
+  - **Verification**: Verified clean React build (`npm run build` 100% clean) and status state flow.
+
+- **Fix Windows Desktop Launcher Frontend Readiness Check Failure (2026-09-17)**:
+  - **Symptom**: App could not be opened via shortcut `run_app.bat` / `AutoTransAI Studio.lnk` because the launcher timed out waiting for Vite frontend readiness (`Frontend exited or did not become ready (exit=None)`).
+  - **Root Cause**: `app_launcher.py` checked readiness by probing `FRONTEND_URL` (`http://127.0.0.1:5173`) over IPv4, but `npx vite --port 5173` without explicit `--host 127.0.0.1` bound only to IPv6 `localhost` (`::1:5173`), causing HTTP connection attempts to `127.0.0.1` to be refused until the readiness check timed out.
+  - **Fix**: Added explicit `--host 127.0.0.1 --port 5173` flags to Vite execution calls in `app_launcher.py`, `app_launcher.ps1`, and `frontend/start_frontend.cmd`.
+  - **Verification**: Verified readiness check with automated test script (`test_launch.py`); both backend and frontend successfully start and pass HTTP 200 health checks.
+
 - **Fail-fast Windows Shortcut launcher with visible startup diagnostics (2026-09-16)**:
   - **Symptom**: Opening the Shortcut displayed the Vite UI, but project creation and Local Storage tests failed through the proxy because FastAPI had already stopped; `pythonw.exe` and `DEVNULL` hid the traceback.
   - **Fix**: `app_launcher.py` now logs backend/frontend startup to `data/launcher_logs/`, requires a live launcher-owned backend before starting Vite, requires a live launcher-owned Vite process before opening pywebview, and shows the failed component plus diagnostic detail/log path in a Windows error dialog.

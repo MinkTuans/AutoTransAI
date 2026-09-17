@@ -2372,6 +2372,7 @@ async def get_workflow_status_api(project_id: str, session: AsyncSession = Depen
         "TRANSLATE": ("TRANSLATE", 3),
         "TRANSLATING": ("TRANSLATE", 3),
         "SEGMENT_EDITING": ("TRANSLATE", 3),
+        "CHARACTER_VOICE_REVIEW": ("TRANSLATE", 3),
         "DUB": ("DUB", 4),
         "GENERATING_TTS": ("DUB", 4),
         "SYNTHESIZING": ("DUB", 4),
@@ -2402,7 +2403,7 @@ async def get_workflow_status_api(project_id: str, session: AsyncSession = Depen
             elif idx == cur_stage_idx:
                 if job.status == "failed":
                     st_status = "failed"
-                elif job.status == "segment_editing":
+                elif job.status in ["segment_editing", "needs_review"]:
                     st_status = "needs_review"
                 elif job.status == "paused":
                     st_status = "paused"
@@ -2731,6 +2732,7 @@ async def retry_stage_api(
         if job and job.status in [
             TranslationJobStatus.FAILED.value,
             TranslationJobStatus.SEGMENT_EDITING.value,
+            TranslationJobStatus.NEEDS_REVIEW.value,
             TranslationJobStatus.CREATED.value,
         ]:
             signal_job_cancellation(job.id)

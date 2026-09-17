@@ -122,7 +122,7 @@ The central engine (`app.workflow.workflow_engine.WorkflowEngine`) orchestrates 
 
 ### Windows Desktop Launcher Reliability
 - The Shortcut path remains `AutoTransAI Studio.lnk` → `AutoTransAi.vbs` → `app_launcher.py`.
-- The launcher starts FastAPI without the development reloader and writes startup output to `data/launcher_logs/backend.log`; Vite output goes to `data/launcher_logs/frontend.log`.
+- The launcher starts FastAPI without the development reloader and writes startup output to `data/launcher_logs/backend.log`; Vite output goes to `data/launcher_logs/frontend.log` (spawned with `--host 127.0.0.1 --port 5173` to guarantee IPv4 binding).
 - Backend `/api/system/health` must return HTTP 200 from the launcher-owned live process before Vite starts, and Vite must return HTTP 200 from its launcher-owned process before pywebview opens. Pre-existing listeners are refused, cleanup targets only child process trees created by this launcher, and startup/log/spawn failures show a Windows error dialog instead of opening a frontend that cannot reach its backend.
 
 ### Frontend Workflow UI Controls & Smart Retry Flow

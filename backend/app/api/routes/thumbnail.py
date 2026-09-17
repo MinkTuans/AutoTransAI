@@ -53,7 +53,8 @@ async def list_default_thumbnails(project_id: str):
         for p in sorted(folder.iterdir())
         if p.is_file() and p.suffix.lower() in _LIBRARY_EXTS
     ]
-    return {"success": True, "data": items}
+    # Enforce single cover photo mode by returning only the latest single item if multiple exist
+    return {"success": True, "data": items[-1:] if items else []}
 
 
 @router.post("/library/{project_id}", response_model=Dict[str, Any])
@@ -61,8 +62,16 @@ async def upload_default_thumbnail(project_id: str, file: UploadFile = File(...)
     ext = Path(file.filename or "cover.png").suffix.lower()
     if ext not in _LIBRARY_EXTS:
         raise HTTPException(status_code=400, detail="❌ Chỉ nhận PNG, JPG, JPEG, WEBP.")
+    folder = _library_dir(project_id)
+    # Purge any previous cover images in project default_thumbnails folder to ensure single cover photo mode
+    for existing in folder.iterdir():
+        if existing.is_file() and existing.suffix.lower() in _LIBRARY_EXTS:
+            try:
+                existing.unlink()
+            except Exception:
+                pass
     safe_name = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in (file.filename or f"thumb{ext}"))
-    dest = _library_dir(project_id) / safe_name
+    dest = folder / safe_name
     dest.write_bytes(await file.read())
     return {"success": True, "data": _library_item(project_id, dest)}
 

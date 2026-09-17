@@ -52,6 +52,22 @@ def assign_voices(characters: list[dict[str, Any]], pool: list[dict[str, Any]], 
 
     for left, right in conflict_edges:
         if left in assignments and right in assignments and assignments[left]["voice_id"] == assignments[right]["voice_id"]:
+            # Auto-resolve voice conflict for unconfirmed assignment by assigning a distinct voice from pool
+            if not assignments[right].get("confirmed_by_user"):
+                left_voice = assignments[left]["voice_id"]
+                alt_choices = [v for v in pool if v.get("voice_id") != left_voice]
+                if alt_choices:
+                    assignments[right]["voice_provider"] = alt_choices[0]["provider"]
+                    assignments[right]["voice_id"] = alt_choices[0]["voice_id"]
+                    continue
+            if not assignments[left].get("confirmed_by_user"):
+                right_voice = assignments[right]["voice_id"]
+                alt_choices = [v for v in pool if v.get("voice_id") != right_voice]
+                if alt_choices:
+                    assignments[left]["voice_provider"] = alt_choices[0]["provider"]
+                    assignments[left]["voice_id"] = alt_choices[0]["voice_id"]
+                    continue
+
             if assignments[left].get("confirmed_by_user") or assignments[right].get("confirmed_by_user"):
                 conflicts.append({"characters": [left, right], "reason": "confirmed_voice_conflict"})
             else:
@@ -74,6 +90,12 @@ async def assign_project_voices(db, project_id: str, segments: list[dict[str, An
     profiles_rows = (await db.execute(select(CharacterVoiceProfile).where(CharacterVoiceProfile.project_id == project_id))).scalars().all()
     profiles = {p.character_id: {"voice_provider": p.voice_provider, "voice_id": p.voice_id, "confirmed_by_user": p.confirmed_by_user} for p in profiles_rows if p.voice_id}
     characters = [{"character_id": p.character_id, "gender": p.gender, "role": p.role} for p in profiles_rows]
+    existing_char_ids = {c["character_id"] for c in characters}
+    for seg in segments:
+        cid = seg.get("character_id") or (f"character-{seg['speaker_id'].lower()}" if seg.get("speaker_id") else None)
+        if cid and cid not in existing_char_ids:
+            characters.append({"character_id": cid, "gender": "unknown", "role": "supporting"})
+            existing_char_ids.add(cid)
     pool_rows = (await db.execute(select(VoicePoolEntry).where(VoicePoolEntry.enabled.is_(True)))).scalars().all()
     pool = [{"provider": p.provider, "voice_id": p.voice_id, "gender": p.gender, "language": p.language} for p in pool_rows]
     edges = set()

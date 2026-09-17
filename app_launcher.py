@@ -66,7 +66,7 @@ def start_backend(log_stream: TextIO):
 def start_frontend(log_stream: TextIO):
     """Start Vite frontend dev server as a hidden background process."""
     return subprocess.Popen(
-        ["cmd.exe", "/c", "npx vite --port 5173"],
+        ["cmd.exe", "/c", "npx vite --host 127.0.0.1 --port 5173"],
         cwd=str(FRONTEND_DIR),
         creationflags=CREATE_NO_WINDOW,
         stdout=log_stream,

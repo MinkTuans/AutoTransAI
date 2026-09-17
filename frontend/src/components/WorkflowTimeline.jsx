@@ -236,7 +236,7 @@ export default function WorkflowTimeline({
             stDataStatus = 'passed';
           } else if (stIdx === curStageIdx) {
             if (currentStatus === 'failed') stDataStatus = 'failed';
-            else if (currentStatus === 'segment_editing') stDataStatus = 'needs_review';
+            else if (['segment_editing', 'needs_review'].includes(currentStatus)) stDataStatus = 'needs_review';
             else if (currentStatus === 'paused') stDataStatus = 'paused';
             else if (currentStatus === 'cancelled') stDataStatus = 'cancelled';
             else stDataStatus = isRunning ? 'running' : (stagesMap[st.id]?.status || 'running');
@@ -415,7 +415,7 @@ export default function WorkflowTimeline({
             </div>
           ) : (
             <div style={{ fontSize: '11px', color: '#94a3b8', fontStyle: 'italic', marginTop: '4px' }}>
-              Trạng thái Stage: <strong>{getStatusBadge(STAGES.find(s => s.id === activeStage) ? (curStageIdx > (STAGES.findIndex(s => s.id === activeStage) + 1) ? 'passed' : (curStageIdx === (STAGES.findIndex(s => s.id === activeStage) + 1) ? (currentStatus === 'failed' ? 'failed' : (currentStatus === 'segment_editing' ? 'needs_review' : (isRunning ? 'running' : (isPaused ? 'paused' : 'pending')))) : 'pending')) : 'pending')}</strong>
+              Trạng thái Stage: <strong>{getStatusBadge(STAGES.find(s => s.id === activeStage) ? (curStageIdx > (STAGES.findIndex(s => s.id === activeStage) + 1) ? 'passed' : (curStageIdx === (STAGES.findIndex(s => s.id === activeStage) + 1) ? (currentStatus === 'failed' ? 'failed' : (['segment_editing', 'needs_review'].includes(currentStatus) ? 'needs_review' : (isRunning ? 'running' : (isPaused ? 'paused' : 'pending')))) : 'pending')) : 'pending')}</strong>
             </div>
           )}
         </div>

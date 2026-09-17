@@ -14,7 +14,7 @@ $backendProcess = [System.Diagnostics.Process]::Start($backendInfo)
 # 2. Start Frontend Process (Hidden)
 $frontendInfo = New-Object System.Diagnostics.ProcessStartInfo
 $frontendInfo.FileName = "cmd.exe"
-$frontendInfo.Arguments = "/c npx vite --port 5173"
+$frontendInfo.Arguments = "/c npx vite --host 127.0.0.1 --port 5173"
 $frontendInfo.WorkingDirectory = "$rootDir\frontend"
 $frontendInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
 $frontendInfo.CreateNoWindow = $true

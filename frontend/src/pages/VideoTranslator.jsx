@@ -78,6 +78,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   const [thumbnailLibraryPath, setThumbnailLibraryPath] = useState('');
   const [libraryThumbs, setLibraryThumbs] = useState([]);
   const [isUploadingLibraryThumb, setIsUploadingLibraryThumb] = useState(false);
+  const libraryFileInputRef = useRef(null);
 
   // Project Management & Pre-flight State
   const [projectsList, setProjectsList] = useState([]);
@@ -864,7 +865,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
               setSegments(newJob.segments);
             }
 
-            if (['completed', 'failed', 'cancelled', 'segment_editing'].includes(newJob.status)) {
+            if (['completed', 'failed', 'cancelled', 'segment_editing', 'needs_review'].includes(newJob.status)) {
               setIsProcessing(false);
             }
 
@@ -1091,24 +1092,40 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   };
 
   const handleValidateAndResumeCharacterVoices = async () => {
-    const reviewSegments = segments.filter(s => s.speaker_id);
-    await videoTranslatorApi.updateCharacterVoiceReview(job.id, {
-      mappings: reviewSegments.map(s => ({
-        speaker_id: s.speaker_id,
-        character_id: s.character_id || `character-${s.speaker_id.toLowerCase()}`,
-        character_name: s.character_name || s.character_id || s.speaker_id,
-        gender: s.gender || 'unknown', role: s.role || 'supporting',
-        voice_provider: s.voice_provider || audioProviderId,
-        voice_id: s.voice_id || voiceId,
-      })),
-    });
-    const validation = await videoTranslatorApi.validateCharacterVoiceReview(job.id);
-    if (!validation.data?.passed) {
-      setPipelineError(`Character/Voice chưa hợp lệ: ${(validation.data?.issues || []).map(i => i.reason).join(', ')}`);
-      return;
-    }
-    await videoTranslatorApi.confirmCharacterVoiceReview(job.id);
     setIsProcessing(true);
+    setPipelineError(null);
+    try {
+      const reviewSegments = segments.filter(s => s.speaker_id);
+      await videoTranslatorApi.updateCharacterVoiceReview(job.id, {
+        mappings: reviewSegments.map(s => ({
+          speaker_id: s.speaker_id,
+          character_id: s.character_id || `character-${s.speaker_id.toLowerCase()}`,
+          character_name: s.character_name || s.character_id || s.speaker_id,
+          gender: s.gender || 'unknown',
+          role: s.role || 'supporting',
+          voice_provider: s.voice_provider || audioProviderId,
+          voice_id: s.voice_id || voiceId,
+        })),
+      });
+      const validation = await videoTranslatorApi.validateCharacterVoiceReview(job.id);
+      if (!validation.data?.passed) {
+        setPipelineError(`Character/Voice chưa hợp lệ: ${(validation.data?.issues || []).map(i => i.reason).join(', ')}`);
+        setIsProcessing(false);
+        return;
+      }
+      await videoTranslatorApi.confirmCharacterVoiceReview(job.id);
+      const updatedJob = await videoTranslatorApi.getJob(job.id);
+      if (updatedJob.success && updatedJob.data) {
+        setJob({
+          ...updatedJob.data,
+          id: updatedJob.data.id || updatedJob.data.job_id,
+        });
+      }
+    } catch (err) {
+      const detail = formatApiError(err, 'Lỗi xác nhận Character/Voice');
+      setPipelineError(detail);
+      setIsProcessing(false);
+    }
   };
 
   const handleRenderFinalVideo = async () => {
@@ -1663,11 +1680,13 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                 {thumbnailSource === 'library' ? (
                   <div>
                     <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '6px' }}>
-                      Ảnh mặc định (storage/projects/.../default_thumbnails)
+                      Ảnh bìa mặc định (chọn 1 ảnh duy nhất):
                     </label>
                     <input
+                      ref={libraryFileInputRef}
                       type="file"
                       accept="image/png,image/jpeg,image/webp"
+                      style={{ display: 'none' }}
                       disabled={!activeProjectId || isUploadingLibraryThumb}
                       onChange={async (e) => {
                         const file = e.target.files?.[0];
@@ -1678,7 +1697,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                           const res = await thumbnailApi.uploadLibrary(activeProjectId, file);
                           const item = res.data;
                           if (item) {
-                            setLibraryThumbs((prev) => [item, ...prev.filter((x) => x.filename !== item.filename)]);
+                            setLibraryThumbs([item]);
                             setThumbnailLibraryPath(item.path);
                           }
                         } catch (err) {
@@ -1687,29 +1706,88 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                           setIsUploadingLibraryThumb(false);
                         }
                       }}
-                      style={{ fontSize: '12px', color: '#cbd5e1', marginBottom: '8px' }}
                     />
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(88px, 1fr))', gap: '8px' }}>
-                      {libraryThumbs.map((img) => (
-                        <button
-                          key={img.path}
-                          type="button"
-                          onClick={() => setThumbnailLibraryPath(img.path)}
-                          style={{
-                            padding: 0,
-                            border: thumbnailLibraryPath === img.path ? '2px solid #818cf8' : '1px solid #334155',
-                            borderRadius: '8px',
-                            overflow: 'hidden',
-                            background: '#020617',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          <img src={img.url} alt={img.filename} style={{ width: '100%', height: '64px', objectFit: 'cover', display: 'block' }} />
-                        </button>
-                      ))}
-                    </div>
-                    {libraryThumbs.length === 0 && (
-                      <div style={{ fontSize: '11px', color: '#94a3b8' }}>Chưa có ảnh. Upload vào thư mục dự án để dùng làm thumbnail mặc định.</div>
+                    {libraryThumbs.length > 0 ? (
+                      <div style={{ background: '#020617', border: '1px solid #818cf8', borderRadius: '10px', padding: '10px', textAlign: 'center' }}>
+                        <div style={{ position: 'relative', width: '100%', maxHeight: '140px', overflow: 'hidden', borderRadius: '6px', marginBottom: '8px', background: '#000' }}>
+                          <img
+                            src={libraryThumbs[0].url}
+                            alt={libraryThumbs[0].filename}
+                            style={{ width: '100%', height: '140px', objectFit: 'contain', display: 'block' }}
+                          />
+                          <span style={{ position: 'absolute', top: '6px', right: '6px', background: '#10b981', color: '#fff', fontSize: '10px', fontWeight: 'bold', padding: '2px 8px', borderRadius: '12px' }}>
+                            ✓ Ảnh bìa đã chọn
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          📁 {libraryThumbs[0].filename}
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                          <button
+                            type="button"
+                            disabled={isUploadingLibraryThumb}
+                            onClick={() => libraryFileInputRef.current?.click()}
+                            style={{
+                              padding: '6px 12px',
+                              borderRadius: '6px',
+                              background: '#312e81',
+                              color: '#a5b4fc',
+                              fontSize: '11px',
+                              fontWeight: 'bold',
+                              border: '1px solid #4338ca',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {isUploadingLibraryThumb ? '⏳ Đang tải...' : '📷 Thay đổi ảnh'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isUploadingLibraryThumb}
+                            onClick={async () => {
+                              if (libraryThumbs[0] && activeProjectId) {
+                                try {
+                                  await thumbnailApi.deleteLibrary(activeProjectId, libraryThumbs[0].filename);
+                                } catch (e) {}
+                              }
+                              setLibraryThumbs([]);
+                              setThumbnailLibraryPath('');
+                            }}
+                            style={{
+                              padding: '6px 12px',
+                              borderRadius: '6px',
+                              background: '#7f1d1d',
+                              color: '#fca5a5',
+                              fontSize: '11px',
+                              fontWeight: 'bold',
+                              border: '1px solid #991b1b',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            🗑️ Xóa ảnh
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div
+                        onClick={() => !isUploadingLibraryThumb && activeProjectId && libraryFileInputRef.current?.click()}
+                        style={{
+                          border: '2px dashed #475569',
+                          borderRadius: '10px',
+                          padding: '16px 10px',
+                          textAlign: 'center',
+                          background: '#0f172a',
+                          cursor: activeProjectId ? 'pointer' : 'not-allowed',
+                          transition: 'all 0.2s ease',
+                        }}
+                      >
+                        <div style={{ fontSize: '24px', marginBottom: '4px' }}>🖼️</div>
+                        <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#e2e8f0', marginBottom: '2px' }}>
+                          {isUploadingLibraryThumb ? '⏳ Đang tải ảnh bìa...' : 'Tải lên 1 ảnh bìa cho dự án'}
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#94a3b8' }}>
+                          Nhấp vào đây để chọn ảnh (PNG, JPG, JPEG, WEBP)
+                        </div>
+                      </div>
                     )}
                   </div>
                 ) : (
@@ -1777,19 +1855,21 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         </CollapsibleCard>
       </div>
 
-      {/* Segment Editor when phase 1 completes */}
-      {job && (job.status === 'segment_editing' || job.status === 'completed' || segments.length > 0) && (
+      {/* Segment Editor when phase 1 completes or requires character/voice review */}
+      {job && (['segment_editing', 'needs_review', 'completed'].includes(job.status) || segments.length > 0) && (
         <div className="card" style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '12px', padding: '20px', color: '#fff', marginBottom: '20px' }}>
-          <div style={{ marginBottom: '16px', padding: '12px 16px', background: '#064e3b', border: '1px solid #10b981', borderRadius: '8px', color: '#a7f3d0' }}>
-            <h4 style={{ margin: '0 0 4px 0', fontSize: '15px', fontWeight: 'bold', color: '#6ee7b7' }}>
-              🟢 Phase 1 Hoàn Thành – Đã Trích Xuất & Dịch Phân Đoạn!
+          <div style={{ marginBottom: '16px', padding: '12px 16px', background: job.status === 'needs_review' ? '#78350f' : '#064e3b', border: `1px solid ${job.status === 'needs_review' ? '#f59e0b' : '#10b981'}`, borderRadius: '8px', color: job.status === 'needs_review' ? '#fef3c7' : '#a7f3d0' }}>
+            <h4 style={{ margin: '0 0 4px 0', fontSize: '15px', fontWeight: 'bold', color: job.status === 'needs_review' ? '#fbbf24' : '#6ee7b7' }}>
+              {job.status === 'needs_review' ? '⚠️ Cần Kiểm Tra Nhân Vật & Giọng Đọc (Character / Voice Review)' : '🟢 Phase 1 Hoàn Thành – Đã Trích Xuất & Dịch Phân Đoạn!'}
             </h4>
             <p style={{ margin: 0, fontSize: '12px' }}>
-              Hệ thống đã dịch thành công <strong>{segments.length}</strong> phân đoạn. Vui lòng xem lại và chỉnh sửa bản dịch dưới đây trước khi xác nhận render video lồng tiếng.
+              {job.status === 'needs_review'
+                ? 'Hệ thống đã nhận diện được các người nói (Speakers) và phân đoạn dịch. Vui lòng gán hoặc xác nhận Nhân vật / Giọng đọc trước khi chuyển sang Phase 2 (TTS & Dubbing).'
+                : `Hệ thống đã dịch thành công ${segments.length} phân đoạn. Vui lòng xem lại và chỉnh sửa bản dịch dưới đây trước khi xác nhận render video lồng tiếng.`}
             </p>
           </div>
 
-          <h3 style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '12px' }}>📝 Xem lại & Chỉnh sửa Văn Bản Dịch</h3>
+          <h3 style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '12px' }}>📝 Xem lại & Chỉnh sửa Văn Bản Dịch / Nhân Vật</h3>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '400px', overflowY: 'auto', paddingRight: '4px' }}>
             {segments.map((seg) => (
@@ -1839,20 +1919,35 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                 width: '100%',
                 padding: '12px',
                 borderRadius: '8px',
-                background: 'linear-gradient(90deg, #10b981 0%, #059669 100%)',
+                background: isProcessing ? '#475569' : 'linear-gradient(90deg, #10b981 0%, #059669 100%)',
                 color: '#fff',
                 fontWeight: 'bold',
                 fontSize: '15px',
                 border: 'none',
-                cursor: 'pointer',
+                cursor: isProcessing ? 'not-allowed' : 'pointer',
               }}
             >
-              🎙️ Xác Nhận Bản Dịch & Render Video Lồng Tiếng
+              {isProcessing ? <><ButtonSpinner /> ⚡ Đang xử lý Render Video...</> : '🎙️ Xác Nhận Bản Dịch & Render Video Lồng Tiếng'}
             </button>
           )}
           {job.status === 'needs_review' && (
-            <button onClick={handleValidateAndResumeCharacterVoices} disabled={isProcessing} style={{ marginTop: '16px', width: '100%', padding: '12px', borderRadius: '8px', background: '#d97706', color: '#fff', fontWeight: 'bold', border: 'none' }}>
-              Validate Character/Voice & Resume TTS
+            <button
+              onClick={handleValidateAndResumeCharacterVoices}
+              disabled={isProcessing}
+              style={{
+                marginTop: '16px',
+                width: '100%',
+                padding: '12px',
+                borderRadius: '8px',
+                background: isProcessing ? '#475569' : 'linear-gradient(90deg, #d97706 0%, #b45309 100%)',
+                color: '#fff',
+                fontWeight: 'bold',
+                fontSize: '15px',
+                border: 'none',
+                cursor: isProcessing ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {isProcessing ? <><ButtonSpinner /> ⚡ Đang xác thực & Tiếp tục TTS...</> : '🎙️ Xác Nhận Nhân Vật / Giọng Đọc & Tiếp Tục Render TTS'}
             </button>
           )}
         </div>
