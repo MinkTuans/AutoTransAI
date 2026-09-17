@@ -1431,7 +1431,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                   style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
                 >
                   <option value="mute">Tắt hoàn toàn tiếng gốc (Mute)</option>
-                  <option value="duck">Giảm âm lượng gốc (Ducking 20%)</option>
+                  <option value="duck">Giảm âm lượng gốc (Ducking 40%)</option>
                   <option value="keep">Giữ âm thanh gốc trộn cùng</option>
                 </select>
               </div>

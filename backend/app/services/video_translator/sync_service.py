@@ -374,7 +374,7 @@ class VideoAudioSyncService:
                 "-i", str(video_path),
                 "-i", str(dubbed_audio_path),
                 "-filter_complex",
-                "[0:a]volume=0.15[orig];[1:a]volume=1.0[dub];[orig][dub]amix=inputs=2:duration=first:dropout_transition=0[outa]",
+                "[0:a]volume=0.40[orig];[1:a]volume=1.0[dub];[orig][dub]amix=inputs=2:duration=first:dropout_transition=0[outa]",
                 "-c:v", "copy",
                 "-c:a", "aac",
                 "-b:a", "192k",

@@ -765,7 +765,7 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
                     style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
                   >
                     <option value="mute">🔇 Tắt hoàn toàn tiếng gốc (Mute)</option>
-                    <option value="duck">🔉 Giảm âm lượng gốc (Background Ducking 20%)</option>
+                    <option value="duck">🔉 Giảm âm lượng gốc (Background Ducking 40%)</option>
                     <option value="keep">🔊 Giữ âm thanh gốc trộn cùng tiếng đọc (Full Keep)</option>
                   </select>
                 </div>

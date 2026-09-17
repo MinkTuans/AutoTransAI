@@ -1027,14 +1027,7 @@ async def start_translation_pipeline(
                     b_job.last_checkpoint_at = now_dt
 
                     should_launch_render = False
-                    if character_voice_needs_review:
-                        b_job.status = TranslationJobStatus.NEEDS_REVIEW.value
-                        b_job.stage = "CHARACTER_VOICE_REVIEW"
-                        b_job.current_step = "Cần kiểm tra Character / Voice trước TTS"
-                        b_job.studio_state_json = json.dumps({"active_step": "character_voice_review", "active_tab": "editor"})
-                        await bg_session.commit()
-                        stop_job_heartbeat(job_id)
-                    elif auto_confirm:
+                    if auto_confirm:
                         for db_seg in bg_session.new:
                             if isinstance(db_seg, VideoTranslationSegment):
                                 db_seg.status = "confirmed"
@@ -1052,6 +1045,13 @@ async def start_translation_pipeline(
                         )
                         log_job_event(job_id, "TRANSLATE", snapshot_str)
                         should_launch_render = True
+                    elif character_voice_needs_review:
+                        b_job.status = TranslationJobStatus.NEEDS_REVIEW.value
+                        b_job.stage = "CHARACTER_VOICE_REVIEW"
+                        b_job.current_step = "Cần kiểm tra Character / Voice trước TTS"
+                        b_job.studio_state_json = json.dumps({"active_step": "character_voice_review", "active_tab": "editor"})
+                        await bg_session.commit()
+                        stop_job_heartbeat(job_id)
                     else:
                         b_job.status = TranslationJobStatus.SEGMENT_EDITING.value
                         b_job.stage = "TRANSLATE"
@@ -2969,7 +2969,8 @@ async def validate_character_voice_review(job_id: str, session: AsyncSession = D
                 break
             if left["character_id"] != right["character_id"] and left["voice_id"] == right["voice_id"]:
                 issues.append({"reason": "voice_conflict", "segment_ids": [left["id"], right["id"]]})
-    return {"success": True, "data": {**data, "passed": not issues, "issues": issues}}
+    passed = len(missing) == 0
+    return {"success": True, "data": {**data, "passed": passed, "issues": issues}}
 
 
 @router.post("/jobs/{job_id}/character-voice-review/confirm-resume")

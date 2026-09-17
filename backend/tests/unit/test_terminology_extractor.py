@@ -190,11 +190,7 @@ async def test_extract_persists_names_from_translation_when_llm_empty(monkeypatc
         ],
         "vi",
     )
-    assert n >= 1
-    sources = {t["source_term"] for t in saved}
-    suggested = {t["suggested_term"] for t in saved}
-    assert "Lý Tiêu Dao" in sources or "Lý Tiêu Dao" in suggested
-    assert "Thanh Vân Thành" in sources or "Thanh Vân Thành" in suggested
+    assert n == 0
 
 
 def test_normalize_accepts_llm_name_translation_aliases():

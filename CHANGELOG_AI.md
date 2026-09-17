@@ -1,3 +1,15 @@
+- **Fix GLOSSARY_ENFORCEMENT_FAILED crash due to untranslated CJK terms (2026-09-17)**:
+  - **Symptom**: Jobs translating Chinese to Vietnamese crashed in the `TRANSLATE` stage with `GLOSSARY_ENFORCEMENT_FAILED` because the LLM terminology extractor captured untranslated names (e.g. `{"source_term": "安妮", "required": "安妮"}`). The glossary then forced the translator to output raw Chinese characters, which the Vietnamese translation naturally didn't include.
+  - **Fix**: Upgraded `extract_and_persist_from_segments` in `terminology_extractor.py` to apply the untranslated CJK filter *globally* to both LLM-extracted and Heuristic-extracted terms. Now, if `source_term` matches `suggested_term`, is entirely CJK, and the target language is not Chinese, the term is strictly rejected.
+
+
+- **Fix Auto Confirm voice_conflict bug and Proper Name validation strictness (2026-09-17)**:
+  - **Symptom 1**: Auto Confirm was blocked by repetitive `voice_conflict` errors when overlapping speakers were assigned the same voice.
+  - **Fix 1**: Modified `start_translation_pipeline` to prioritize `auto_confirm`, bypassing the `NEEDS_REVIEW` stage completely. Modified `validate_character_voice_review` to downgrade `voice_conflict` to a non-blocking warning so users aren't permanently stuck if voice pool exhaustion causes unavoidable conflicts.
+  - **Symptom 2**: AI hallucinatory or mispelled names (like `tiếng viêt` instead of `tiếng Việt`) were extracted and saved into the database, violating the strict exact-match requirement.
+  - **Fix 2**: Implemented `validate_and_align_extracted_terms` in `terminology_extractor.py`. This cross-references AI extracted terms precisely against the isolated original source text (avoiding pollution from translated text). It forces exact substring deduplication and drops any terms not found in the source text.
+
+
 - **Fix Smart Retry and `CHARACTER_VOICE_REVIEW` stage mapping alignment (2026-09-17)**:
   - **Symptom**: When a job completed Phase 1 translation but speaker mapping confidence was low or voice conflicts occurred, the stage stuck on `INGEST` (Stage 1) despite 60% completion. Clicking `Retry` or `Retry Stage` failed to reset/retry the job, leaving the red error `Character/Voice chưa hợp lệ: voice_conflict, voice_conflict` permanently on screen.
   - **Root Cause**:

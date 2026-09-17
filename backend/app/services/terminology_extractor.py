@@ -354,6 +354,55 @@ def segments_transcript_blob(segments: Optional[Iterable[dict[str, Any]]]) -> st
     return "\n".join(parts)
 
 
+def get_source_only_blob(segments: Optional[Iterable[dict[str, Any]]]) -> str:
+    parts: list[str] = []
+    for seg in segments or []:
+        src = _segment_source_text(seg)
+        if src:
+            parts.append(src)
+    return "\n".join(parts)
+
+
+def validate_and_align_extracted_terms(terms: Iterable[dict[str, Any]], source_blob: str) -> list[dict[str, Any]]:
+    """
+    Validates extracted terms against the original source text.
+    - Discards terms that do not appear in the source text (e.g. hallucinations, diacritic errors).
+    - Aligns the casing to the exact string found in the source text.
+    - Deduplicates the validated terms.
+    """
+    aligned_terms = []
+    seen = set()
+    for item in terms:
+        raw_source = item.get("source_term", "")
+        if not raw_source:
+            continue
+            
+        # Try exact match first
+        if raw_source in source_blob:
+            exact_match = raw_source
+        else:
+            # Try case-insensitive match
+            match = re.search(re.escape(raw_source), source_blob, re.IGNORECASE)
+            if match:
+                exact_match = match.group(0)
+            else:
+                # Reject if not found in source
+                logger.warning(f"Term '{raw_source}' rejected: not found exactly in source text")
+                continue
+                
+        # Deduplicate
+        if exact_match in seen:
+            continue
+        seen.add(exact_match)
+        
+        # Update term with exact source string
+        aligned_item = dict(item)
+        aligned_item["source_term"] = exact_match
+        aligned_terms.append(aligned_item)
+        
+    return aligned_terms
+
+
 async def extract_and_persist_from_segments(
     db: Optional[AsyncSession],
     project_id: str,
@@ -371,25 +420,36 @@ async def extract_and_persist_from_segments(
     heuristic = filter_terminology(heuristic_extract_terms(blob, target_lang))
     llm_terms = filter_terminology(await llm_extract_terms(blob, target_lang))
     llm_keys = {t["source_term"].casefold() for t in llm_terms}
-    heuristic = [
-        item
-        for item in heuristic
-        if not (
-            _CJK_RUN_RE.fullmatch(item["source_term"])
-            and item["source_term"] == item["suggested_term"]
-            and str(target_lang).lower() not in {"zh", "chinese"}
-        )
-    ]
     merged = llm_terms + [t for t in heuristic if t["source_term"].casefold() not in llm_keys]
+    
+    # Global filter: Reject terms that are purely CJK and untranslated when target is not Chinese
+    is_target_chinese = str(target_lang).lower() in {"zh", "chinese"}
+    if not is_target_chinese:
+        merged = [
+            item for item in merged
+            if not (
+                _CJK_RUN_RE.fullmatch(item["source_term"])
+                and item["source_term"] == item["suggested_term"]
+            )
+        ]
+    
+    # Rigorously validate against source text only
+    source_blob = get_source_only_blob(segments)
+    if not source_blob:
+        source_blob = blob
+        
+    validated_merged = validate_and_align_extracted_terms(merged, source_blob)
+    
     logger.info(
         "Terminology extract merged terms",
         project_id=project_id,
-        merged=len(merged),
+        merged=len(validated_merged),
+        original_merged=len(merged),
         heuristic=len(heuristic),
         llm=len(llm_terms),
         blob_chars=len(blob),
     )
-    return await persist_detected_terms(db, project_id, merged)
+    return await persist_detected_terms(db, project_id, validated_merged)
 
 
 def transcript_blob(ctx: Any) -> str:
