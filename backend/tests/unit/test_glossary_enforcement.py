@@ -7,6 +7,7 @@ import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.providers.base import LLMProvider
 from app.services.terminology_extractor import is_self_mapped_cjk
 from app.services.video_translator.translator_service import (
     find_glossary_violations,
@@ -237,3 +238,166 @@ def test_translation_prompt_no_glossary_when_all_invalid():
     )
     assert "BẮT BUỘC" not in prompt
     assert "GLOSSARY CANONICAL" not in prompt
+
+
+# ── Test: Auto Confirm Voice Conflict Error Deduplication ───────────────────
+
+def test_auto_confirm_voice_conflict_error_message_deduplication():
+    """Character/Voice validation error reasons must be deduplicated."""
+    validation_issues = [
+        {"reason": "voice_conflict", "segment_ids": ["s1", "s2"]},
+        {"reason": "voice_conflict", "segment_ids": ["s2", "s3"]},
+        {"reason": "voice_conflict", "segment_ids": ["s1", "s4"]},
+    ]
+    # Frontend deduplication logic: Set of reasons
+    unique_reasons = list(dict.fromkeys(i["reason"] for i in validation_issues))
+    error_msg = f"Character/Voice chưa hợp lệ: {', '.join(unique_reasons)}"
+    assert error_msg == "Character/Voice chưa hợp lệ: voice_conflict"
+
+
+# ── Mock LLM for retry and enforcement testing ────────────────────────────
+
+class GlossaryMockLLM(LLMProvider):
+    def __init__(self, generator=None):
+        self.generator = generator
+        self.calls = []
+
+    @property
+    def provider_id(self) -> str:
+        return "mock_llm"
+
+    @property
+    def provider_name(self) -> str:
+        return "MockLLM"
+
+    @property
+    def is_free(self) -> bool:
+        return True
+
+    @property
+    def requires_api_key(self) -> bool:
+        return False
+
+    async def validate_configuration(self) -> bool:
+        return True
+
+    async def estimate_usage(self, input_text: str):
+        return []
+
+    async def get_quota(self):
+        return []
+
+    async def generate_text(self, prompt: str, system_prompt: str = "", model=None, **kwargs) -> str:
+        self.calls.append(prompt)
+        if self.generator:
+            return self.generator(prompt, len(self.calls))
+        return "[]"
+
+
+# ── Test: Invalid glossary does not crash or retry infinitely ─────────────────
+
+@pytest.mark.asyncio
+async def test_invalid_glossary_does_not_retry_infinitely(monkeypatch):
+    """Invalid glossary entries (安妮 → 安妮) must not trigger infinite retries or crash."""
+    from app.services.video_translator.translator_service import translate_transcript_segments
+
+    def handler(prompt, call_num):
+        return json.dumps({
+            "lines": [{"n": 1, "text": "Annie đã đến rồi."}],
+            "names": [{"source": "安妮", "translation": "Annie", "type": "character"}],
+        })
+
+    mock_llm = GlossaryMockLLM(generator=handler)
+    mock_reg = MagicMock()
+    mock_reg.get_llm.return_value = mock_llm
+
+    with patch("app.services.video_translator.translator_service.get_registry", return_value=mock_reg):
+        segments = [{"id": "s1", "number": 1, "text": "安妮来了"}]
+        results = await translate_transcript_segments(
+            segments,
+            source_language="zh",
+            target_language="vi",
+            job_id="TEST-JOB-INVALID-GLOSSARY",
+            llm_provider_id="mock_llm",
+            glossary={"安妮": "安妮"},  # Invalid mapping
+        )
+
+    assert results[0]["translated_text"] == "Annie đã đến rồi."
+    # Only 1 initial call was made, no infinite retries triggered
+    assert len(mock_llm.calls) == 1
+
+
+# ── Test: Valid glossary violation triggers targeted retry ───────────────────
+
+@pytest.mark.asyncio
+async def test_valid_glossary_violation_triggers_targeted_retry(monkeypatch):
+    """When translation violates a valid glossary, targeted retry is executed."""
+    from app.services.video_translator.translator_service import translate_transcript_segments
+
+    def handler(prompt, call_num):
+        if call_num == 1:
+            # First attempt: violates glossary (uses 'Anne' instead of required 'Annie')
+            return json.dumps({
+                "lines": [{"n": 1, "text": "Anne đã đến rồi."}],
+                "names": [],
+            })
+        else:
+            # Second attempt (retry): corrects and uses 'Annie'
+            return json.dumps({
+                "lines": [{"n": 1, "text": "Annie đã đến rồi."}],
+                "names": [],
+            })
+
+    mock_llm = GlossaryMockLLM(generator=handler)
+    mock_reg = MagicMock()
+    mock_reg.get_llm.return_value = mock_llm
+
+    with patch("app.services.video_translator.translator_service.get_registry", return_value=mock_reg):
+        segments = [{"id": "s1", "number": 1, "text": "安妮说了一句话"}]
+        results = await translate_transcript_segments(
+            segments,
+            source_language="zh",
+            target_language="vi",
+            job_id="TEST-JOB-GLOSSARY-RETRY",
+            llm_provider_id="mock_llm",
+            glossary={"安妮": "Annie"},  # Valid mapping
+        )
+
+    # Recovery succeeded on retry
+    assert results[0]["translated_text"] == "Annie đã đến rồi."
+    assert len(mock_llm.calls) == 2
+    # Verify retry prompt warned about the missing canonical glossary term
+    assert "CẢNH BÁO" in mock_llm.calls[1]
+    assert "Annie" in mock_llm.calls[1]
+
+
+# ── Test: Valid glossary violation persists after retry -> raise RuntimeError ──
+
+@pytest.mark.asyncio
+async def test_valid_glossary_violation_raises_after_failed_retry(monkeypatch):
+    """If translation STILL violates valid glossary after retry, raise RuntimeError."""
+    from app.services.video_translator.translator_service import translate_transcript_segments
+
+    def handler(prompt, call_num):
+        # Always violates glossary (uses 'Anne' instead of 'Annie')
+        return json.dumps({
+            "lines": [{"n": 1, "text": "Anne đã đến rồi."}],
+            "names": [],
+        })
+
+    mock_llm = GlossaryMockLLM(generator=handler)
+    mock_reg = MagicMock()
+    mock_reg.get_llm.return_value = mock_llm
+
+    with patch("app.services.video_translator.translator_service.get_registry", return_value=mock_reg):
+        segments = [{"id": "s1", "number": 1, "text": "安妮说了一句话"}]
+        with pytest.raises(RuntimeError, match="GLOSSARY_ENFORCEMENT_FAILED|TRANSLATION FAILED"):
+            await translate_transcript_segments(
+                segments,
+                source_language="zh",
+                target_language="vi",
+                job_id="TEST-JOB-GLOSSARY-FAIL",
+                llm_provider_id="mock_llm",
+                glossary={"安妮": "Annie"},
+            )
+

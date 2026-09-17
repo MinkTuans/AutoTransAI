@@ -1109,7 +1109,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       });
       const validation = await videoTranslatorApi.validateCharacterVoiceReview(job.id);
       if (!validation.data?.passed) {
-        setPipelineError(`Character/Voice chưa hợp lệ: ${(validation.data?.issues || []).map(i => i.reason).join(', ')}`);
+        const uniqueReasons = Array.from(new Set((validation.data?.issues || []).map(i => i.reason)));
+        setPipelineError(`Character/Voice chưa hợp lệ: ${uniqueReasons.join(', ')}`);
         setIsProcessing(false);
         return;
       }

@@ -1,3 +1,14 @@
+- **Complete GLOSSARY_ENFORCEMENT_FAILED pipeline fix — final verification (2026-09-17)**:
+  - **Completion**: All fixes from the glossary enforcement pipeline overhaul verified and passing.
+  - **Fix 1 — `terminology_extractor.py`**: Added `is_chinese_language()`, `has_cjk_characters()`, `is_pure_cjk()`, `is_valid_glossary_mapping()` utilities. Updated `heuristic_extract_terms()`, `normalize_extracted_terms()`, `llm_extract_terms()`, `persist_detected_terms()`, and `extract_and_persist_from_segments()` to reject CJK self-mapped entries when target language is non-Chinese.
+  - **Fix 2 — `translator_service.py`**: Updated `_translation_json_prompt` with rule 3 requiring name transliteration in target language. Updated `find_glossary_violations()` to skip invalid entries with warnings. Added targeted 1-step retry for valid glossary violations in `translate_transcript_segments()`. Raises `RuntimeError("GLOSSARY_ENFORCEMENT_FAILED")` only after retry fails for valid violations.
+  - **Fix 3 — `video_translator.py` (backend routes)**: Guarded `auto_confirm_and_start_render_if_needed` against running when `job.status == NEEDS_REVIEW`.
+  - **Fix 4 — `VideoTranslator.jsx` (frontend)**: Deduplicated validation error reasons using `Set` so `voice_conflict` appears only once.
+  - **Fix 5 — `test_glossary_enforcement.py`**: Fixed `GlossaryMockLLM` class — moved `LLMProvider` import to module level, removed duplicate function header that broke class scoping. 22 test cases pass.
+  - **Verification**: 275 backend unit tests passed (4 skipped), frontend Vite build clean.
+  - **Affected files**: `terminology_extractor.py`, `translator_service.py`, `video_translator.py` (routes), `VideoTranslator.jsx`, `test_glossary_enforcement.py`
+  - **Knowledge Base**: Updated TRANSLATE stage in `PROJECT_KNOWLEDGE_BASE.md` with `is_valid_glossary_mapping()`, targeted retry, and invalid glossary skip behaviour.
+
 - **Fix GLOSSARY_ENFORCEMENT_FAILED: language-aware glossary enforcement pipeline (2026-09-17)**:
   - **Root Cause**: Self-mapped CJK glossary entries (`source_term=安妮, translated_term=安妮`) were created via `_persist_translation_names` → `persist_detected_terms`, which lacked the CJK self-mapping filter present only in `extract_and_persist_from_segments`. These entries then caused `find_glossary_violations` to falsely flag valid translations (e.g. Vietnamese "Annie") as violations because the enforcement demanded Chinese characters in Vietnamese output.
   - **Fix 1 — `is_self_mapped_cjk()` utility** (`terminology_extractor.py`): Centralized CJK self-mapping detection. Returns True only when source is purely CJK, maps to itself, and target language is NOT Chinese. Latin/ASCII self-maps (`AI→AI`, `Netflix→Netflix`) are never flagged.

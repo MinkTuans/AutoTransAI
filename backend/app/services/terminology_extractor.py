@@ -65,28 +65,74 @@ _CJK_NAME_SUFFIXES = (
 PROPER_NAME_TYPES = frozenset({"character", "location", "organization"})
 EXTENDED_TERM_TYPES = frozenset({"creature", "skill", "weapon", "item", "technique", "title", "other"})
 
-_CHINESE_LANG_CODES = {"zh", "chinese", "zh-cn", "zh-tw", "zh-hans", "zh-hant"}
+_CHINESE_LANG_CODES = {
+    "zh", "chinese", "zh-cn", "zh-tw", "zh-hans", "zh-hant", "zh_cn", "zh_tw",
+    "tiếng trung", "tieng trung", "trung", "mandarin", "cantonese",
+}
+
+
+def is_chinese_language(lang: str = "") -> bool:
+    """True if language code or name represents Chinese."""
+    clean = str(lang or "").lower().strip()
+    return clean in _CHINESE_LANG_CODES
+
+
+def has_cjk_characters(text: str) -> bool:
+    """True if text contains any CJK (Han) characters."""
+    if not text:
+        return False
+    return bool(_CJK_RUN_RE.search(str(text)))
+
+
+def is_pure_cjk(text: str) -> bool:
+    """True if text consists entirely of CJK characters (ignoring whitespace/punctuation)."""
+    if not text:
+        return False
+    cleaned = re.sub(r"[\s\W\d_]+", "", str(text))
+    return bool(cleaned and _CJK_RUN_RE.fullmatch(cleaned))
 
 
 def is_self_mapped_cjk(source_term: str, translated_term: str, target_lang: str = "") -> bool:
-    """True when a CJK source term maps to itself and target language is NOT Chinese.
+    """True when a CJK source term maps to itself or remains untranslated CJK and target language is NOT Chinese.
 
     This catches invalid glossary entries like source_term=安妮, translated_term=安妮
-    when target is Vietnamese/English.  Returns False for legitimate same-term mappings
+    when target is Vietnamese/English. Returns False for legitimate same-term mappings
     like AI→AI or Netflix→Netflix (which are not CJK).
     """
     from app.services.glossary_service import normalize_glossary_text
 
-    if not source_term or not translated_term:
+    src = str(source_term or "").strip()
+    tgt = str(translated_term or "").strip()
+    if not src or not tgt:
         return False
-    # Only flag when the source is purely CJK (Han characters)
-    if not _CJK_RUN_RE.fullmatch(source_term.strip()):
+    if is_chinese_language(target_lang):
         return False
-    # If target language IS Chinese, CJK→CJK is perfectly valid
-    if str(target_lang).lower().strip() in _CHINESE_LANG_CODES:
+    if has_cjk_characters(src):
+        # 1. Compare normalized forms (e.g. 安妮 == 安妮)
+        if normalize_glossary_text(src) == normalize_glossary_text(tgt):
+            return True
+        # 2. Translated term is still pure CJK characters (untranslated)
+        if is_pure_cjk(tgt):
+            return True
+    return False
+
+
+def is_valid_glossary_mapping(source_term: str, required: str, target_language: str = "") -> bool:
+    """True if source_term -> required is a valid, enforceable glossary mapping.
+
+    - Rejects empty source or required.
+    - Rejects CJK source mapping to itself or untranslated CJK when target language is NOT Chinese (e.g. 安妮 -> 安妮).
+    - Accepts legitimate same-term mappings (e.g. AI -> AI, Netflix -> Netflix, John -> John).
+    - Accepts CJK -> CJK when target language IS Chinese.
+    - Accepts CJK -> target translation (e.g. 安妮 -> Annie).
+    """
+    src = str(source_term or "").strip()
+    req = str(required or "").strip()
+    if not src or not req:
         return False
-    # Compare normalized forms
-    return normalize_glossary_text(source_term) == normalize_glossary_text(translated_term)
+    if is_self_mapped_cjk(src, req, target_language):
+        return False
+    return True
 
 
 def looks_like_cjk_name(term: str) -> bool:
@@ -164,7 +210,7 @@ _NAME_STOP = {
 }
 
 
-def normalize_extracted_terms(raw: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+def normalize_extracted_terms(raw: Iterable[dict[str, Any]], target_lang: str = "") -> list[dict[str, Any]]:
     seen: set[str] = set()
     out: list[dict[str, Any]] = []
     for item in raw or []:
@@ -181,13 +227,20 @@ def normalize_extracted_terms(raw: Iterable[dict[str, Any]]) -> list[dict[str, A
         if key in seen:
             continue
         seen.add(key)
-        suggested = str(
+        raw_suggested = (
             item.get("suggested_term")
             or item.get("translation")
             or item.get("translated_term")
             or item.get("target")
-            or source
-        ).strip() or source
+        )
+        if raw_suggested is not None and str(raw_suggested).strip():
+            suggested = str(raw_suggested).strip()
+        else:
+            # If target language is NOT Chinese and source has CJK, do not guess or default to source
+            if has_cjk_characters(source) and not is_chinese_language(target_lang):
+                suggested = ""
+            else:
+                suggested = source
         term_type = str(item.get("term_type") or item.get("type") or "other").strip().lower() or "other"
         try:
             confidence = float(item.get("confidence") or 0.8)
@@ -235,6 +288,7 @@ def heuristic_extract_terms(text: str, target_lang: str = "vi") -> list[dict[str
                 grams.append(run[i : i + n])
     counts = Counter(grams)
     raw: list[dict[str, Any]] = []
+    is_target_zh = is_chinese_language(target_lang)
     for term, n in counts.items():
         if not looks_like_cjk_name(term):
             continue
@@ -244,7 +298,7 @@ def heuristic_extract_terms(text: str, target_lang: str = "vi") -> list[dict[str
         raw.append(
             {
                 "source_term": term,
-                "suggested_term": term,
+                "suggested_term": term if is_target_zh else "",
                 "term_type": "location" if has_place_suffix else "character",
                 "confidence": min(0.55 + 0.05 * n + (0.15 if has_place_suffix else 0), 0.9),
                 "source_context": f"appeared {n} times",
@@ -267,10 +321,10 @@ def heuristic_extract_terms(text: str, target_lang: str = "vi") -> list[dict[str
                 "source_context": f"appeared {n} times",
             }
         )
-    return normalize_extracted_terms(raw)
+    return normalize_extracted_terms(raw, target_lang=target_lang)
 
 
-def _parse_llm_terms(payload: str) -> list[dict[str, Any]]:
+def _parse_llm_terms(payload: str, target_lang: str = "") -> list[dict[str, Any]]:
     if not payload:
         return []
     text = payload.strip()
@@ -298,7 +352,7 @@ def _parse_llm_terms(payload: str) -> list[dict[str, Any]]:
         )
     if not isinstance(data, list):
         return []
-    return normalize_extracted_terms([x for x in data if isinstance(x, dict)])
+    return normalize_extracted_terms([x for x in data if isinstance(x, dict)], target_lang=target_lang)
 
 
 async def llm_extract_terms(text: str, target_lang: str = "vi") -> list[dict[str, Any]]:
@@ -321,16 +375,17 @@ async def llm_extract_terms(text: str, target_lang: str = "vi") -> list[dict[str
             'Return ONLY JSON: {{"terms":[{{"source_term":"...","suggested_term":"...","term_type":"character","confidence":0.9}}]}}\n'
             "source_term is the original-language name; suggested_term MUST be the translated/transliterated name "
             f"in {target_lang} (keep {target_lang} diacritics). "
-            "IMPORTANT: If source_term is in Chinese (e.g. 安妮, 詹森), suggested_term MUST be the "
-            f"{target_lang} rendering (e.g. Annie, Jensen), NOT the original Chinese characters. "
-            "Never set suggested_term equal to source_term when they are in different scripts.\n"
+            "IMPORTANT: If source_term is in Chinese (e.g. 安妮, 詹森, 路斯), suggested_term MUST be the "
+            f"{target_lang} rendering (e.g. Annie, Jensen, Ruth), NOT the original Chinese characters. "
+            "Never set suggested_term equal to source_term when they are in different scripts. "
+            "If you do not have enough information to determine the target name, do NOT guess; omit the term.\n"
             "term_type must be one of: character, creature, location, organization, skill, weapon, "
             "item, technique, title, other.\n\n"
             f"Subtitles:\n{blob[:6000]}"
         )
         model = getattr(llm, "_resolved_model_id", None)
         raw = await llm.generate_text(prompt, model=model)
-        parsed = _parse_llm_terms(raw if isinstance(raw, str) else str(raw))
+        parsed = _parse_llm_terms(raw if isinstance(raw, str) else str(raw), target_lang=target_lang)
         logger.info("LLM terminology extraction parsed terms", count=len(parsed))
         return parsed
     except Exception as exc:
@@ -350,10 +405,10 @@ async def persist_detected_terms(
     for item in filter_terminology(terms):
         source = item["source_term"]
         suggested = item["suggested_term"]
-        # Reject CJK self-mapped entries when target is not Chinese
-        if is_self_mapped_cjk(source, suggested, target_lang):
+        # Reject invalid glossary entries (e.g. CJK self-mapped when target is not Chinese)
+        if not is_valid_glossary_mapping(source, suggested, target_lang):
             logger.info(
-                "Rejected self-mapped CJK glossary entry",
+                "Rejected invalid glossary entry",
                 source_term=source,
                 suggested_term=suggested,
                 target_lang=target_lang,
@@ -460,16 +515,11 @@ async def extract_and_persist_from_segments(
     llm_keys = {t["source_term"].casefold() for t in llm_terms}
     merged = llm_terms + [t for t in heuristic if t["source_term"].casefold() not in llm_keys]
     
-    # Global filter: Reject terms that are purely CJK and untranslated when target is not Chinese
-    is_target_chinese = str(target_lang).lower() in {"zh", "chinese"}
-    if not is_target_chinese:
-        merged = [
-            item for item in merged
-            if not (
-                _CJK_RUN_RE.fullmatch(item["source_term"])
-                and item["source_term"] == item["suggested_term"]
-            )
-        ]
+    # Global filter: Reject invalid glossary mappings (e.g. CJK untranslated when target is not Chinese)
+    merged = [
+        item for item in merged
+        if is_valid_glossary_mapping(item["source_term"], item.get("suggested_term", ""), target_lang)
+    ]
     
     # Rigorously validate against source text only
     source_blob = get_source_only_blob(segments)
@@ -487,7 +537,10 @@ async def extract_and_persist_from_segments(
         llm=len(llm_terms),
         blob_chars=len(blob),
     )
-    return await persist_detected_terms(db, project_id, validated_merged)
+    try:
+        return await persist_detected_terms(db, project_id, validated_merged, target_lang=target_lang)
+    except TypeError:
+        return await persist_detected_terms(db, project_id, validated_merged)
 
 
 def transcript_blob(ctx: Any) -> str:

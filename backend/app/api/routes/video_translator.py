@@ -674,9 +674,13 @@ async def auto_confirm_and_start_render_if_needed(job_id: str) -> bool:
 
         is_waiting = (
             job.status in [TranslationJobStatus.SEGMENT_EDITING.value, "segment_editing"]
-            or job.stage == "TRANSLATE"
+            or (job.stage == "TRANSLATE" and job.status not in [TranslationJobStatus.NEEDS_REVIEW.value, "needs_review", TranslationJobStatus.FAILED.value, "failed"])
         )
-        if is_waiting and job.auto_confirm_translation and job.status != TranslationJobStatus.FAILED.value:
+        if (
+            is_waiting
+            and job.auto_confirm_translation
+            and job.status not in [TranslationJobStatus.FAILED.value, TranslationJobStatus.NEEDS_REVIEW.value, "needs_review"]
+        ):
             # Mark segments as confirmed
             await session.execute(
                 update(VideoTranslationSegment)

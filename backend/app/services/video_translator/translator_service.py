@@ -851,7 +851,7 @@ def _load_json_blob(text: str) -> Any:
     return None
 
 
-def parse_translation_envelope(text: str) -> Tuple[Dict[int, str], List[Dict[str, Any]]]:
+def parse_translation_envelope(text: str, target_language: str = "") -> Tuple[Dict[int, str], List[Dict[str, Any]]]:
     """Parse {lines:[{n,text}], names:[...]} or legacy [{id, translation}]."""
     raw = _load_json_blob(text)
     names_raw: List[Any] = []
@@ -877,7 +877,7 @@ def parse_translation_envelope(text: str) -> Tuple[Dict[int, str], List[Dict[str
     if isinstance(names_raw, list):
         from app.services.terminology_extractor import normalize_extracted_terms
 
-        names = normalize_extracted_terms([x for x in names_raw if isinstance(x, dict)])
+        names = normalize_extracted_terms([x for x in names_raw if isinstance(x, dict)], target_lang=target_language)
     return lines_map, names
 
 
@@ -907,15 +907,15 @@ def _translation_json_prompt(
 ) -> str:
     glossary_rules = ""
     if glossary:
-        from app.services.terminology_extractor import is_self_mapped_cjk
+        from app.services.terminology_extractor import is_valid_glossary_mapping
 
-        # Filter out self-mapped CJK entries that would confuse the LLM
+        # Filter out invalid or self-mapped CJK entries that would confuse the LLM
         valid_pairs = [
             (source, target)
             for source, target in sorted(
                 glossary.items(), key=lambda item: len(item[0]), reverse=True
             )
-            if not is_self_mapped_cjk(source, target, target_lang_name)
+            if is_valid_glossary_mapping(source, target, target_lang_name)
         ]
         if valid_pairs:
             pairs = "\n".join(f"- {source} → {target}" for source, target in valid_pairs)
@@ -931,8 +931,11 @@ def _translation_json_prompt(
         "Quy tắc:\n"
         "1. Giữ nguyên số thứ tự 'n' của từng câu. Không gộp, không bỏ, không đổi thứ tự.\n"
         f"2. Field 'text' ở output là bản dịch {target_lang_name} (tự nhiên, hợp lồng tiếng).\n"
-        "3. Trong 'names' chỉ liệt kê TÊN RIÊNG (người/nhân vật, địa danh, tổ chức) kèm bản dịch. "
-        "Không đưa động từ, đại từ, câu thoại thường.\n"
+        f"3. Trong 'names': Chỉ liệt kê TÊN RIÊNG (người/nhân vật, địa danh, tổ chức). "
+        f"'source' là tên gốc trong {source_lang_name}, 'translation' phải là tên tương ứng đã được dịch/chuyển tự sang {target_lang_name} (ví dụ: 安妮 → Annie, 詹森 → Jensen, 路斯 → Ruth). "
+        f"TUYỆT ĐỐI KHÔNG để 'translation' giữ nguyên chữ Hán khi dịch sang chữ Latin. "
+        "Nếu không chắc chắn tên tương ứng ở ngôn ngữ đích, KHÔNG đưa vào 'names'. "
+        "Không đưa động từ, đại từ, câu thoại thường vào 'names'.\n"
         f"{glossary_rules}"
         "Output đúng dạng:\n"
         '{"lines":[{"n":1,"text":"..."},{"n":2,"text":"..."}],'
@@ -950,7 +953,7 @@ def find_glossary_violations(
     if not glossary:
         return []
     from app.services.glossary_service import normalize_glossary_text
-    from app.services.terminology_extractor import is_self_mapped_cjk
+    from app.services.terminology_extractor import is_valid_glossary_mapping
 
     violations: List[Dict[str, Any]] = []
     skipped_invalid: List[Dict[str, str]] = []
@@ -978,8 +981,8 @@ def find_glossary_violations(
                     matches.append((source_term, required))
                 start = source_text.find(normalized_source, start + 1)
         for source_term, required in matches:
-            # Skip enforcement for invalid self-mapped CJK entries
-            if is_self_mapped_cjk(source_term, required, target_language):
+            # Skip enforcement for invalid or malformed glossary mappings
+            if not is_valid_glossary_mapping(source_term, required, target_language):
                 skipped_invalid.append(
                     {"source_term": source_term, "required": required}
                 )
@@ -991,11 +994,11 @@ def find_glossary_violations(
     if skipped_invalid:
         unique_skipped = list({(s["source_term"], s["required"]) for s in skipped_invalid})
         logger.warning(
-            "Glossary enforcement skipped invalid self-mapped CJK entries",
+            "Glossary enforcement skipped invalid glossary entries",
             skipped_count=len(unique_skipped),
             entries=[
                 {"source_term": s, "required": r, "source_language": source_language, "target_language": target_language,
-                 "reason": "CJK source_term maps to itself but target language is not Chinese"}
+                 "reason": "Malformed or invalid cross-script glossary mapping"}
                 for s, r in unique_skipped
             ],
         )
@@ -1215,7 +1218,7 @@ async def translate_transcript_segments(
                     try:
                         curr_prompt = prompt if attempt == 0 else prompt + '\nLƯU Ý BẮT BUỘC: Trả về đúng JSON {"lines":[{"n":1,"text":"..."}],"names":[]}'
                         response_text = await llm.generate_text(curr_prompt, model=getattr(llm, '_resolved_model_id', None))
-                        parsed_map, batch_names = parse_translation_envelope(response_text)
+                        parsed_map, batch_names = parse_translation_envelope(response_text, target_language=target_language)
                         if batch_names:
                             collected_names.extend(batch_names)
 
@@ -1254,7 +1257,7 @@ async def translate_transcript_segments(
                             )
                             try:
                                 rec_resp = await llm.generate_text(rec_prompt)
-                                rec_map, rec_names = parse_translation_envelope(rec_resp)
+                                rec_map, rec_names = parse_translation_envelope(rec_resp, target_language=target_language)
                                 if rec_names:
                                     collected_names.extend(rec_names)
                                 for r_id, r_trans in rec_map.items():
@@ -1312,7 +1315,7 @@ async def translate_transcript_segments(
                     )
                     try:
                         retry_resp = await llm.generate_text(strict_prompt)
-                        retry_map, retry_names = parse_translation_envelope(retry_resp)
+                        retry_map, retry_names = parse_translation_envelope(retry_resp, target_language=target_language)
                         if retry_names:
                             collected_names.extend(retry_names)
                         if all(n in retry_map for n in numbers):
@@ -1347,6 +1350,47 @@ async def translate_transcript_segments(
                     source_language=source_language,
                     target_language=target_language,
                 )
+                if violations:
+                    # Targeted retry with LLM for segments with valid glossary violations
+                    log_job_event(
+                        job_id,
+                        "TRANSLATING",
+                        f"[Glossary Enforcement] Detected {len(violations)} glossary violations on {llm.provider_name}. Attempting targeted recovery..."
+                    )
+                    violating_indices = sorted({v["segment"] for v in violations if 1 <= v["segment"] <= len(segments)})
+                    violating_segments = [segments[idx - 1] for idx in violating_indices]
+                    if violating_segments:
+                        retry_payload = build_numbered_dialogue_payload(violating_segments)
+                        rules_summary = "\n".join(
+                            f"- '{v['source_term']}' BẮT BUỘC dịch là '{v['required']}' (câu {v['segment']})"
+                            for v in violations[:10]
+                        )
+                        strict_retry_prompt = (
+                            f"CẢNH BÁO: Bản dịch trước chưa dùng đúng thuật ngữ Glossary Canonical bắt buộc:\n"
+                            f"{rules_summary}\n\n"
+                            f"Dịch lại CÁC CÂU THOẠI SAU sang {target_lang_name} và BẮT BUỘC chứa chính xác các bản dịch thuật ngữ trên:\n\n"
+                            + _translation_json_prompt(
+                                retry_payload, source_lang_name, target_lang_name, glossary
+                            )
+                        )
+                        try:
+                            retry_resp = await llm.generate_text(strict_retry_prompt)
+                            retry_map, retry_names = parse_translation_envelope(retry_resp, target_language=target_language)
+                            if retry_names:
+                                collected_names.extend(retry_names)
+                            retry_numbers = [item["n"] for item in retry_payload["lines"]]
+                            for n, seg_item in zip(retry_numbers, violating_segments):
+                                if n in retry_map and retry_map[n].strip():
+                                    seg_item["translated_text"] = retry_map[n].strip()
+                            # Re-check violations after retry
+                            violations = find_glossary_violations(
+                                segments, glossary,
+                                source_language=source_language,
+                                target_language=target_language,
+                            )
+                        except Exception as retry_ex:
+                            logger.warning(f"Targeted glossary retry failed: {retry_ex}")
+
                 if violations:
                     raise RuntimeError(
                         "GLOSSARY_ENFORCEMENT_FAILED: "
