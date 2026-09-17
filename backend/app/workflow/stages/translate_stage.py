@@ -149,7 +149,11 @@ class TranslateStage:
         from app.services.video_translator.translator_service import find_glossary_violations
 
         glossary_dict = {item["source_term"]: item["translated_term"] for item in ctx.glossary}
-        violations = find_glossary_violations(ctx.translated_segments, glossary_dict)
+        violations = find_glossary_violations(
+            ctx.translated_segments, glossary_dict,
+            source_language=ctx.source_language,
+            target_language=ctx.target_language,
+        )
         if violations:
             raise RuntimeError(f"GLOSSARY_ENFORCEMENT_FAILED: {violations}")
         return {"consistency_checked": True}

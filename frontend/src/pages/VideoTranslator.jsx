@@ -1238,10 +1238,10 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
 
       {/* MAIN 2-COLUMN STUDIO GRID */}
       <div className="translator-studio-grid">
-        
+
         {/* LEFT PRIMARY COLUMN: PIPELINE + CONFIG */}
         <div className="studio-left-col">
-          
+
           {/* Unified 6-Stage Workflow Pipeline Card */}
           <WorkflowTimeline
             projectId={activeProjectId}
@@ -1503,7 +1503,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
 
         {/* RIGHT SIDEBAR COLUMN: WATERMARK & AI THUMBNAIL */}
         <div className="studio-right-col">
-          
+
           {/* Watermark Branding Section */}
           <div className="compact-card">
             <div className="compact-card-header">
@@ -1747,7 +1747,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                               if (libraryThumbs[0] && activeProjectId) {
                                 try {
                                   await thumbnailApi.deleteLibrary(activeProjectId, libraryThumbs[0].filename);
-                                } catch (e) {}
+                                } catch (e) { }
                               }
                               setLibraryThumbs([]);
                               setThumbnailLibraryPath('');
@@ -1792,45 +1792,45 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                   </div>
                 ) : (
                   <>
-                <div>
-                  <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '3px' }}>Phong cách (Style):</label>
-                  <select
-                    value={thumbnailStyle}
-                    onChange={(e) => setThumbnailStyle(e.target.value)}
-                    style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
-                  >
-                    <option value="auto">🤖 Tự động theo kịch bản</option>
-                    <option value="cinematic">🎬 Cinematic Kịch tính</option>
-                    <option value="youtube_viral">🚀 YouTube Viral Bắt mắt</option>
-                    <option value="anime">🌸 Anime Nhật Bản</option>
-                    <option value="realistic">📸 Realistic 8K</option>
-                    <option value="cartoon">🎨 Cartoon 3D</option>
-                  </select>
-                </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '3px' }}>Phong cách (Style):</label>
+                      <select
+                        value={thumbnailStyle}
+                        onChange={(e) => setThumbnailStyle(e.target.value)}
+                        style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
+                      >
+                        <option value="auto">🤖 Tự động theo kịch bản</option>
+                        <option value="cinematic">🎬 Cinematic Kịch tính</option>
+                        <option value="youtube_viral">🚀 YouTube Viral Bắt mắt</option>
+                        <option value="anime">🌸 Anime Nhật Bản</option>
+                        <option value="realistic">📸 Realistic 8K</option>
+                        <option value="cartoon">🎨 Cartoon 3D</option>
+                      </select>
+                    </div>
 
-                <div>
-                  <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '3px' }}>AI Provider:</label>
-                  <select
-                    value={thumbnailProvider}
-                    onChange={(e) => setThumbnailProvider(e.target.value)}
-                    style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
-                  >
-                    <option value="pollinations">⚡ Pollinations AI (Miễn phí)</option>
-                    <option value="fal">🎨 fal.ai FLUX</option>
-                    <option value="openai">🤖 OpenAI DALL-E 3</option>
-                  </select>
-                </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '3px' }}>AI Provider:</label>
+                      <select
+                        value={thumbnailProvider}
+                        onChange={(e) => setThumbnailProvider(e.target.value)}
+                        style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
+                      >
+                        <option value="pollinations">⚡ Pollinations AI (Miễn phí)</option>
+                        <option value="fal">🎨 fal.ai FLUX</option>
+                        <option value="openai">🤖 OpenAI DALL-E 3</option>
+                      </select>
+                    </div>
 
-                <div>
-                  <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '3px' }}>Custom Instruction:</label>
-                  <textarea
-                    rows={2}
-                    placeholder="Tập trung nhân vật chính, tông u tối..."
-                    value={thumbnailInstruction}
-                    onChange={(e) => setThumbnailInstruction(e.target.value)}
-                    style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '11px', resize: 'vertical' }}
-                  />
-                </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '3px' }}>Custom Instruction:</label>
+                      <textarea
+                        rows={2}
+                        placeholder="Tập trung nhân vật chính, tông u tối..."
+                        value={thumbnailInstruction}
+                        onChange={(e) => setThumbnailInstruction(e.target.value)}
+                        style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '11px', resize: 'vertical' }}
+                      />
+                    </div>
                   </>
                 )}
               </div>

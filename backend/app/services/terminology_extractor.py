@@ -65,6 +65,29 @@ _CJK_NAME_SUFFIXES = (
 PROPER_NAME_TYPES = frozenset({"character", "location", "organization"})
 EXTENDED_TERM_TYPES = frozenset({"creature", "skill", "weapon", "item", "technique", "title", "other"})
 
+_CHINESE_LANG_CODES = {"zh", "chinese", "zh-cn", "zh-tw", "zh-hans", "zh-hant"}
+
+
+def is_self_mapped_cjk(source_term: str, translated_term: str, target_lang: str = "") -> bool:
+    """True when a CJK source term maps to itself and target language is NOT Chinese.
+
+    This catches invalid glossary entries like source_term=安妮, translated_term=安妮
+    when target is Vietnamese/English.  Returns False for legitimate same-term mappings
+    like AI→AI or Netflix→Netflix (which are not CJK).
+    """
+    from app.services.glossary_service import normalize_glossary_text
+
+    if not source_term or not translated_term:
+        return False
+    # Only flag when the source is purely CJK (Han characters)
+    if not _CJK_RUN_RE.fullmatch(source_term.strip()):
+        return False
+    # If target language IS Chinese, CJK→CJK is perfectly valid
+    if str(target_lang).lower().strip() in _CHINESE_LANG_CODES:
+        return False
+    # Compare normalized forms
+    return normalize_glossary_text(source_term) == normalize_glossary_text(translated_term)
+
 
 def looks_like_cjk_name(term: str) -> bool:
     """True for 张三 / 青云城 / 李飞羽; false for 爬上 / 弟子 / 而且門派."""
@@ -296,8 +319,11 @@ async def llm_extract_terms(text: str, target_lang: str = "vi") -> list[dict[str
             "(e.g. 我先走了, 看来今天, 只是想给).\n"
             f"Lines may include source transcript and the {target_lang} translation.\n"
             'Return ONLY JSON: {{"terms":[{{"source_term":"...","suggested_term":"...","term_type":"character","confidence":0.9}}]}}\n'
-            "source_term is the original-language name; suggested_term is the translated name "
-            f"(keep {target_lang} diacritics). "
+            "source_term is the original-language name; suggested_term MUST be the translated/transliterated name "
+            f"in {target_lang} (keep {target_lang} diacritics). "
+            "IMPORTANT: If source_term is in Chinese (e.g. 安妮, 詹森), suggested_term MUST be the "
+            f"{target_lang} rendering (e.g. Annie, Jensen), NOT the original Chinese characters. "
+            "Never set suggested_term equal to source_term when they are in different scripts.\n"
             "term_type must be one of: character, creature, location, organization, skill, weapon, "
             "item, technique, title, other.\n\n"
             f"Subtitles:\n{blob[:6000]}"
@@ -316,16 +342,28 @@ async def persist_detected_terms(
     db: Optional[AsyncSession],
     project_id: str,
     terms: list[dict[str, Any]],
+    target_lang: str = "",
 ) -> int:
     if db is None or not project_id or project_id == "default_project" or not terms:
         return 0
     saved = 0
     for item in filter_terminology(terms):
+        source = item["source_term"]
+        suggested = item["suggested_term"]
+        # Reject CJK self-mapped entries when target is not Chinese
+        if is_self_mapped_cjk(source, suggested, target_lang):
+            logger.info(
+                "Rejected self-mapped CJK glossary entry",
+                source_term=source,
+                suggested_term=suggested,
+                target_lang=target_lang,
+            )
+            continue
         await create_glossary_entry(
             db,
             project_id,
-            item["source_term"],
-            item["suggested_term"],
+            source,
+            suggested,
             item["term_type"],
             confidence=item["confidence"],
             source_context=item.get("source_context"),

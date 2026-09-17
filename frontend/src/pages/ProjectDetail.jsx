@@ -480,574 +480,574 @@ export default function ProjectDetail({ projectId, onBack, onEditInTranslator })
       {activeTab === 'settings' && (() => {
         const pSettings = editSettings || {};
         return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          {/* Header Action Bar */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#1e1b4b', padding: '16px 20px', borderRadius: '10px', border: '1px solid #4338ca', flexWrap: 'wrap', gap: '12px' }}>
-            <div>
-              <h3 style={{ margin: 0, fontSize: '16px', color: '#fff', fontWeight: 'bold' }}>⚙️ Cấu hình Chi Tiết Dự Án (Chỉnh sửa & Lưu DB)</h3>
-              <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#93c5fd' }}>Thay đổi các tùy chọn dưới đây và nhấn "Lưu cấu hình" để cập nhật chính xác vào dự án.</p>
-            </div>
-            <div style={{ display: 'flex', gap: '10px' }}>
-              {isTabDirty && (
-                <button
-                  onClick={() => setEditSettings(savedSnapshot)}
-                  style={{ background: '#475569', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}
-                >
-                  ↩️ Khôi phục
-                </button>
-              )}
-              <button
-                onClick={handleSaveTabSettings}
-                disabled={savingSettings}
-                style={{ background: '#2563eb', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px', boxShadow: '0 4px 12px rgba(37, 99, 235, 0.4)' }}
-              >
-                {savingSettings ? 'Đang lưu Database...' : '💾 Lưu Cấu hình Dự án'}
-              </button>
-            </div>
-          </div>
-
-          {isTabDirty && (
-            <div style={{ background: '#1e3a8a', border: '1px solid #3b82f6', color: '#93c5fd', padding: '12px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 'bold' }}>
-              ⚠️ Bạn có thay đổi chưa lưu trên trang này. Hãy nhấn "Lưu Cấu hình Dự án" để lưu lại.
-            </div>
-          )}
-
-          {/* YouTube & SEO Defaults Card */}
-          <div className="card" style={{ background: '#1e293b', borderRadius: '10px', padding: '20px', border: '1px solid #4338ca', boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid #334155', paddingBottom: '10px' }}>
-              <h4 style={{ margin: 0, fontSize: '16px', color: '#f43f5e', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                📺 YouTube & SEO Defaults
-              </h4>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: '#e2e8f0', fontWeight: 'bold' }}>
-                <input
-                  type="checkbox"
-                  checked={parseBool(pSettings.youtube_enabled, true)}
-                  onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_enabled: e.target.checked }))}
-                  style={{ accentColor: '#f43f5e', width: '16px', height: '16px' }}
-                />
-                ☑ Sử dụng YouTube & SEO Defaults
-              </label>
-            </div>
-
-            <p style={{ fontSize: '13px', color: '#94a3b8', marginTop: '-4px', marginBottom: '16px' }}>
-              Cấu hình mẫu mặc định cho tất cả video trong project. Mỗi video mới sẽ tự động kế thừa cấu hình này.
-            </p>
-
-            {parseBool(pSettings.youtube_enabled, true) ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-                  {/* Tên Kênh YouTube */}
-                  <div>
-                    <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '6px', fontWeight: 'bold' }}>
-                      📌 Tên Kênh YouTube:
-                    </label>
-                    <input
-                      type="text"
-                      className="form-control"
-                      value={pSettings.youtube_channel_name ?? 'Xói Xám Content'}
-                      onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_channel_name: e.target.value }))}
-                      placeholder="vd: Xói Xám Content"
-                      style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
-                    />
-                  </div>
-
-                  {/* Mẫu tiêu đề Video (Title Template) */}
-                  <div>
-                    <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '6px', fontWeight: 'bold' }}>
-                      📌 Mẫu Tiêu Đề Video (Title Template):
-                    </label>
-                    <input
-                      type="text"
-                      className="form-control"
-                      value={pSettings.youtube_title_template ?? 'Tập {episode} | {project_name} | {channel_name}'}
-                      onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_title_template: e.target.value }))}
-                      placeholder="Tập {episode} | {project_name} | {channel_name}"
-                      style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
-                    />
-                  </div>
-                </div>
-
-                {/* Variable Tags & Preview */}
-                <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', padding: '12px 16px' }}>
-                  <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '6px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <span style={{ fontWeight: 'bold', color: '#cbd5e1' }}>Biến hỗ trợ:</span>
-                    <code style={{ background: '#1e293b', padding: '2px 6px', borderRadius: '4px', color: '#38bdf8' }}>{`{episode}`}</code>
-                    <code style={{ background: '#1e293b', padding: '2px 6px', borderRadius: '4px', color: '#38bdf8' }}>{`{project_name}`}</code>
-                    <code style={{ background: '#1e293b', padding: '2px 6px', borderRadius: '4px', color: '#38bdf8' }}>{`{channel_name}`}</code>
-                    <code style={{ background: '#1e293b', padding: '2px 6px', borderRadius: '4px', color: '#38bdf8' }}>{`{video_name}`}</code>
-                  </div>
-                  <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #1e293b' }}>
-                    <span style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: 'bold', display: 'block', marginBottom: '2px' }}>
-                      👁️ Preview Tiêu Đề:
-                    </span>
-                    <div style={{ color: '#38bdf8', fontWeight: 'bold', fontSize: '14px' }}>
-                      {(pSettings.youtube_title_template || 'Tập {episode} | {project_name} | {channel_name}')
-                        .replace('{episode}', '01')
-                        .replace('{project_name}', project?.title || 'Tên Project')
-                        .replace('{channel_name}', pSettings.youtube_channel_name || 'Xói Xám Content')
-                        .replace('{video_name}', 'Tên Video')}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Mô tả Video mặc định */}
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '6px', fontWeight: 'bold' }}>
-                    📝 Mô tả Video Mặc Định:
-                  </label>
-                  <textarea
-                    rows="3"
-                    className="form-textarea"
-                    value={pSettings.youtube_description_default ?? ''}
-                    onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_description_default: e.target.value }))}
-                    placeholder="Kênh Xói Xám Content&#10;&#10;Nội dung video được dịch và lồng tiếng bằng AI.&#10;&#10;#ai #dichvideo"
-                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px', resize: 'vertical' }}
-                  />
-                </div>
-
-                {/* Tags mặc định */}
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '6px', fontWeight: 'bold' }}>
-                    🏷️ Tags Mặc Định (Bắt buộc giữ lại):
-                  </label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    value={pSettings.youtube_default_tags ?? ''}
-                    onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_default_tags: e.target.value }))}
-                    placeholder="#xoiXamContent, #ai, #dichvideo"
-                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
-                  />
-                </div>
-
-                {/* Section 2: AI SEO Generator settings */}
-                <div style={{ background: '#1e1b4b', border: '1px solid #4338ca', borderRadius: '8px', padding: '14px', marginTop: '4px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#a78bfa', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      🤖 AI SEO Generator
-                    </span>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#ddd6fe', fontWeight: 'bold' }}>
-                      <input
-                        type="checkbox"
-                        checked={parseBool(pSettings.youtube_ai_seo_enabled, true)}
-                        onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_ai_seo_enabled: e.target.checked }))}
-                        style={{ accentColor: '#8b5cf6' }}
-                      />
-                      Cho phép AI bổ sung SEO
-                    </label>
-                  </div>
-
-                  {parseBool(pSettings.youtube_ai_seo_enabled, true) && (
-                    <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', fontSize: '12px', color: '#c4b5fd', marginTop: '8px' }}>
-                      <span style={{ fontWeight: 'bold' }}>AI được phép bổ sung:</span>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={parseBool(pSettings.youtube_ai_allow_title, true)}
-                          onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_ai_allow_title: e.target.checked }))}
-                          style={{ accentColor: '#8b5cf6' }}
-                        />
-                        Title suggestion
-                      </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={parseBool(pSettings.youtube_ai_allow_description, true)}
-                          onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_ai_allow_description: e.target.checked }))}
-                          style={{ accentColor: '#8b5cf6' }}
-                        />
-                        Description
-                      </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={parseBool(pSettings.youtube_ai_allow_tags, true)}
-                          onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_ai_allow_tags: e.target.checked }))}
-                          style={{ accentColor: '#8b5cf6' }}
-                        />
-                        Additional Tags
-                      </label>
-                    </div>
-                  )}
-                </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {/* Header Action Bar */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#1e1b4b', padding: '16px 20px', borderRadius: '10px', border: '1px solid #4338ca', flexWrap: 'wrap', gap: '12px' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '16px', color: '#fff', fontWeight: 'bold' }}>⚙️ Cấu hình Chi Tiết Dự Án (Chỉnh sửa & Lưu DB)</h3>
+                <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#93c5fd' }}>Thay đổi các tùy chọn dưới đây và nhấn "Lưu cấu hình" để cập nhật chính xác vào dự án.</p>
               </div>
-            ) : (
-              <div style={{ fontSize: '13px', color: '#94a3b8', fontStyle: 'italic', padding: '12px', background: '#0f172a', borderRadius: '6px', border: '1px solid #334155' }}>
-                🚫 YouTube & SEO Defaults hiện đang TẮT. Đánh dấu vào ô ở trên để kích hoạt mẫu tiêu đề, mô tả và tag mặc định.
+              <div style={{ display: 'flex', gap: '10px' }}>
+                {isTabDirty && (
+                  <button
+                    onClick={() => setEditSettings(savedSnapshot)}
+                    style={{ background: '#475569', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}
+                  >
+                    ↩️ Khôi phục
+                  </button>
+                )}
+                <button
+                  onClick={handleSaveTabSettings}
+                  disabled={savingSettings}
+                  style={{ background: '#2563eb', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px', boxShadow: '0 4px 12px rgba(37, 99, 235, 0.4)' }}
+                >
+                  {savingSettings ? 'Đang lưu Database...' : '💾 Lưu Cấu hình Dự án'}
+                </button>
+              </div>
+            </div>
+
+            {isTabDirty && (
+              <div style={{ background: '#1e3a8a', border: '1px solid #3b82f6', color: '#93c5fd', padding: '12px 18px', borderRadius: '8px', fontSize: '13px', fontWeight: 'bold' }}>
+                ⚠️ Bạn có thay đổi chưa lưu trên trang này. Hãy nhấn "Lưu Cấu hình Dự án" để lưu lại.
               </div>
             )}
-          </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '20px' }}>
-            {/* 1. Language & Input */}
-            <div className="card" style={{ background: '#1e293b', borderRadius: '10px', padding: '18px', border: '1px solid #334155' }}>
-              <h4 style={{ margin: '0 0 14px 0', fontSize: '15px', color: '#818cf8', fontWeight: 'bold', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>
-                🌐 Ngôn ngữ & Video Input
-              </h4>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Ngôn ngữ đích (Target Language):</label>
-                  <select
-                    value={pSettings.target_language || 'vi'}
-                    onChange={(e) => setEditSettings(prev => ({ ...prev, target_language: e.target.value }))}
-                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
-                  >
-                    <option value="vi">🇻🇳 Tiếng Việt (Vietnamese)</option>
-                    <option value="en">🇬🇧 Tiếng Anh (English)</option>
-                    <option value="ja">🇯🇵 Tiếng Nhật (Japanese)</option>
-                    <option value="ko">🇰🇷 Tiếng Hàn (Korean)</option>
-                    <option value="zh">🇨🇳 Tiếng Trung (Chinese)</option>
-                    <option value="fr">🇫🇷 Tiếng Pháp (French)</option>
-                    <option value="de">🇩🇪 Tiếng Đức (German)</option>
-                    <option value="es">🇪🇸 Tiếng Tây Ban Nha (Spanish)</option>
-                    <option value="ru">🇷🇺 Tiếng Nga (Russian)</option>
-                    <option value="th">🇹🇭 Tiếng Thái (Thai)</option>
-                    <option value="id">🇮🇩 Tiếng Indonesia (Indonesian)</option>
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Ngôn ngữ nguồn (Source Language):</label>
-                  <select
-                    value={pSettings.source_language || 'auto'}
-                    onChange={(e) => setEditSettings(prev => ({ ...prev, source_language: e.target.value }))}
-                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
-                  >
-                    <option value="auto">✨ Tự động nhận diện (Auto Detect)</option>
-                    <option value="en">🇬🇧 Tiếng Anh (English)</option>
-                    <option value="zh">🇨🇳 Tiếng Trung (Chinese)</option>
-                    <option value="ja">🇯🇵 Tiếng Nhật (Japanese)</option>
-                    <option value="ko">🇰🇷 Tiếng Hàn (Korean)</option>
-                    <option value="fr">🇫🇷 Tiếng Pháp (French)</option>
-                    <option value="de">🇩🇪 Tiếng Đức (German)</option>
-                    <option value="es">🇪🇸 Tiếng Tây Ban Nha (Spanish)</option>
-                    <option value="ru">🇷🇺 Tiếng Nga (Russian)</option>
-                    <option value="vi">🇻🇳 Tiếng Việt (Vietnamese)</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            {/* 3. Voice & Dubbing */}
-            <div className="card" style={{ background: '#1e293b', borderRadius: '10px', padding: '18px', border: '1px solid #334155' }}>
-              <h4 style={{ margin: '0 0 14px 0', fontSize: '15px', color: '#818cf8', fontWeight: 'bold', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>
-                🎙️ Voice & Dubbing
-              </h4>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>TTS Provider:</label>
-                  <select
-                    value={pSettings.audio_provider_id || 'edge_tts'}
-                    onChange={(e) => setEditSettings(prev => ({ ...prev, audio_provider_id: e.target.value }))}
-                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
-                  >
-                    <option value="edge_tts">⚡ Edge TTS (Miễn phí / Tốc độ cao)</option>
-                    <option value="elevenlabs">🎙️ ElevenLabs (Chất lượng cao)</option>
-                    <option value="google_tts">🔊 Google Cloud TTS</option>
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Giọng đọc (Voice ID):</label>
-                  <select
-                    value={pSettings.voice_id || 'vi-VN-HoaiMyNeural'}
-                    onChange={(e) => setEditSettings(prev => ({ ...prev, voice_id: e.target.value }))}
-                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
-                  >
-                    {voices.map(v => (
-                      <option key={v.id} value={v.id}>{v.name} ({v.gender})</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Âm thanh gốc (Original Audio):</label>
-                  <select
-                    value={pSettings.original_audio_mode || 'mute'}
-                    onChange={(e) => setEditSettings(prev => ({ ...prev, original_audio_mode: e.target.value }))}
-                    style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
-                  >
-                    <option value="mute">🔇 Tắt hoàn toàn tiếng gốc (Mute)</option>
-                    <option value="duck">🔉 Giảm âm lượng gốc (Background Ducking 40%)</option>
-                    <option value="keep">🔊 Giữ âm thanh gốc trộn cùng tiếng đọc (Full Keep)</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            {/* 4. Watermark Configuration */}
-            <div className="card" style={{ background: '#1e293b', borderRadius: '10px', padding: '18px', border: '1px solid #334155' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>
-                <h4 style={{ margin: 0, fontSize: '15px', color: '#818cf8', fontWeight: 'bold' }}>
-                  🏷️ Watermark / Logo Configuration
+            {/* YouTube & SEO Defaults Card */}
+            <div className="card" style={{ background: '#1e293b', borderRadius: '10px', padding: '20px', border: '1px solid #4338ca', boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid #334155', paddingBottom: '10px' }}>
+                <h4 style={{ margin: 0, fontSize: '16px', color: '#f43f5e', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  📺 YouTube & SEO Defaults
                 </h4>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={parseBool(pSettings.watermark_enabled)}
-                  title={parseBool(pSettings.watermark_enabled) ? "BẬT Watermark" : "TẮT Watermark"}
-                  onClick={() => setEditSettings(prev => ({ ...prev, watermark_enabled: !parseBool(prev.watermark_enabled) }))}
-                  style={{
-                    width: '46px',
-                    height: '24px',
-                    borderRadius: '12px',
-                    background: parseBool(pSettings.watermark_enabled) ? '#6366f1' : '#475569',
-                    border: 'none',
-                    position: 'relative',
-                    cursor: 'pointer',
-                    transition: 'background 0.2s ease',
-                    padding: 0,
-                    outline: 'none',
-                    boxShadow: parseBool(pSettings.watermark_enabled) ? '0 0 10px rgba(99, 102, 241, 0.6)' : 'none',
-                  }}
-                >
-                  <span
-                    style={{
-                      display: 'block',
-                      width: '18px',
-                      height: '18px',
-                      borderRadius: '50%',
-                      background: '#ffffff',
-                      position: 'absolute',
-                      top: '3px',
-                      left: parseBool(pSettings.watermark_enabled) ? '25px' : '3px',
-                      transition: 'left 0.2s ease',
-                      boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
-                    }}
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: '#e2e8f0', fontWeight: 'bold' }}>
+                  <input
+                    type="checkbox"
+                    checked={parseBool(pSettings.youtube_enabled, true)}
+                    onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_enabled: e.target.checked }))}
+                    style={{ accentColor: '#f43f5e', width: '16px', height: '16px' }}
                   />
-                </button>
+                  ☑ Sử dụng YouTube & SEO Defaults
+                </label>
               </div>
 
-              {parseBool(pSettings.watermark_enabled) ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  <div style={{ display: 'flex', gap: '16px' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: '#cbd5e1', fontSize: '13px' }}>
-                      <input
-                        type="radio"
-                        name="tab_wm_type"
-                        value="image"
-                        checked={(pSettings.watermark_type === 'text' ? 'text' : 'image') === 'image'}
-                        onChange={() => setEditSettings(prev => ({ ...prev, watermark_type: 'image' }))}
-                        style={{ accentColor: '#6366f1' }}
-                      />
-                      🖼️ Logo Ảnh
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: '#cbd5e1', fontSize: '13px' }}>
-                      <input
-                        type="radio"
-                        name="tab_wm_type"
-                        value="text"
-                        checked={pSettings.watermark_type === 'text'}
-                        onChange={() => setEditSettings(prev => ({ ...prev, watermark_type: 'text' }))}
-                        style={{ accentColor: '#6366f1' }}
-                      />
-                      🔤 Watermark Text
-                    </label>
-                  </div>
+              <p style={{ fontSize: '13px', color: '#94a3b8', marginTop: '-4px', marginBottom: '16px' }}>
+                Cấu hình mẫu mặc định cho tất cả video trong project. Mỗi video mới sẽ tự động kế thừa cấu hình này.
+              </p>
 
-                  {pSettings.watermark_type === 'text' ? (
+              {parseBool(pSettings.youtube_enabled, true) ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
+                    {/* Tên Kênh YouTube */}
                     <div>
-                      <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Nội dung Text Watermark:</label>
+                      <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '6px', fontWeight: 'bold' }}>
+                        📌 Tên Kênh YouTube:
+                      </label>
                       <input
                         type="text"
-                        value={pSettings.watermark_text || ''}
-                        onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_text: e.target.value }))}
-                        placeholder="© AutoTransAI Studio"
+                        className="form-control"
+                        value={pSettings.youtube_channel_name ?? 'Xói Xám Content'}
+                        onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_channel_name: e.target.value }))}
+                        placeholder="vd: Xói Xám Content"
                         style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
                       />
                     </div>
-                  ) : (
+
+                    {/* Mẫu tiêu đề Video (Title Template) */}
                     <div>
-                      <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Upload Logo (PNG / WEBP / JPG):</label>
+                      <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '6px', fontWeight: 'bold' }}>
+                        📌 Mẫu Tiêu Đề Video (Title Template):
+                      </label>
                       <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleTabLogoUpload}
-                        disabled={isUploadingLogo}
-                        style={{ background: '#0f172a', padding: '6px', borderRadius: '6px', color: '#fff', border: '1px solid #475569', fontSize: '12px', width: '100%' }}
+                        type="text"
+                        className="form-control"
+                        value={pSettings.youtube_title_template ?? 'Tập {episode} | {project_name} | {channel_name}'}
+                        onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_title_template: e.target.value }))}
+                        placeholder="Tập {episode} | {project_name} | {channel_name}"
+                        style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
                       />
-                      {pSettings.watermark_image_path && (
-                        <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <img
-                            src={`/api/storage/files/${pSettings.watermark_image_path.replace(/\\/g, '/')}`}
-                            alt="Logo Preview"
-                            style={{ maxHeight: '40px', maxWidth: '120px', objectFit: 'contain', background: '#0f172a', padding: '4px', borderRadius: '4px', border: '1px solid #475569' }}
-                          />
-                          <span style={{ color: '#4ade80', fontSize: '12px' }}>✓ Đã chọn logo</span>
-                        </div>
-                      )}
                     </div>
-                  )}
-
-                  <div>
-                    <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Vị trí Watermark:</label>
-                    <select
-                      value={pSettings.watermark_position || 'bottom_right'}
-                      onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_position: e.target.value }))}
-                      style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
-                    >
-                      <option value="bottom_right">↘️ Góc Dưới Phải (Bottom Right)</option>
-                      <option value="bottom_left">↙️ Góc Dưới Trái (Bottom Left)</option>
-                      <option value="top_right">↗️ Góc Trên Phải (Top Right)</option>
-                      <option value="top_left">↖️ Góc Trên Trái (Top Left)</option>
-                      <option value="center">⏹️ Chính Giữa (Center)</option>
-                    </select>
                   </div>
 
-                  <div>
-                    <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
-                      Kích thước ({Math.round((pSettings.watermark_scale || 0.20) * 100)}% rộng video):
-                    </label>
-                    <input
-                      type="range"
-                      min="0.10"
-                      max="0.50"
-                      step="0.05"
-                      value={pSettings.watermark_scale || 0.20}
-                      onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_scale: parseFloat(e.target.value) }))}
-                      style={{ width: '100%', accentColor: '#818cf8' }}
-                    />
+                  {/* Variable Tags & Preview */}
+                  <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', padding: '12px 16px' }}>
+                    <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '6px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: 'bold', color: '#cbd5e1' }}>Biến hỗ trợ:</span>
+                      <code style={{ background: '#1e293b', padding: '2px 6px', borderRadius: '4px', color: '#38bdf8' }}>{`{episode}`}</code>
+                      <code style={{ background: '#1e293b', padding: '2px 6px', borderRadius: '4px', color: '#38bdf8' }}>{`{project_name}`}</code>
+                      <code style={{ background: '#1e293b', padding: '2px 6px', borderRadius: '4px', color: '#38bdf8' }}>{`{channel_name}`}</code>
+                      <code style={{ background: '#1e293b', padding: '2px 6px', borderRadius: '4px', color: '#38bdf8' }}>{`{video_name}`}</code>
+                    </div>
+                    <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #1e293b' }}>
+                      <span style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: 'bold', display: 'block', marginBottom: '2px' }}>
+                        👁️ Preview Tiêu Đề:
+                      </span>
+                      <div style={{ color: '#38bdf8', fontWeight: 'bold', fontSize: '14px' }}>
+                        {(pSettings.youtube_title_template || 'Tập {episode} | {project_name} | {channel_name}')
+                          .replace('{episode}', '01')
+                          .replace('{project_name}', project?.title || 'Tên Project')
+                          .replace('{channel_name}', pSettings.youtube_channel_name || 'Xói Xám Content')
+                          .replace('{video_name}', 'Tên Video')}
+                      </div>
+                    </div>
                   </div>
 
+                  {/* Mô tả Video mặc định */}
                   <div>
-                    <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
-                      Độ Trong Suốt ({Math.round((pSettings.watermark_opacity || 0.80) * 100)}%):
-                    </label>
-                    <input
-                      type="range"
-                      min="0.10"
-                      max="1.00"
-                      step="0.05"
-                      value={pSettings.watermark_opacity || 0.80}
-                      onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_opacity: parseFloat(e.target.value) }))}
-                      style={{ width: '100%', accentColor: '#818cf8' }}
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
-                      Khoảng cách mép ({pSettings.watermark_margin || 20}px):
-                    </label>
-                    <input
-                      type="range"
-                      min="10"
-                      max="50"
-                      step="5"
-                      value={pSettings.watermark_margin || 20}
-                      onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_margin: parseInt(e.target.value, 10) }))}
-                      style={{ width: '100%', accentColor: '#818cf8' }}
-                    />
-                  </div>
-                </div>
-              ) : (
-                <div style={{ fontSize: '13px', color: '#94a3b8', fontStyle: 'italic', padding: '12px', background: '#0f172a', borderRadius: '6px', border: '1px solid #334155' }}>
-                  🚫 Watermark hiện đang TẮT cho dự án này. Gạt thanh trượt đóng mở ở trên để kích hoạt tùy chỉnh logo hoặc văn bản watermark.
-                </div>
-              )}
-            </div>
-
-            {/* 5. AI Thumbnail Settings */}
-            <div className="card" style={{ background: '#1e293b', borderRadius: '10px', padding: '18px', border: '1px solid #334155' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>
-                <h4 style={{ margin: 0, fontSize: '15px', color: '#818cf8', fontWeight: 'bold' }}>
-                  🎨 AI Thumbnail Configuration
-                </h4>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={parseBool(pSettings.thumbnail_enabled)}
-                  title={parseBool(pSettings.thumbnail_enabled) ? "BẬT AI Thumbnail" : "TẮT AI Thumbnail"}
-                  onClick={() => setEditSettings(prev => ({ ...prev, thumbnail_enabled: !parseBool(prev.thumbnail_enabled) }))}
-                  style={{
-                    width: '46px',
-                    height: '24px',
-                    borderRadius: '12px',
-                    background: parseBool(pSettings.thumbnail_enabled) ? '#6366f1' : '#475569',
-                    border: 'none',
-                    position: 'relative',
-                    cursor: 'pointer',
-                    transition: 'background 0.2s ease',
-                    padding: 0,
-                    outline: 'none',
-                    boxShadow: parseBool(pSettings.thumbnail_enabled) ? '0 0 10px rgba(99, 102, 241, 0.6)' : 'none',
-                  }}
-                >
-                  <span
-                    style={{
-                      display: 'block',
-                      width: '18px',
-                      height: '18px',
-                      borderRadius: '50%',
-                      background: '#ffffff',
-                      position: 'absolute',
-                      top: '3px',
-                      left: parseBool(pSettings.thumbnail_enabled) ? '25px' : '3px',
-                      transition: 'left 0.2s ease',
-                      boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
-                    }}
-                  />
-                </button>
-              </div>
-
-              {parseBool(pSettings.thumbnail_enabled) ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  <div>
-                    <label className="form-label text-light small fw-bold" style={{ display: 'block', marginBottom: '6px' }}>
-                      🎭 Phong Cách Thumbnail (Style):
-                    </label>
-                    <select
-                      className="form-select form-select-sm bg-dark text-light border-secondary"
-                      value={pSettings.thumbnail_style || 'auto'}
-                      onChange={(e) => setEditSettings(prev => ({ ...prev, thumbnail_style: e.target.value }))}
-                    >
-                      <option value="auto">🤖 Tự động (Phân tích cảm xúc kịch bản)</option>
-                      <option value="cinematic">🎬 Cinematic (Điện ảnh kịch tính)</option>
-                      <option value="youtube_viral">🚀 YouTube Viral (Bắt mắt, biểu cảm mạnh)</option>
-                      <option value="horror">👻 Horror (U tối, bí ẩn, kinh dị)</option>
-                      <option value="anime">🌸 Anime Nhật Bản (Nhiều màu sắc)</option>
-                      <option value="realistic">📸 Realistic (Ảnh chụp 8K chân thực)</option>
-                      <option value="cartoon">🎨 Cartoon 3D (Hoạt hình 3D)</option>
-                      <option value="documentary">📜 Documentary (Phim tài liệu)</option>
-                      <option value="minimal">📐 Minimal (Tối giản, tương phản)</option>
-                      <option value="movie_poster">🍿 Poster Phim Hollywood</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="form-label text-light small fw-bold" style={{ display: 'block', marginBottom: '6px' }}>
-                      ⚙️ AI Image Provider:
-                    </label>
-                    <select
-                      className="form-select form-select-sm bg-dark text-light border-secondary"
-                      value={pSettings.thumbnail_provider || 'pollinations'}
-                      onChange={(e) => setEditSettings(prev => ({ ...prev, thumbnail_provider: e.target.value }))}
-                    >
-                      <option value="pollinations">⚡ Pollinations AI (Miễn phí & Nhanh)</option>
-                      <option value="fal">🎨 fal.ai FLUX (Chất lượng cao)</option>
-                      <option value="openai">🤖 OpenAI DALL-E 3</option>
-                      <option value="local_image">🖼️ Local Scenery (Offline)</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="form-label text-light small fw-bold" style={{ display: 'block', marginBottom: '6px' }}>
-                      💬 Yêu Cầu Bổ Sung (Custom Instruction):
+                    <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '6px', fontWeight: 'bold' }}>
+                      📝 Mô tả Video Mặc Định:
                     </label>
                     <textarea
-                      className="form-textarea form-control form-control-sm bg-dark text-light border-secondary"
                       rows="3"
-                      placeholder="Ví dụ: Tập trung vào nhân vật chính, tông màu xanh u tối, tương phản cao, góc quay rộng..."
-                      value={pSettings.thumbnail_custom_instruction || ''}
-                      onChange={(e) => setEditSettings(prev => ({ ...prev, thumbnail_custom_instruction: e.target.value }))}
-                      style={{ resize: 'vertical' }}
+                      className="form-textarea"
+                      value={pSettings.youtube_description_default ?? ''}
+                      onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_description_default: e.target.value }))}
+                      placeholder="Kênh Xói Xám Content&#10;&#10;Nội dung video được dịch và lồng tiếng bằng AI.&#10;&#10;#ai #dichvideo"
+                      style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px', resize: 'vertical' }}
                     />
+                  </div>
+
+                  {/* Tags mặc định */}
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '6px', fontWeight: 'bold' }}>
+                      🏷️ Tags Mặc Định (Bắt buộc giữ lại):
+                    </label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={pSettings.youtube_default_tags ?? ''}
+                      onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_default_tags: e.target.value }))}
+                      placeholder="#xoiXamContent, #ai, #dichvideo"
+                      style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                    />
+                  </div>
+
+                  {/* Section 2: AI SEO Generator settings */}
+                  <div style={{ background: '#1e1b4b', border: '1px solid #4338ca', borderRadius: '8px', padding: '14px', marginTop: '4px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#a78bfa', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        🤖 AI SEO Generator
+                      </span>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#ddd6fe', fontWeight: 'bold' }}>
+                        <input
+                          type="checkbox"
+                          checked={parseBool(pSettings.youtube_ai_seo_enabled, true)}
+                          onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_ai_seo_enabled: e.target.checked }))}
+                          style={{ accentColor: '#8b5cf6' }}
+                        />
+                        Cho phép AI bổ sung SEO
+                      </label>
+                    </div>
+
+                    {parseBool(pSettings.youtube_ai_seo_enabled, true) && (
+                      <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', fontSize: '12px', color: '#c4b5fd', marginTop: '8px' }}>
+                        <span style={{ fontWeight: 'bold' }}>AI được phép bổ sung:</span>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={parseBool(pSettings.youtube_ai_allow_title, true)}
+                            onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_ai_allow_title: e.target.checked }))}
+                            style={{ accentColor: '#8b5cf6' }}
+                          />
+                          Title suggestion
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={parseBool(pSettings.youtube_ai_allow_description, true)}
+                            onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_ai_allow_description: e.target.checked }))}
+                            style={{ accentColor: '#8b5cf6' }}
+                          />
+                          Description
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={parseBool(pSettings.youtube_ai_allow_tags, true)}
+                            onChange={(e) => setEditSettings(prev => ({ ...prev, youtube_ai_allow_tags: e.target.checked }))}
+                            style={{ accentColor: '#8b5cf6' }}
+                          />
+                          Additional Tags
+                        </label>
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : (
                 <div style={{ fontSize: '13px', color: '#94a3b8', fontStyle: 'italic', padding: '12px', background: '#0f172a', borderRadius: '6px', border: '1px solid #334155' }}>
-                  🖼️ tự động hiện đang TẮT. Gạt thanh trượt đóng mở ở trên để kích hoạt.
+                  🚫 YouTube & SEO Defaults hiện đang TẮT. Đánh dấu vào ô ở trên để kích hoạt mẫu tiêu đề, mô tả và tag mặc định.
                 </div>
               )}
             </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '20px' }}>
+              {/* 1. Language & Input */}
+              <div className="card" style={{ background: '#1e293b', borderRadius: '10px', padding: '18px', border: '1px solid #334155' }}>
+                <h4 style={{ margin: '0 0 14px 0', fontSize: '15px', color: '#818cf8', fontWeight: 'bold', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>
+                  🌐 Ngôn ngữ & Video Input
+                </h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Ngôn ngữ đích (Target Language):</label>
+                    <select
+                      value={pSettings.target_language || 'vi'}
+                      onChange={(e) => setEditSettings(prev => ({ ...prev, target_language: e.target.value }))}
+                      style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                    >
+                      <option value="vi">🇻🇳 Tiếng Việt (Vietnamese)</option>
+                      <option value="en">🇬🇧 Tiếng Anh (English)</option>
+                      <option value="ja">🇯🇵 Tiếng Nhật (Japanese)</option>
+                      <option value="ko">🇰🇷 Tiếng Hàn (Korean)</option>
+                      <option value="zh">🇨🇳 Tiếng Trung (Chinese)</option>
+                      <option value="fr">🇫🇷 Tiếng Pháp (French)</option>
+                      <option value="de">🇩🇪 Tiếng Đức (German)</option>
+                      <option value="es">🇪🇸 Tiếng Tây Ban Nha (Spanish)</option>
+                      <option value="ru">🇷🇺 Tiếng Nga (Russian)</option>
+                      <option value="th">🇹🇭 Tiếng Thái (Thai)</option>
+                      <option value="id">🇮🇩 Tiếng Indonesia (Indonesian)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Ngôn ngữ nguồn (Source Language):</label>
+                    <select
+                      value={pSettings.source_language || 'auto'}
+                      onChange={(e) => setEditSettings(prev => ({ ...prev, source_language: e.target.value }))}
+                      style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                    >
+                      <option value="auto">✨ Tự động nhận diện (Auto Detect)</option>
+                      <option value="en">🇬🇧 Tiếng Anh (English)</option>
+                      <option value="zh">🇨🇳 Tiếng Trung (Chinese)</option>
+                      <option value="ja">🇯🇵 Tiếng Nhật (Japanese)</option>
+                      <option value="ko">🇰🇷 Tiếng Hàn (Korean)</option>
+                      <option value="fr">🇫🇷 Tiếng Pháp (French)</option>
+                      <option value="de">🇩🇪 Tiếng Đức (German)</option>
+                      <option value="es">🇪🇸 Tiếng Tây Ban Nha (Spanish)</option>
+                      <option value="ru">🇷🇺 Tiếng Nga (Russian)</option>
+                      <option value="vi">🇻🇳 Tiếng Việt (Vietnamese)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. Voice & Dubbing */}
+              <div className="card" style={{ background: '#1e293b', borderRadius: '10px', padding: '18px', border: '1px solid #334155' }}>
+                <h4 style={{ margin: '0 0 14px 0', fontSize: '15px', color: '#818cf8', fontWeight: 'bold', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>
+                  🎙️ Voice & Dubbing
+                </h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>TTS Provider:</label>
+                    <select
+                      value={pSettings.audio_provider_id || 'edge_tts'}
+                      onChange={(e) => setEditSettings(prev => ({ ...prev, audio_provider_id: e.target.value }))}
+                      style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                    >
+                      <option value="edge_tts">⚡ Edge TTS (Miễn phí / Tốc độ cao)</option>
+                      <option value="elevenlabs">🎙️ ElevenLabs (Chất lượng cao)</option>
+                      <option value="google_tts">🔊 Google Cloud TTS</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Giọng đọc (Voice ID):</label>
+                    <select
+                      value={pSettings.voice_id || 'vi-VN-HoaiMyNeural'}
+                      onChange={(e) => setEditSettings(prev => ({ ...prev, voice_id: e.target.value }))}
+                      style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                    >
+                      {voices.map(v => (
+                        <option key={v.id} value={v.id}>{v.name} ({v.gender})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Âm thanh gốc (Original Audio):</label>
+                    <select
+                      value={pSettings.original_audio_mode || 'mute'}
+                      onChange={(e) => setEditSettings(prev => ({ ...prev, original_audio_mode: e.target.value }))}
+                      style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                    >
+                      <option value="mute">🔇 Tắt hoàn toàn tiếng gốc (Mute)</option>
+                      <option value="duck">🔉 Giảm âm lượng gốc (Background Ducking 40%)</option>
+                      <option value="keep">🔊 Giữ âm thanh gốc trộn cùng tiếng đọc (Full Keep)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* 4. Watermark Configuration */}
+              <div className="card" style={{ background: '#1e293b', borderRadius: '10px', padding: '18px', border: '1px solid #334155' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>
+                  <h4 style={{ margin: 0, fontSize: '15px', color: '#818cf8', fontWeight: 'bold' }}>
+                    🏷️ Watermark / Logo Configuration
+                  </h4>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={parseBool(pSettings.watermark_enabled)}
+                    title={parseBool(pSettings.watermark_enabled) ? "BẬT Watermark" : "TẮT Watermark"}
+                    onClick={() => setEditSettings(prev => ({ ...prev, watermark_enabled: !parseBool(prev.watermark_enabled) }))}
+                    style={{
+                      width: '46px',
+                      height: '24px',
+                      borderRadius: '12px',
+                      background: parseBool(pSettings.watermark_enabled) ? '#6366f1' : '#475569',
+                      border: 'none',
+                      position: 'relative',
+                      cursor: 'pointer',
+                      transition: 'background 0.2s ease',
+                      padding: 0,
+                      outline: 'none',
+                      boxShadow: parseBool(pSettings.watermark_enabled) ? '0 0 10px rgba(99, 102, 241, 0.6)' : 'none',
+                    }}
+                  >
+                    <span
+                      style={{
+                        display: 'block',
+                        width: '18px',
+                        height: '18px',
+                        borderRadius: '50%',
+                        background: '#ffffff',
+                        position: 'absolute',
+                        top: '3px',
+                        left: parseBool(pSettings.watermark_enabled) ? '25px' : '3px',
+                        transition: 'left 0.2s ease',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+                      }}
+                    />
+                  </button>
+                </div>
+
+                {parseBool(pSettings.watermark_enabled) ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ display: 'flex', gap: '16px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: '#cbd5e1', fontSize: '13px' }}>
+                        <input
+                          type="radio"
+                          name="tab_wm_type"
+                          value="image"
+                          checked={(pSettings.watermark_type === 'text' ? 'text' : 'image') === 'image'}
+                          onChange={() => setEditSettings(prev => ({ ...prev, watermark_type: 'image' }))}
+                          style={{ accentColor: '#6366f1' }}
+                        />
+                        🖼️ Logo Ảnh
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', color: '#cbd5e1', fontSize: '13px' }}>
+                        <input
+                          type="radio"
+                          name="tab_wm_type"
+                          value="text"
+                          checked={pSettings.watermark_type === 'text'}
+                          onChange={() => setEditSettings(prev => ({ ...prev, watermark_type: 'text' }))}
+                          style={{ accentColor: '#6366f1' }}
+                        />
+                        🔤 Watermark Text
+                      </label>
+                    </div>
+
+                    {pSettings.watermark_type === 'text' ? (
+                      <div>
+                        <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Nội dung Text Watermark:</label>
+                        <input
+                          type="text"
+                          value={pSettings.watermark_text || ''}
+                          onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_text: e.target.value }))}
+                          placeholder="© AutoTransAI Studio"
+                          style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                        />
+                      </div>
+                    ) : (
+                      <div>
+                        <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Upload Logo (PNG / WEBP / JPG):</label>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleTabLogoUpload}
+                          disabled={isUploadingLogo}
+                          style={{ background: '#0f172a', padding: '6px', borderRadius: '6px', color: '#fff', border: '1px solid #475569', fontSize: '12px', width: '100%' }}
+                        />
+                        {pSettings.watermark_image_path && (
+                          <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <img
+                              src={`/api/storage/files/${pSettings.watermark_image_path.replace(/\\/g, '/')}`}
+                              alt="Logo Preview"
+                              style={{ maxHeight: '40px', maxWidth: '120px', objectFit: 'contain', background: '#0f172a', padding: '4px', borderRadius: '4px', border: '1px solid #475569' }}
+                            />
+                            <span style={{ color: '#4ade80', fontSize: '12px' }}>✓ Đã chọn logo</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Vị trí Watermark:</label>
+                      <select
+                        value={pSettings.watermark_position || 'bottom_right'}
+                        onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_position: e.target.value }))}
+                        style={{ width: '100%', padding: '8px 12px', background: '#0f172a', border: '1px solid #475569', color: '#fff', borderRadius: '6px', fontSize: '13px' }}
+                      >
+                        <option value="bottom_right">↘️ Góc Dưới Phải (Bottom Right)</option>
+                        <option value="bottom_left">↙️ Góc Dưới Trái (Bottom Left)</option>
+                        <option value="top_right">↗️ Góc Trên Phải (Top Right)</option>
+                        <option value="top_left">↖️ Góc Trên Trái (Top Left)</option>
+                        <option value="center">⏹️ Chính Giữa (Center)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
+                        Kích thước ({Math.round((pSettings.watermark_scale || 0.20) * 100)}% rộng video):
+                      </label>
+                      <input
+                        type="range"
+                        min="0.10"
+                        max="0.50"
+                        step="0.05"
+                        value={pSettings.watermark_scale || 0.20}
+                        onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_scale: parseFloat(e.target.value) }))}
+                        style={{ width: '100%', accentColor: '#818cf8' }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
+                        Độ Trong Suốt ({Math.round((pSettings.watermark_opacity || 0.80) * 100)}%):
+                      </label>
+                      <input
+                        type="range"
+                        min="0.10"
+                        max="1.00"
+                        step="0.05"
+                        value={pSettings.watermark_opacity || 0.80}
+                        onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_opacity: parseFloat(e.target.value) }))}
+                        style={{ width: '100%', accentColor: '#818cf8' }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>
+                        Khoảng cách mép ({pSettings.watermark_margin || 20}px):
+                      </label>
+                      <input
+                        type="range"
+                        min="10"
+                        max="50"
+                        step="5"
+                        value={pSettings.watermark_margin || 20}
+                        onChange={(e) => setEditSettings(prev => ({ ...prev, watermark_margin: parseInt(e.target.value, 10) }))}
+                        style={{ width: '100%', accentColor: '#818cf8' }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '13px', color: '#94a3b8', fontStyle: 'italic', padding: '12px', background: '#0f172a', borderRadius: '6px', border: '1px solid #334155' }}>
+                    🚫 Watermark hiện đang TẮT cho dự án này. Gạt thanh trượt đóng mở ở trên để kích hoạt tùy chỉnh logo hoặc văn bản watermark.
+                  </div>
+                )}
+              </div>
+
+              {/* 5. AI Thumbnail Settings */}
+              <div className="card" style={{ background: '#1e293b', borderRadius: '10px', padding: '18px', border: '1px solid #334155' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>
+                  <h4 style={{ margin: 0, fontSize: '15px', color: '#818cf8', fontWeight: 'bold' }}>
+                    🎨 AI Thumbnail Configuration
+                  </h4>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={parseBool(pSettings.thumbnail_enabled)}
+                    title={parseBool(pSettings.thumbnail_enabled) ? "BẬT AI Thumbnail" : "TẮT AI Thumbnail"}
+                    onClick={() => setEditSettings(prev => ({ ...prev, thumbnail_enabled: !parseBool(prev.thumbnail_enabled) }))}
+                    style={{
+                      width: '46px',
+                      height: '24px',
+                      borderRadius: '12px',
+                      background: parseBool(pSettings.thumbnail_enabled) ? '#6366f1' : '#475569',
+                      border: 'none',
+                      position: 'relative',
+                      cursor: 'pointer',
+                      transition: 'background 0.2s ease',
+                      padding: 0,
+                      outline: 'none',
+                      boxShadow: parseBool(pSettings.thumbnail_enabled) ? '0 0 10px rgba(99, 102, 241, 0.6)' : 'none',
+                    }}
+                  >
+                    <span
+                      style={{
+                        display: 'block',
+                        width: '18px',
+                        height: '18px',
+                        borderRadius: '50%',
+                        background: '#ffffff',
+                        position: 'absolute',
+                        top: '3px',
+                        left: parseBool(pSettings.thumbnail_enabled) ? '25px' : '3px',
+                        transition: 'left 0.2s ease',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+                      }}
+                    />
+                  </button>
+                </div>
+
+                {parseBool(pSettings.thumbnail_enabled) ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div>
+                      <label className="form-label text-light small fw-bold" style={{ display: 'block', marginBottom: '6px' }}>
+                        🎭 Phong Cách Thumbnail (Style):
+                      </label>
+                      <select
+                        className="form-select form-select-sm bg-dark text-light border-secondary"
+                        value={pSettings.thumbnail_style || 'auto'}
+                        onChange={(e) => setEditSettings(prev => ({ ...prev, thumbnail_style: e.target.value }))}
+                      >
+                        <option value="auto">🤖 Tự động (Phân tích cảm xúc kịch bản)</option>
+                        <option value="cinematic">🎬 Cinematic (Điện ảnh kịch tính)</option>
+                        <option value="youtube_viral">🚀 YouTube Viral (Bắt mắt, biểu cảm mạnh)</option>
+                        <option value="horror">👻 Horror (U tối, bí ẩn, kinh dị)</option>
+                        <option value="anime">🌸 Anime Nhật Bản (Nhiều màu sắc)</option>
+                        <option value="realistic">📸 Realistic (Ảnh chụp 8K chân thực)</option>
+                        <option value="cartoon">🎨 Cartoon 3D (Hoạt hình 3D)</option>
+                        <option value="documentary">📜 Documentary (Phim tài liệu)</option>
+                        <option value="minimal">📐 Minimal (Tối giản, tương phản)</option>
+                        <option value="movie_poster">🍿 Poster Phim Hollywood</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="form-label text-light small fw-bold" style={{ display: 'block', marginBottom: '6px' }}>
+                        ⚙️ AI Image Provider:
+                      </label>
+                      <select
+                        className="form-select form-select-sm bg-dark text-light border-secondary"
+                        value={pSettings.thumbnail_provider || 'pollinations'}
+                        onChange={(e) => setEditSettings(prev => ({ ...prev, thumbnail_provider: e.target.value }))}
+                      >
+                        <option value="pollinations">⚡ Pollinations AI (Miễn phí & Nhanh)</option>
+                        <option value="fal">🎨 fal.ai FLUX (Chất lượng cao)</option>
+                        <option value="openai">🤖 OpenAI DALL-E 3</option>
+                        <option value="local_image">🖼️ Local Scenery (Offline)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="form-label text-light small fw-bold" style={{ display: 'block', marginBottom: '6px' }}>
+                        💬 Yêu Cầu Bổ Sung (Custom Instruction):
+                      </label>
+                      <textarea
+                        className="form-textarea form-control form-control-sm bg-dark text-light border-secondary"
+                        rows="3"
+                        placeholder="Ví dụ: Tập trung vào nhân vật chính, tông màu xanh u tối, tương phản cao, góc quay rộng..."
+                        value={pSettings.thumbnail_custom_instruction || ''}
+                        onChange={(e) => setEditSettings(prev => ({ ...prev, thumbnail_custom_instruction: e.target.value }))}
+                        style={{ resize: 'vertical' }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '13px', color: '#94a3b8', fontStyle: 'italic', padding: '12px', background: '#0f172a', borderRadius: '6px', border: '1px solid #334155' }}>
+                    🖼️ tự động hiện đang TẮT. Gạt thanh trượt đóng mở ở trên để kích hoạt.
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
         );
       })()}
 

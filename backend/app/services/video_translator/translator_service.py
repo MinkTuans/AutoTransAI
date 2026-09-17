@@ -907,17 +907,23 @@ def _translation_json_prompt(
 ) -> str:
     glossary_rules = ""
     if glossary:
-        pairs = "\n".join(
-            f"- {source} → {target}"
+        from app.services.terminology_extractor import is_self_mapped_cjk
+
+        # Filter out self-mapped CJK entries that would confuse the LLM
+        valid_pairs = [
+            (source, target)
             for source, target in sorted(
                 glossary.items(), key=lambda item: len(item[0]), reverse=True
             )
-        )
-        glossary_rules = (
-            "GLOSSARY CANONICAL — BẮT BUỘC dùng đúng translation bên phải "
-            "mỗi khi source bên trái xuất hiện:\n"
-            f"{pairs}\n\n"
-        )
+            if not is_self_mapped_cjk(source, target, target_lang_name)
+        ]
+        if valid_pairs:
+            pairs = "\n".join(f"- {source} → {target}" for source, target in valid_pairs)
+            glossary_rules = (
+                "GLOSSARY CANONICAL — BẮT BUỘC dùng đúng translation bên phải "
+                "mỗi khi source bên trái xuất hiện:\n"
+                f"{pairs}\n\n"
+            )
     return (
         "Bạn là dịch giả phim chuyên nghiệp.\n"
         f"Dịch TOÀN BỘ các câu thoại từ {source_lang_name} sang {target_lang_name}.\n"
@@ -936,13 +942,18 @@ def _translation_json_prompt(
 
 
 def find_glossary_violations(
-    segments: List[Dict[str, Any]], glossary: Optional[Dict[str, str]]
+    segments: List[Dict[str, Any]],
+    glossary: Optional[Dict[str, str]],
+    source_language: str = "",
+    target_language: str = "",
 ) -> List[Dict[str, Any]]:
     if not glossary:
         return []
     from app.services.glossary_service import normalize_glossary_text
+    from app.services.terminology_extractor import is_self_mapped_cjk
 
     violations: List[Dict[str, Any]] = []
+    skipped_invalid: List[Dict[str, str]] = []
     for index, segment in enumerate(segments, start=1):
         source_text = normalize_glossary_text(
             str(segment.get("text") or segment.get("original_text") or "")
@@ -967,19 +978,39 @@ def find_glossary_violations(
                     matches.append((source_term, required))
                 start = source_text.find(normalized_source, start + 1)
         for source_term, required in matches:
+            # Skip enforcement for invalid self-mapped CJK entries
+            if is_self_mapped_cjk(source_term, required, target_language):
+                skipped_invalid.append(
+                    {"source_term": source_term, "required": required}
+                )
+                continue
             if normalize_glossary_text(required) not in translated_text:
                 violations.append(
                     {"segment": index, "source_term": source_term, "required": required}
                 )
+    if skipped_invalid:
+        unique_skipped = list({(s["source_term"], s["required"]) for s in skipped_invalid})
+        logger.warning(
+            "Glossary enforcement skipped invalid self-mapped CJK entries",
+            skipped_count=len(unique_skipped),
+            entries=[
+                {"source_term": s, "required": r, "source_language": source_language, "target_language": target_language,
+                 "reason": "CJK source_term maps to itself but target language is not Chinese"}
+                for s, r in unique_skipped
+            ],
+        )
     return violations
 
 
-async def _persist_translation_names(db: Optional[Any], project_id: Optional[str], names: List[Dict[str, Any]]) -> int:
+async def _persist_translation_names(
+    db: Optional[Any], project_id: Optional[str], names: List[Dict[str, Any]],
+    target_language: str = "",
+) -> int:
     if not db or not project_id or project_id == "default_project" or not names:
         return 0
     from app.services.terminology_extractor import filter_terminology, persist_detected_terms
 
-    return await persist_detected_terms(db, project_id, filter_terminology(names))
+    return await persist_detected_terms(db, project_id, filter_terminology(names), target_lang=target_language)
 
 
 async def _translate_sub_batch(
@@ -1311,14 +1342,21 @@ async def translate_transcript_segments(
                 for seg, trans in zip(segments, translated_results):
                     seg["translated_text"] = trans
 
-                violations = find_glossary_violations(segments, glossary)
+                violations = find_glossary_violations(
+                    segments, glossary,
+                    source_language=source_language,
+                    target_language=target_language,
+                )
                 if violations:
                     raise RuntimeError(
                         "GLOSSARY_ENFORCEMENT_FAILED: "
                         + json.dumps(violations, ensure_ascii=False)
                     )
 
-                saved = await _persist_translation_names(db, project_id, collected_names)
+                saved = await _persist_translation_names(
+                    db, project_id, collected_names,
+                    target_language=target_language,
+                )
                 log_job_event(
                     job_id,
                     "TRANSLATING",

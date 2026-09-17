@@ -162,7 +162,7 @@ async def test_translate_one_json_attaches_by_n_and_saves_names():
     mock_llm = MockLLM(responses=[mock_resp])
     saved = []
 
-    async def fake_persist(_db, project_id, terms):
+    async def fake_persist(_db, project_id, terms, **kwargs):
         assert project_id == "proj-names"
         saved.extend(terms)
         return len(terms)

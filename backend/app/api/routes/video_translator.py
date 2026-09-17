@@ -2963,12 +2963,16 @@ async def validate_character_voice_review(job_id: str, session: AsyncSession = D
     missing = [s["id"] for s in data["segments"] if not s["character_id"] or not s["voice_id"]]
     issues = [{"reason": "missing_assignment", "segment_ids": missing}] if missing else []
     ordered = sorted(data["segments"], key=lambda s: s["original_start"] or 0)
+    seen_conflict_pairs: set[tuple[str, str]] = set()
     for index, left in enumerate(ordered):
         for right in ordered[index + 1:]:
             if (right["original_start"] or 0) >= (left["original_end"] or 0):
                 break
             if left["character_id"] != right["character_id"] and left["voice_id"] == right["voice_id"]:
-                issues.append({"reason": "voice_conflict", "segment_ids": [left["id"], right["id"]]})
+                pair_key = tuple(sorted((left["character_id"], right["character_id"])))
+                if pair_key not in seen_conflict_pairs:
+                    seen_conflict_pairs.add(pair_key)
+                    issues.append({"reason": "voice_conflict", "segment_ids": [left["id"], right["id"]]})
     passed = len(missing) == 0
     return {"success": True, "data": {**data, "passed": passed, "issues": issues}}
 

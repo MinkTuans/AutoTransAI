@@ -1,3 +1,17 @@
+- **Fix GLOSSARY_ENFORCEMENT_FAILED: language-aware glossary enforcement pipeline (2026-09-17)**:
+  - **Root Cause**: Self-mapped CJK glossary entries (`source_term=安妮, translated_term=安妮`) were created via `_persist_translation_names` → `persist_detected_terms`, which lacked the CJK self-mapping filter present only in `extract_and_persist_from_segments`. These entries then caused `find_glossary_violations` to falsely flag valid translations (e.g. Vietnamese "Annie") as violations because the enforcement demanded Chinese characters in Vietnamese output.
+  - **Fix 1 — `is_self_mapped_cjk()` utility** (`terminology_extractor.py`): Centralized CJK self-mapping detection. Returns True only when source is purely CJK, maps to itself, and target language is NOT Chinese. Latin/ASCII self-maps (`AI→AI`, `Netflix→Netflix`) are never flagged.
+  - **Fix 2 — `persist_detected_terms`** (`terminology_extractor.py`): Now accepts `target_lang` param and filters out self-mapped CJK entries before saving to DB. This prevents invalid entries from being created in the first place.
+  - **Fix 3 — `find_glossary_violations`** (`translator_service.py`): Now accepts `source_language` and `target_language` params. Skips enforcement for invalid self-mapped CJK entries with structured logging (`GLOSSARY_SKIP_INVALID_MAPPING`). Only valid violations raise `GLOSSARY_ENFORCEMENT_FAILED`.
+  - **Fix 4 — `_translation_json_prompt`** (`translator_service.py`): Filters self-mapped CJK entries from glossary rules sent to LLM, preventing confusing instructions like "translate 安妮 as 安妮".
+  - **Fix 5 — `translate_stage.py`**: `_check_consistency` now passes `source_language` and `target_language` from workflow context to `find_glossary_violations`.
+  - **Fix 6 — `llm_extract_terms` prompt** (`terminology_extractor.py`): Explicitly instructs LLM that CJK `suggested_term` MUST be the target-language rendering, not the original Chinese characters.
+  - **Fix 7 — Voice conflict deduplication** (`video_translator.py`): `validate_character_voice_review` now deduplicates `voice_conflict` issues by character pair, preventing the same conflict from appearing multiple times.
+  - **Fix 8 — Test mock** (`test_gemini_translation.py`): Updated `fake_persist` mock to accept new `target_lang` kwarg.
+  - **Affected files**: `terminology_extractor.py`, `translator_service.py`, `translate_stage.py`, `video_translator.py`, `test_gemini_translation.py`
+  - **New test file**: `test_glossary_enforcement.py` (18 test cases covering all scenarios)
+  - **Knowledge Base**: Updated TRANSLATE stage description in `PROJECT_KNOWLEDGE_BASE.md`
+
 - **Fix GLOSSARY_ENFORCEMENT_FAILED crash due to untranslated CJK terms (2026-09-17)**:
   - **Symptom**: Jobs translating Chinese to Vietnamese crashed in the `TRANSLATE` stage with `GLOSSARY_ENFORCEMENT_FAILED` because the LLM terminology extractor captured untranslated names (e.g. `{"source_term": "安妮", "required": "安妮"}`). The glossary then forced the translator to output raw Chinese characters, which the Vietnamese translation naturally didn't include.
   - **Fix**: Upgraded `extract_and_persist_from_segments` in `terminology_extractor.py` to apply the untranslated CJK filter *globally* to both LLM-extracted and Heuristic-extracted terms. Now, if `source_term` matches `suggested_term`, is entirely CJK, and the target language is not Chinese, the term is strictly rejected.
