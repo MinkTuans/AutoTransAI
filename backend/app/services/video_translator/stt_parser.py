@@ -72,8 +72,17 @@ def parse_gemini_stt_response(
     if parsed_obj is None:
         parsed_obj = _try_repair_json(raw_text)
 
-    # Stage E: Fallback Text Parser if JSON parsing failed completely
+    # Stage E: Check if it looks like JSON before falling back
+    is_json_intent = raw_text.startswith("{") or raw_text.startswith("[") or "```json" in raw_text.lower()
+    
     if parsed_obj is None:
+        if is_json_intent:
+            logger.error(
+                f"[Gemini STT Parse Error] JSON parsing failed, but output looks like JSON. Raising error to trigger retry. "
+                f"Raw text snippet: {raw_text[:200]!r}"
+            )
+            raise ValueError(f"Failed to parse JSON response. Raw snippet: {raw_text[:200]!r}")
+            
         logger.warning(
             f"[Gemini STT Parse Warning] JSON parsing failed. Attempting Plain Text Fallback Parser. "
             f"Raw text snippet: {raw_text[:200]!r}"
@@ -84,6 +93,10 @@ def parse_gemini_stt_response(
     normalized = _normalize_stt_schema(parsed_obj, actual_chunk_dur, default_lang)
 
     if not normalized.get("segments") and raw_text:
+        if is_json_intent:
+            logger.error(f"[Gemini STT Parse Error] Schema normalization yielded 0 segments for a JSON response. Raising error to trigger retry. Raw response:\n{raw_text[:1000]}")
+            raise ValueError(f"Gemini STT response could not be parsed into valid segments. Raw response snippet: {raw_text[:200]!r}")
+            
         # Last resort: try plain text fallback if schema normalization yielded 0 segments
         fallback_obj = _parse_plain_text_fallback(raw_text, actual_chunk_dur, default_lang)
         normalized = _normalize_stt_schema(fallback_obj, actual_chunk_dur, default_lang)
