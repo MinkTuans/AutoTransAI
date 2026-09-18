@@ -1,3 +1,80 @@
+- **Fix SAME_VOICE_OVERLAP & Confirm Validation Gate in Video Translator (2026-09-17)**:
+  - **Symptom & Stack**:
+    ```text
+    [NEEDS_REVIEW] Audio schedule requires review due to same-voice overlap.
+    [CONFIRM_RESUME] User confirmed Character/Voice and Audio Schedule review. Proceeding to TTS & Dubbing.
+    ...
+    [RENDER] Final FFmpeg render starting...
+    ValueError: SAME_VOICE_OVERLAP: segments 53 and 54 use en-US-GuyNeural
+    ```
+  - **Root Causes**:
+    1. `validate_character_voice_review` evaluated `passed = len(missing) == 0`, ignoring unresolved voice conflicts and audio schedule overlaps.
+    2. `execute_job_render_pipeline` bypassed `schedule_result.requires_review` if `is_review_confirmed` was True, continuing into Audio Sync and FFmpeg render despite active conflicts.
+    3. Frontend polling polled every 1.5s and called `setSegments(newJob.segments)` directly from DB, wiping out user-edited voice selections during `needs_review` and sending updates purely by `speaker_id`.
+    4. TTS cache checked only file existence, ignoring whether `voice_id` or text had changed on disk.
+  - **Fix 1 — Strict Validation & Deduplicated Issues (`video_translator.py`)**:
+    - `validate_character_voice_review` now validates missing assignments and runs `schedule_segments` across the actual audio timeline.
+    - Flags direct and scheduler `same_voice_overlap` issues with structured details (`segment_ids`, `segment_numbers`, `voice_id`, `message`).
+    - Issues deduplicated with stable key: `(reason, tuple(sorted(segment_ids)), voice_id)`.
+    - `passed = len(missing) == 0 and len(issues) == 0`.
+  - **Fix 2 — Strict Confirm & Resume Gate (`video_translator.py`)**:
+    - `confirm_character_voice_review` re-validates schedule. If conflicts exist, raises HTTP 409, logs `[CONFIRM] Review confirmation rejected because unresolved conflicts remain`, maintains `NEEDS_REVIEW`, and rejects rendering.
+    - Idempotent: Duplicate confirms while processing or completed return cleanly without duplicate tasks.
+  - **Fix 3 — Elimination of Render Bypass & Double Validation Gates (`video_translator.py`)**:
+    - `execute_job_render_pipeline` never bypasses `schedule_result.requires_review`. If unresolved, halts immediately and keeps `NEEDS_REVIEW`.
+    - Added Pre-Sync Gate and Pre-Render Gate before FFmpeg render to ensure `same_voice_overlap == False`.
+    - Preserved `sync_service.py` `ValueError: SAME_VOICE_OVERLAP` as defensive safety net.
+  - **Fix 4 — Auto-Resolution via VoicePoolEntry (`video_translator.py`)**:
+    - Conflicting unconfirmed segments attempt deterministic replacement from `VoicePoolEntry` (matching language/gender).
+    - If resolved: invalidates cache for that segment only, regenerates TTS for that segment, re-schedules, logs `[AUDIO_SCHEDULE] Conflict resolved`, and continues.
+  - **Fix 5 — Granular TTS Cache Invalidation with Sidecar Metadata (`video_translator.py`)**:
+    - Sidecar metadata `seg_{num}.meta.json` tracks `{voice_id, voice_provider, translated_text}`.
+    - Changing segment 53's voice invalidates and regenerates only segment 53 (`[TTS_CACHE] Invalidating segments: [53]`, `[TTS] Regenerating segments: [53]`), while segments 1-52 and 54 are kept cached.
+  - **Fix 6 — Frontend Polling & State Stability (`VideoTranslator.jsx`)**:
+    - Polling merges server updates while preserving user form inputs for `character_id`, `voice_provider`, `voice_id`, and `translated_text` during `needs_review` and `segment_editing`.
+    - Supports per-segment `segment_id` in mappings update.
+    - Formats structured conflict error messages cleanly in the UI.
+  - **Fix 7 — Comprehensive Regression Suite (`test_same_voice_overlap_lifecycle.py`)**:
+    - Added tests for all 7 required cases (Same voice non-overlapping, Same voice overlapping, Confirm with conflict rejected, User voice change resolved, Granular TTS caching, Duplicate confirm idempotency, Completed job terminal guard). All 7 passed.
+  - **Affected files**: `backend/app/api/routes/video_translator.py`, `frontend/src/pages/VideoTranslator.jsx`, `backend/tests/unit/test_same_voice_overlap_lifecycle.py`, `PROJECT_KNOWLEDGE_BASE.md`, `CHANGELOG_AI.md`.
+
+- **Fix Verbatim Echoes: Targeted Segment Recovery, Preservation & Clean Provider Failover (2026-09-17)**:
+  - **Symptom & Production Log**:
+    ```text
+    STT completed: Chinese | Validated Segments: 42
+    Gemini Translation: input_count=42, output_count=42, missing_count=0
+    Translation validation failed on Gemini: 22/42 segments were verbatim echoes.
+    ```
+  - **Root Cause**: Gemini returned 42 outputs matching the segment count, but 22 segments were verbatim echoed Chinese source text instead of translated Vietnamese. Previously, verbatim echoes failed the whole batch or triggered whole-batch retries that could hallucinate or loop without preserving the 20 already valid segments.
+  - **Fix 1 — `is_verbatim_echo()` Linguistic Validator (`translator_service.py`)**: Checks for exact string identity on linguistic content and pure CJK characters when translating from Chinese to non-Chinese languages. Safely ignores non-linguistic tokens (numbers, punctuation) and source segments lacking CJK characters.
+  - **Fix 2 — Targeted Segment Retry with Valid Segments Preservation (`translator_service.py`)**: When verbatim echoes or missing translations are detected, the pipeline isolates ONLY the invalid segment IDs (e.g. 22/42), preserving the 20 valid ones. It sends a targeted correction prompt specifying source and target languages, strict translation rules, and exact segment IDs (`invalid_ids`), then cleanly merges the corrected translations into the final list (20 + 22 = 42).
+  - **Fix 3 — Preserved Core Validation Rule & Clean Failover (`translator_service.py`)**: Kept the exact validation `err_msg = f"Translation validation failed on {llm.provider_name}: {untranslated_count}/{len(segments)} segments were verbatim echoes."`. If echoes persist across all retry attempts, the provider cleanly fails and triggers candidate provider failover without creating new jobs or resetting segment indices to 0.
+  - **Fix 4 — Structured Audit Logging (`translator_service.py`)**:
+    - `[Translation Audit] batch=1/1 input=42 output=42 valid=20 verbatim_echo=22 missing=0 retry_ids=[...]`
+    - `[Translation Retry] retry_count=1 retry_input=22 retry_output=22 remaining_invalid=0`
+    - `[TRANSLATION COMPLETED] job_id=... segments=42 translated=42`
+  - **Fix 5 — Comprehensive Regression Tests (`test_workflow_lifecycle_regression.py`)**:
+    - `test_verbatim_echo_targeted_retry_and_merge`: Verified 42 inputs with 22 echoes retrying only the 22 invalid items, preserving 20 valid items, and merging 42 final segments.
+    - `test_verbatim_echo_persistent_triggers_validation_error_and_failover`: Verified persistent echoes trigger the exact validation failure and failover cleanly to the fallback provider.
+  - **Verification**: All 282 backend unit tests pass (4 skipped).
+  - **Affected files**: `translator_service.py`, `test_workflow_lifecycle_regression.py`, `PROJECT_KNOWLEDGE_BASE.md`, `CHANGELOG_AI.md`.
+
+- **Fix Translation Workflow Infinite Loop & State Machine Integrity (2026-09-17)**:
+  - **Root Causes**:
+    1. `execute_job_render_pipeline` invoked `schedule_segments()` which marked `cannot_fit` and set `requires_review = True` on same-voice segments exceeding 3.0s displacement, causing the pipeline to halt and transition to `status = "needs_review"`, `stage = "AUDIO_SCHEDULE_REVIEW"`.
+    2. `STAGE_MAP` in `get_workflow_status_api` lacked `"AUDIO_SCHEDULE_REVIEW"`, causing the 6-stage workflow to fall back to `("INGEST", 1)`. The UI displayed *Stage 1: INGEST (Chờ xác nhận)* despite 80% progress and 45/45 segments translated.
+    3. Clicking "Xác Nhận Nhân Vật / Giọng Đọc & Tiếp Tục Render TTS" called `confirm_character_voice_review`, which re-launched `execute_job_render_pipeline`. It hardcoded `completed_segments_count = 0` and `current_step = "Đang tạo giọng đọc TTS (0/N)"`, re-ran `schedule_segments()` with the identical strict 3.0s policy, halted at 45/45 again, and returned to review — causing an infinite loop.
+    4. Clicking "Retry Stage INGEST" or `smart_retry_job_api` unconditionally invoked `start_translation_pipeline`, which deleted all existing segments (`delete(VideoTranslationSegment)`) and re-translated from segment 0.
+  - **Fix 1 — STAGE_MAP Alignment (`video_translator.py`)**: Added `"AUDIO_SCHEDULE_REVIEW": ("DUB", 4)`, `"TTS_DONE": ("DUB", 4)`, and `"AUDIO_SYNC_DONE": ("DUB", 4)` to `STAGE_MAP`. Workflow stage accurately displays Stage 4 (DUB) instead of falling back to INGEST.
+  - **Fix 2 — Review Confirmation & Relaxed Schedule Policy (`video_translator.py`)**: `confirm_character_voice_review` now persists `review_confirmed = True` and `audio_schedule_confirmed = True` in `settings_snapshot_json`. `execute_job_render_pipeline` detects this confirmation, applies a relaxed schedule policy (`max_reschedule_seconds=60.0`, `max_tempo=2.0`), serializes same-voice segments, and continues directly to Audio Sync and Final Render instead of halting.
+  - **Fix 3 — Segment Progress & TTS Caching Preservation (`video_translator.py`)**: Pre-scans existing valid `.wav` clips in `execute_job_render_pipeline` before the generation loop, initializing `completed_segments_count` to the cached count rather than resetting to 0.
+  - **Fix 4 — Smart Retry Phase 2 Routing (`video_translator.py`)**: `smart_retry_job_api` and `retry_stage_api` check `last_checkpoint_stage` and existing segments. Retries for `DUB`, `AUDIO_SCHEDULE_REVIEW`, or later stages resume directly into Phase 2 without wiping translated segments or re-running Phase 1 STT/translation.
+  - **Fix 5 — One-Shot Auto-Confirm (`video_translator.py`)**: Added `auto_confirm_executed` snapshot guard to `auto_confirm_and_start_render_if_needed`, ensuring auto-confirm executes strictly once and cannot be re-triggered by status polling or heartbeat loops.
+  - **Fix 6 — Terminal COMPLETED Guards (`video_translator.py`)**: Added checks in `start_translation_pipeline`, `execute_job_render_pipeline`, `render_final_translated_video`, and `smart_retry_job_api` to immediately return without re-running if job status is `COMPLETED`.
+  - **Fix 7 — Frontend Button State Machine (`WorkflowTimeline.jsx`)**: Guarded "Start" button from rendering when workflow status is `completed` or `needs_review`.
+  - **Fix 8 — Regression Test Suite (`test_workflow_lifecycle_regression.py`)**: Created 5 comprehensive unit tests verifying one-shot auto confirm, terminal completed protection, STAGE_MAP mapping, review confirmation bypass, and smart retry Phase 2 resume. All 280 unit tests pass (4 skipped).
+  - **Affected files**: `video_translator.py`, `WorkflowTimeline.jsx`, `test_workflow_lifecycle_regression.py`, `PROJECT_KNOWLEDGE_BASE.md`.
+
 - **Complete GLOSSARY_ENFORCEMENT_FAILED pipeline fix — final verification (2026-09-17)**:
   - **Completion**: All fixes from the glossary enforcement pipeline overhaul verified and passing.
   - **Fix 1 — `terminology_extractor.py`**: Added `is_chinese_language()`, `has_cjk_characters()`, `is_pure_cjk()`, `is_valid_glossary_mapping()` utilities. Updated `heuristic_extract_terms()`, `normalize_extracted_terms()`, `llm_extract_terms()`, `persist_detected_terms()`, and `extract_and_persist_from_segments()` to reject CJK self-mapped entries when target language is non-Chinese.

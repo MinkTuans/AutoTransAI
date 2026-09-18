@@ -827,7 +827,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   useEffect(() => {
     if (!activeJobId) return;
 
-    if (['completed', 'failed', 'cancelled', 'segment_editing', 'copyright_hold'].includes(job?.status)) {
+    if (['completed', 'failed', 'cancelled', 'segment_editing', 'needs_review', 'copyright_hold'].includes(job?.status)) {
       if (isProcessing) setIsProcessing(false);
     }
 
@@ -862,7 +862,24 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
             });
 
             if (newJob.segments && newJob.segments.length > 0) {
-              setSegments(newJob.segments);
+              setSegments(prev => {
+                if (!prev || prev.length === 0) return newJob.segments;
+                // In review/editing mode, preserve user's local form inputs
+                if (['needs_review', 'segment_editing'].includes(newJob.status)) {
+                  return newJob.segments.map(serverSeg => {
+                    const localSeg = prev.find(p => p.id === serverSeg.id);
+                    if (!localSeg) return serverSeg;
+                    return {
+                      ...serverSeg,
+                      character_id: localSeg.character_id ?? serverSeg.character_id,
+                      voice_provider: localSeg.voice_provider ?? serverSeg.voice_provider,
+                      voice_id: localSeg.voice_id ?? serverSeg.voice_id,
+                      translated_text: localSeg.translated_text ?? serverSeg.translated_text,
+                    };
+                  });
+                }
+                return newJob.segments;
+              });
             }
 
             if (['completed', 'failed', 'cancelled', 'segment_editing', 'needs_review'].includes(newJob.status)) {
@@ -897,7 +914,17 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
 
     let detailStr = '';
     if (serverDetail) {
-      detailStr = typeof serverDetail === 'object' ? JSON.stringify(serverDetail, null, 2) : serverDetail;
+      if (typeof serverDetail === 'object') {
+        if (serverDetail.issues && Array.isArray(serverDetail.issues) && serverDetail.issues.length > 0) {
+          detailStr = serverDetail.issues.map(i => i.message || i.reason).join('\n');
+        } else if (serverDetail.message) {
+          detailStr = serverDetail.message;
+        } else {
+          detailStr = JSON.stringify(serverDetail, null, 2);
+        }
+      } else {
+        detailStr = serverDetail;
+      }
     } else if (errorMsg) {
       detailStr = errorMsg;
     } else {
@@ -1092,14 +1119,16 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   };
 
   const handleValidateAndResumeCharacterVoices = async () => {
+    if (isProcessing) return;
     setIsProcessing(true);
     setPipelineError(null);
     try {
-      const reviewSegments = segments.filter(s => s.speaker_id);
+      const reviewSegments = segments.filter(s => s.speaker_id || s.id);
       await videoTranslatorApi.updateCharacterVoiceReview(job.id, {
         mappings: reviewSegments.map(s => ({
-          speaker_id: s.speaker_id,
-          character_id: s.character_id || `character-${s.speaker_id.toLowerCase()}`,
+          segment_id: s.id,
+          speaker_id: s.speaker_id || `UNRESOLVED_${(s.segment_number || s.number || s.id)}`,
+          character_id: s.character_id || `character-${(s.speaker_id || s.id || 'default').toLowerCase()}`,
           character_name: s.character_name || s.character_id || s.speaker_id,
           gender: s.gender || 'unknown',
           role: s.role || 'supporting',
@@ -1109,8 +1138,9 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       });
       const validation = await videoTranslatorApi.validateCharacterVoiceReview(job.id);
       if (!validation.data?.passed) {
-        const uniqueReasons = Array.from(new Set((validation.data?.issues || []).map(i => i.reason)));
-        setPipelineError(`Character/Voice chưa hợp lệ: ${uniqueReasons.join(', ')}`);
+        const issues = validation.data?.issues || [];
+        const messages = issues.map(i => i.message || i.reason);
+        setPipelineError(messages.length > 0 ? messages.join('\n') : 'Character/Voice hoặc Audio Schedule chưa hợp lệ.');
         setIsProcessing(false);
         return;
       }

@@ -1086,6 +1086,40 @@ async def _translate_sub_batch(
     raise ValueError(f"Sub-batch translation failed: {last_err}")
 
 
+def is_verbatim_echo(orig_text: str, trans_text: str, source_lang: str, target_lang: str) -> bool:
+    """
+    Check if a translated segment is an untranslated verbatim echo of the source text.
+    Handles exact string match as well as pure CJK output when translating from Chinese to non-Chinese.
+    Ignores non-linguistic inputs (pure digits or punctuation).
+    """
+    orig_clean = (orig_text or "").strip()
+    trans_clean = (trans_text or "").strip()
+    if not orig_clean or not trans_clean:
+        return False
+    if str(source_lang).lower() == str(target_lang).lower():
+        return False
+
+    # Ignore numbers and pure punctuation (e.g. "123", "...", "?")
+    has_letters_or_cjk = any(ch.isalpha() or "\u4e00" <= ch <= "\u9fff" for ch in orig_clean)
+    if not has_letters_or_cjk:
+        return False
+
+    # 1. Exact string identity for linguistic text
+    if orig_clean == trans_clean:
+        return True
+
+    # 2. Chinese -> Non-Chinese: output contains only CJK characters (verbatim echo)
+    try:
+        from app.services.terminology_extractor import is_chinese_language, is_pure_cjk
+        if is_chinese_language(source_lang) and not is_chinese_language(target_lang):
+            if is_pure_cjk(trans_clean):
+                return True
+    except Exception:
+        pass
+
+    return False
+
+
 async def translate_transcript_segments(
     segments: List[Dict[str, Any]],
     source_language: str,
@@ -1223,60 +1257,150 @@ async def translate_transcript_segments(
                             collected_names.extend(batch_names)
 
                         mapped = _ordered_translations(parsed_map, numbers, len(batch_segments))
-                        expected_ids = set(numbers)
-                        found_ids = set(parsed_map.keys())
-                        missing_ids = sorted(list(expected_ids - found_ids))
-                        if mapped is None and 0 in parsed_map:
-                            missing_ids = [i for i in range(len(batch_segments)) if i not in parsed_map]
 
-                        log_job_event(
-                            job_id,
-                            "TRANSLATING",
-                            f"[Gemini Translation Audit] batch={batch_idx+1}/{total_batches} attempt={attempt+1} | "
-                            f"input_count={len(batch_segments)} | output_count={len(found_ids)} | "
-                            f"missing_count={len(missing_ids)} | missing_ids={missing_ids}"
+                        # Targeted recovery for missing segment IDs in parsed_map
+                        if mapped is None:
+                            missing_ids = [n for n in numbers if n not in parsed_map]
+                            if 0 in parsed_map:
+                                missing_ids = [i for i in range(len(batch_segments)) if i not in parsed_map]
+                            if missing_ids and len(missing_ids) < max(1, len(batch_segments) // 2):
+                                missing_items = {
+                                    "lines": [item for item in payload["lines"] if item["n"] in missing_ids]
+                                }
+                                rec_prompt = (
+                                    f"CẢNH BÁO: Thiếu câu thoại n={missing_ids}.\n"
+                                    + _translation_json_prompt(
+                                        missing_items, source_lang_name, target_lang_name, glossary
+                                    )
+                                )
+                                try:
+                                    rec_resp = await llm.generate_text(rec_prompt, model=getattr(llm, '_resolved_model_id', None))
+                                    rec_map, rec_names = parse_translation_envelope(rec_resp, target_language=target_language)
+                                    if rec_names:
+                                        collected_names.extend(rec_names)
+                                    for r_id, r_trans in rec_map.items():
+                                        if r_id in missing_ids:
+                                            parsed_map[r_id] = r_trans
+                                    log_job_event(
+                                        job_id,
+                                        "TRANSLATING",
+                                        f"[Gemini Recovery] Recovered missing segments. Total items now: {len(parsed_map)}/{len(batch_segments)}"
+                                    )
+                                except Exception as rec_err:
+                                    logger.warning(f"Targeted recovery retry failed: {rec_err}")
+
+                            mapped = _ordered_translations(parsed_map, numbers, len(batch_segments))
+
+                        if mapped is None:
+                            still_missing = [n for n in numbers if n not in parsed_map]
+                            batch_error = f"Output length mismatch: expected {len(batch_segments)}, still missing IDs {still_missing}"
+                            continue
+
+                        # Audit verbatim echoes & missing text
+                        echo_indices = [
+                            idx for idx, (seg, trans) in enumerate(zip(batch_segments, mapped))
+                            if is_verbatim_echo(seg.get("text") or seg.get("original_text") or "", trans, source_language, target_language)
+                        ]
+                        missing_indices = [
+                            idx for idx, (seg, trans) in enumerate(zip(batch_segments, mapped))
+                            if (seg.get("text") or seg.get("original_text") or "").strip() and not str(trans).strip()
+                        ]
+                        invalid_indices = sorted(list(set(echo_indices + missing_indices)))
+                        invalid_ids = [numbers[i] for i in invalid_indices]
+                        valid_count = len(batch_segments) - len(invalid_indices)
+
+                        audit_msg = (
+                            f"[Translation Audit]\n"
+                            f"batch={batch_idx+1}/{total_batches}\n"
+                            f"input={len(batch_segments)}\n"
+                            f"output={len(mapped)}\n"
+                            f"valid={valid_count}\n"
+                            f"verbatim_echo={len(echo_indices)}\n"
+                            f"missing={len(missing_indices)}\n"
+                            f"retry_ids={invalid_ids}"
                         )
+                        logger.info(audit_msg)
+                        log_job_event(job_id, "TRANSLATING", audit_msg)
 
-                        if mapped is None and missing_ids and len(missing_ids) < len(batch_segments):
-                            log_job_event(
-                                job_id,
-                                "TRANSLATING",
-                                f"[Gemini Recovery] Attempting targeted recovery for batch {batch_idx+1}/{total_batches} missing {len(missing_ids)} segments: {missing_ids}"
-                            )
-                            missing_payload = {
-                                "lines": [item for item in payload["lines"] if item["n"] in missing_ids]
-                            }
-                            rec_prompt = (
-                                f"CẢNH BÁO: Thiếu câu thoại n={missing_ids} trong bản dịch trước.\n"
-                                + _translation_json_prompt(
-                                    missing_payload,
-                                    source_lang_name,
-                                    target_lang_name,
-                                    glossary,
+                        # Targeted retry: retry ONLY invalid segments (echoes + missing), preserving valid ones!
+                        if invalid_indices:
+                            max_echo_retries = 2
+                            for echo_attempt in range(max_echo_retries):
+                                if not invalid_indices:
+                                    break
+                                retry_payload = {
+                                    "lines": [item for item in payload["lines"] if item["n"] in invalid_ids]
+                                }
+                                echo_in_retry = len([i for i in invalid_indices if i in echo_indices])
+                                correction_prompt = (
+                                    f"CẢNH BÁO DỊCH THUẬT: Có {echo_in_retry} câu thoại bị giữ nguyên tiếng gốc ({source_lang_name}) thay vì dịch sang {target_lang_name}!\n\n"
+                                    f"QUY TẮC SỬA LỖI BẮT BUỘC:\n"
+                                    f"1. Source language: {source_lang_name}\n"
+                                    f"2. Target language: {target_lang_name}\n"
+                                    f"3. BẮT BUỘC dịch toàn bộ nội dung sang {target_lang_name}. TUYỆT ĐỐI KHÔNG COPY NGUYÊN VĂN tiếng Trung/tiếng gốc.\n"
+                                    f"4. Giữ nguyên ý nghĩa của câu gốc.\n"
+                                    f"5. Giữ nguyên chính xác số thứ tự 'n' của từng câu ({invalid_ids}). Không thêm/bớt câu.\n"
+                                    f"6. Tên riêng và thuật ngữ chỉ giữ nguyên nếu là proper term invariant hợp lệ, tuyệt đối không biến cả câu thành tiếng Trung.\n"
+                                    f"7. Trả về đúng định dạng JSON envelope duy nhất:\n"
+                                    f'{{"lines": [{{"n": 1, "text": "bản dịch tiếng Việt"}}], "names": []}}\n\n'
+                                    f"DANH SÁCH CÁC CÂU CẦN DỊCH LẠI:\n"
+                                    + _translation_json_prompt(
+                                        retry_payload, source_lang_name, target_lang_name, glossary
+                                    )
                                 )
-                            )
-                            try:
-                                rec_resp = await llm.generate_text(rec_prompt)
-                                rec_map, rec_names = parse_translation_envelope(rec_resp, target_language=target_language)
-                                if rec_names:
-                                    collected_names.extend(rec_names)
-                                for r_id, r_trans in rec_map.items():
-                                    if r_id in missing_ids:
-                                        parsed_map[r_id] = r_trans
-                                log_job_event(
-                                    job_id,
-                                    "TRANSLATING",
-                                    f"[Gemini Recovery] Recovered missing segments. Total items now: {len(parsed_map)}/{len(batch_segments)}"
-                                )
-                            except Exception as rec_err:
-                                logger.warning(f"Targeted recovery retry failed: {rec_err}")
+                                try:
+                                    rec_resp = await llm.generate_text(correction_prompt, model=getattr(llm, '_resolved_model_id', None))
+                                    rec_map, rec_names = parse_translation_envelope(rec_resp, target_language=target_language)
+                                    if rec_names:
+                                        collected_names.extend(rec_names)
 
-                        mapped = _ordered_translations(parsed_map, numbers, len(batch_segments))
-                        if mapped is not None:
+                                    for pos, idx in enumerate(invalid_indices):
+                                        n = numbers[idx]
+                                        orig_text = batch_segments[idx].get("text") or batch_segments[idx].get("original_text") or ""
+                                        cand = None
+                                        if n in rec_map:
+                                            cand = rec_map[n]
+                                        elif pos in rec_map:
+                                            cand = rec_map[pos]
+                                        elif idx in rec_map:
+                                            cand = rec_map[idx]
+
+                                        if cand is not None:
+                                            cand_str = str(cand).strip()
+                                            if not is_verbatim_echo(orig_text, cand_str, source_language, target_language):
+                                                if cand_str or not orig_text.strip():
+                                                    mapped[idx] = cand_str
+
+                                    # Re-evaluate
+                                    echo_indices = [
+                                        i for i, (seg, trans) in enumerate(zip(batch_segments, mapped))
+                                        if is_verbatim_echo(seg.get("text") or seg.get("original_text") or "", trans, source_language, target_language)
+                                    ]
+                                    missing_indices = [
+                                        i for i, (seg, trans) in enumerate(zip(batch_segments, mapped))
+                                        if (seg.get("text") or seg.get("original_text") or "").strip() and not str(trans).strip()
+                                    ]
+                                    invalid_indices = sorted(list(set(echo_indices + missing_indices)))
+                                    invalid_ids = [numbers[i] for i in invalid_indices]
+
+                                    retry_log = (
+                                        f"[Translation Retry]\n"
+                                        f"retry_count={echo_attempt+1}\n"
+                                        f"retry_input={len(retry_payload['lines'])}\n"
+                                        f"retry_output={len(rec_map)}\n"
+                                        f"remaining_invalid={len(invalid_indices)}"
+                                    )
+                                    logger.info(retry_log)
+                                    log_job_event(job_id, "TRANSLATING", retry_log)
+                                except Exception as rec_err:
+                                    logger.warning(f"Targeted echo retry attempt {echo_attempt+1} failed: {rec_err}")
+
+                        # If all segments are valid, finish batch successfully
+                        if not invalid_indices:
                             translated_list = mapped
                             break
-                        still_missing = [n for n in numbers if n not in parsed_map]
-                        batch_error = f"Output length mismatch: expected {len(batch_segments)}, still missing IDs {still_missing}"
+
+                        batch_error = f"Output length/echo mismatch: expected {len(batch_segments)}, still invalid IDs {invalid_ids}"
                     except Exception as ex:
                         batch_error = str(ex)
                         logger.warning(f"Batch {batch_idx+1}/{total_batches} attempt {attempt+1} failed on {llm.provider_id}: {batch_error}")
@@ -1298,33 +1422,6 @@ async def translate_transcript_segments(
                 if not isinstance(translated_list, list) or len(translated_list) != len(batch_segments):
                     raise ValueError(f"LLM translation failed for batch {batch_idx+1}/{total_batches} on {llm.provider_name}: {batch_error}")
 
-                texts_to_translate = [s.get("text", "") for s in batch_segments]
-                verbatim_echo_count = 0
-                for orig, trans in zip(texts_to_translate, translated_list):
-                    trans_str = str(trans).strip()
-                    if orig.strip() and trans_str == orig.strip() and source_language.lower() != target_language.lower():
-                        verbatim_echo_count += 1
-
-                if verbatim_echo_count > max(1, int(len(batch_segments) * 0.3)):
-                    logger.warning(f"Batch {batch_idx+1}/{total_batches} on {llm.provider_id} had {verbatim_echo_count} verbatim echoes. Retrying batch with strict prompt...")
-                    strict_prompt = (
-                        f"CẢNH BÁO: Bạn đã trả về nguyên văn {source_lang_name}.\n"
-                        + _translation_json_prompt(
-                            payload, source_lang_name, target_lang_name, glossary
-                        )
-                    )
-                    try:
-                        retry_resp = await llm.generate_text(strict_prompt)
-                        retry_map, retry_names = parse_translation_envelope(retry_resp, target_language=target_language)
-                        if retry_names:
-                            collected_names.extend(retry_names)
-                        if all(n in retry_map for n in numbers):
-                            translated_list = [retry_map.get(n, "") for n in numbers]
-                        elif len(retry_map) == len(batch_segments):
-                            translated_list = [retry_map.get(i, "") for i in range(len(batch_segments))]
-                    except Exception as retry_ex:
-                        logger.warning(f"Batch {batch_idx+1} anti-echo retry failed: {retry_ex}")
-
                 translated_results.extend([str(t).strip() for t in translated_list])
                 log_job_event(job_id, "TRANSLATING", f"Translated batch {batch_idx+1}/{total_batches} via {llm.provider_name} ({len(translated_list)} items)")
 
@@ -1333,10 +1430,10 @@ async def translate_transcript_segments(
                 for orig_s, trans_t in zip(segments, translated_results):
                     orig_txt = orig_s.get("text", "").strip()
                     trans_txt = trans_t.strip()
-                    if orig_txt and trans_txt == orig_txt and source_language.lower() != target_language.lower():
+                    if is_verbatim_echo(orig_txt, trans_txt, source_language, target_language):
                         untranslated_count += 1
 
-                if untranslated_count > max(1, int(len(segments) * 0.5)):
+                if untranslated_count > 0:
                     err_msg = f"Translation validation failed on {llm.provider_name}: {untranslated_count}/{len(segments)} segments were verbatim echoes."
                     logger.warning(err_msg)
                     provider_errors.append(f"[{llm.provider_name}] {err_msg}")
@@ -1401,11 +1498,14 @@ async def translate_transcript_segments(
                     db, project_id, collected_names,
                     target_language=target_language,
                 )
-                log_job_event(
-                    job_id,
-                    "TRANSLATING",
-                    f"LLM translation ({llm.provider_name}) completed successfully for all {len(segments)} segments. names={len(collected_names)} saved={saved}",
+                completed_log = (
+                    f"[TRANSLATION COMPLETED]\n"
+                    f"job_id={job_id}\n"
+                    f"segments={len(segments)}\n"
+                    f"translated={len(segments)}"
                 )
+                logger.info(completed_log)
+                log_job_event(job_id, "TRANSLATING", completed_log)
                 return segments
 
         except Exception as e:

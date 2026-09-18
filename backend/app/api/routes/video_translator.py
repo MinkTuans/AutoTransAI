@@ -665,11 +665,22 @@ async def auto_confirm_and_start_render_if_needed(job_id: str) -> bool:
     Idempotent helper: Automatically confirms translation text segments and launches
     Phase 2 rendering (TTS Dubbing -> Audio Sync -> FFmpeg Render) if a job is in
     SEGMENT_EDITING / TRANSLATE stage awaiting review and auto_confirm_translation is True.
+    Guaranteed strictly one-shot via auto_confirm_executed snapshot flag.
     """
     async with async_session_factory() as session:
         res = await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))
         job = res.scalar_one_or_none()
-        if not job:
+        if not job or job.status in [TranslationJobStatus.COMPLETED.value, "completed"]:
+            return False
+
+        snap = {}
+        if job.settings_snapshot_json:
+            try:
+                snap = json.loads(job.settings_snapshot_json)
+            except Exception:
+                snap = {}
+
+        if snap.get("auto_confirm_executed"):
             return False
 
         is_waiting = (
@@ -687,6 +698,9 @@ async def auto_confirm_and_start_render_if_needed(job_id: str) -> bool:
                 .where(VideoTranslationSegment.job_id == job_id)
                 .values(status="confirmed")
             )
+            snap["auto_confirm_executed"] = True
+            job.settings_snapshot_json = json.dumps(snap)
+            job.last_checkpoint_stage = "TRANSLATION_CONFIRMED"
             job.status = TranslationJobStatus.GENERATING_TTS.value
             job.stage = "DUB"
             job.current_step = "Bản dịch đã hoàn tất. Tự động chuyển sang Phase 2 (TTS & Dubbing)..."
@@ -695,14 +709,13 @@ async def auto_confirm_and_start_render_if_needed(job_id: str) -> bool:
             job.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
             await session.commit()
 
-            log_job_event(job_id, "AUTO_CONFIRM", "Auto-confirmed translated segments. Launching Phase 2 TTS & Dubbing pipeline.")
+            log_job_event(job_id, "AUTO_CONFIRM", "Auto-confirmed translated segments (one-shot). Launching Phase 2 TTS & Dubbing pipeline.")
             asyncio.create_task(execute_job_render_pipeline(job_id))
             return True
         return False
 
 
 @router.post("/jobs/{job_id}/start", response_model=dict)
-
 async def start_translation_pipeline(
     job_id: str,
     background_tasks: BackgroundTasks,
@@ -713,6 +726,8 @@ async def start_translation_pipeline(
     job = res.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="❌ Translation Job không tồn tại.")
+    if job.status in [TranslationJobStatus.COMPLETED.value, "completed"]:
+        return {"success": True, "data": {"started": False, "job_id": job_id, "message": "Job đã hoàn tất."}}
 
     async def run_pipeline():
         lock = get_job_lock(job_id)
@@ -727,7 +742,7 @@ async def start_translation_pipeline(
                 async with async_session_factory() as bg_session:
                     job_res = await bg_session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))
                     b_job = job_res.scalar_one_or_none()
-                    if not b_job:
+                    if not b_job or b_job.status in [TranslationJobStatus.COMPLETED.value, "completed"]:
                         return
 
                     asset_res = await bg_session.execute(select(VideoAsset).where(VideoAsset.id == b_job.asset_id))
@@ -1031,7 +1046,20 @@ async def start_translation_pipeline(
                     b_job.last_checkpoint_at = now_dt
 
                     should_launch_render = False
-                    if auto_confirm:
+                    if character_voice_needs_review:
+                        b_job.status = TranslationJobStatus.NEEDS_REVIEW.value
+                        b_job.stage = "CHARACTER_VOICE_REVIEW"
+                        b_job.current_step = "Cần kiểm tra Character / Voice trước TTS"
+                        b_job.studio_state_json = json.dumps({"active_step": "character_voice_review", "active_tab": "editor"})
+                        await bg_session.commit()
+                        stop_job_heartbeat(job_id)
+                        snapshot_str = (
+                            f"Phase 1 completed. Character / Voice review required before TTS.\n"
+                            f"[STATE SNAPSHOT] Job: {job_id} | status={b_job.status} | stage={b_job.stage} | "
+                            f"progress={b_job.overall_progress_pct}% | segments={len(translated_segs)}"
+                        )
+                        log_job_event(job_id, "NEEDS_REVIEW", snapshot_str)
+                    elif auto_confirm:
                         for db_seg in bg_session.new:
                             if isinstance(db_seg, VideoTranslationSegment):
                                 db_seg.status = "confirmed"
@@ -1049,13 +1077,6 @@ async def start_translation_pipeline(
                         )
                         log_job_event(job_id, "TRANSLATE", snapshot_str)
                         should_launch_render = True
-                    elif character_voice_needs_review:
-                        b_job.status = TranslationJobStatus.NEEDS_REVIEW.value
-                        b_job.stage = "CHARACTER_VOICE_REVIEW"
-                        b_job.current_step = "Cần kiểm tra Character / Voice trước TTS"
-                        b_job.studio_state_json = json.dumps({"active_step": "character_voice_review", "active_tab": "editor"})
-                        await bg_session.commit()
-                        stop_job_heartbeat(job_id)
                     else:
                         b_job.status = TranslationJobStatus.SEGMENT_EDITING.value
                         b_job.stage = "TRANSLATE"
@@ -1763,6 +1784,9 @@ async def execute_job_render_pipeline(job_id: str) -> None:
             b_job = job_res.scalar_one_or_none()
             if not b_job or is_job_cancelled(job_id) or cancel_evt.is_set():
                 return
+            if b_job.status in [TranslationJobStatus.COMPLETED.value, "completed"]:
+                logger.info(f"[RENDER-SKIP] Job {job_id} is already COMPLETED. Skipping render pipeline.")
+                return
 
             asset_res = await init_session.execute(select(VideoAsset).where(VideoAsset.id == b_job.asset_id))
             b_asset = asset_res.scalar_one_or_none()
@@ -1819,6 +1843,38 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                 await init_session.commit()
                 return
 
+            # Pre-scan existing valid TTS clips with sidecar metadata verification
+            def _is_tts_cache_valid(s_dict: dict, tts_dir_p: Path) -> bool:
+                audio_f = tts_dir_p / f"seg_{s_dict['segment_number']:03d}.wav"
+                meta_f = tts_dir_p / f"seg_{s_dict['segment_number']:03d}.meta.json"
+                if not audio_f.exists() or audio_f.stat().st_size == 0:
+                    return False
+                if meta_f.exists():
+                    try:
+                        with open(meta_f, "r", encoding="utf-8") as mf:
+                            m_data = json.load(mf)
+                        if m_data.get("voice_id") != s_dict.get("voice_id") or m_data.get("translated_text") != s_dict.get("translated_text"):
+                            return False
+                    except Exception:
+                        return False
+                return True
+
+            existing_tts_count = 0
+            invalidated_on_scan = []
+            for s in segments_data:
+                seg_f = tts_dir / f"seg_{s['segment_number']:03d}.wav"
+                seg_meta = tts_dir / f"seg_{s['segment_number']:03d}.meta.json"
+                if _is_tts_cache_valid(s, tts_dir):
+                    existing_tts_count += 1
+                elif seg_f.exists():
+                    invalidated_on_scan.append(s["segment_number"])
+                    seg_f.unlink(missing_ok=True)
+                    seg_meta.unlink(missing_ok=True)
+            if invalidated_on_scan:
+                log_job_event(job_id, "TTS_CACHE", f"[TTS_CACHE] Invalidating segments: {invalidated_on_scan}")
+
+            initial_tts_pct = round((existing_tts_count / len(segments_data)) * 100.0, 1) if segments_data else 0.0
+
             # 1. TTS Generation Stage
             current_stage = "GENERATING_TTS"
             await init_session.execute(
@@ -1827,15 +1883,15 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                 .values(
                     status=TranslationJobStatus.GENERATING_TTS.value,
                     stage="GENERATING_TTS",
-                    current_step=f"Đang tạo giọng đọc TTS (0/{len(segments_data)})",
+                    current_step=f"Đang tạo giọng đọc TTS ({existing_tts_count}/{len(segments_data)})",
                     total_segments_count=len(segments_data),
-                    completed_segments_count=0,
-                    stage_progress_pct=0.0,
-                    overall_progress_pct=calculate_overall_progress("GENERATING_TTS", 0.0),
+                    completed_segments_count=existing_tts_count,
+                    stage_progress_pct=initial_tts_pct,
+                    overall_progress_pct=calculate_overall_progress("GENERATING_TTS", initial_tts_pct),
                 )
             )
             await init_session.commit()
-            log_job_event(job_id, "GENERATING_TTS", f"Starting TTS generation for {len(segments_data)} segments...")
+            log_job_event(job_id, "GENERATING_TTS", f"Starting TTS generation for {len(segments_data)} segments ({existing_tts_count} cached)...")
 
             voice_id = b_job.voice_id or "vi-VN-HoaiMyNeural"
             asset_file_path = Path(b_asset.file_path)
@@ -1849,11 +1905,13 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                 return
 
             seg_tts_path = tts_dir / f"seg_{seg['segment_number']:03d}.wav"
-            log_job_event(job_id, "GENERATING_TTS", f"Generating TTS for segment #{seg['segment_number']}/{len(segments_data)}")
+            seg_meta_path = tts_dir / f"seg_{seg['segment_number']:03d}.meta.json"
 
             try:
-                reused = seg_tts_path.exists() and seg_tts_path.stat().st_size > 0
+                reused = _is_tts_cache_valid(seg, tts_dir)
                 if not reused:
+                    log_job_event(job_id, "TTS", f"[TTS] Regenerating segments: [{seg['segment_number']}]")
+                    log_job_event(job_id, "GENERATING_TTS", f"Generating TTS for segment #{seg['segment_number']}/{len(segments_data)}")
                     segment_provider = registry.get_audio(seg.get("voice_provider") or audio_provider_id) or audio_provider
                     res = await segment_provider.generate_audio(
                         text=seg["translated_text"] or "",
@@ -1868,12 +1926,31 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                         seg["status"] = "failed"
                     else:
                         reused = True
-                if reused:
+                        try:
+                            with open(seg_meta_path, "w", encoding="utf-8") as mf:
+                                json.dump({
+                                    "voice_id": seg.get("voice_id") or voice_id,
+                                    "voice_provider": seg.get("voice_provider") or audio_provider_id,
+                                    "translated_text": seg.get("translated_text"),
+                                }, mf)
+                        except Exception as me:
+                            logger.warning(f"Failed to write TTS meta: {me}")
+                if reused and seg_tts_path.exists():
                     dur = await probe_duration_async(seg_tts_path)
                     seg["tts_audio_path"] = str(seg_tts_path)
                     seg["tts_audio_duration"] = dur
                     seg["tts_duration"] = dur
                     seg["status"] = "tts_completed"
+                    if not seg_meta_path.exists():
+                        try:
+                            with open(seg_meta_path, "w", encoding="utf-8") as mf:
+                                json.dump({
+                                    "voice_id": seg.get("voice_id") or voice_id,
+                                    "voice_provider": seg.get("voice_provider") or audio_provider_id,
+                                    "translated_text": seg.get("translated_text"),
+                                }, mf)
+                        except Exception:
+                            pass
             except Exception as tts_err:
                 logger.warning(f"[VIDEO-SYNC] TTS exception for Segment #{seg['segment_number']}: {str(tts_err)}")
                 log_job_event(job_id, "GENERATING_TTS", f"[VIDEO-SYNC] ⚠️ Segment #{seg['segment_number']} TTS exception: {str(tts_err)}. Fallback to silence.")
@@ -1910,23 +1987,176 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                 )
                 await step_session.commit()
 
+        # Check if user has already confirmed character/voice review or audio scheduling
+        snap = {}
+        if b_job.settings_snapshot_json:
+            try:
+                snap = json.loads(b_job.settings_snapshot_json)
+            except Exception:
+                snap = {}
+
+        is_review_confirmed = bool(
+            snap.get("review_confirmed")
+            or snap.get("audio_schedule_confirmed")
+            or b_job.last_checkpoint_stage in ["CHARACTER_VOICE_REVIEW_DONE", "TTS_DONE", "AUDIO_SYNC_DONE"]
+        )
+
         from app.services.video_translator.timeline_scheduler import SchedulePolicy, schedule_segments
-        schedule_result = schedule_segments(segments_data, float(b_asset.duration or await probe_duration_async(asset_file_path)), SchedulePolicy())
+        policy = SchedulePolicy(
+            max_reschedule_seconds=60.0,
+            max_tempo=2.0,
+        ) if is_review_confirmed else SchedulePolicy()
+
+        log_job_event(job_id, "AUDIO_SCHEDULE", "[AUDIO_SCHEDULE] Validation started")
+        video_dur = float(b_asset.duration or await probe_duration_async(asset_file_path))
+        schedule_result = schedule_segments(
+            segments_data,
+            video_dur,
+            policy
+        )
+
+        # Attempt auto-resolution if same-voice overlap conflict is found
+        if schedule_result.requires_review and schedule_result.unresolved_conflicts:
+            log_job_event(job_id, "AUDIO_SCHEDULE", f"[AUDIO_SCHEDULE] Conflicts found: {schedule_result.unresolved_conflicts}")
+            async with async_session_factory() as resolve_session:
+                pool_rows = (await resolve_session.execute(
+                    select(VoicePoolEntry).where(VoicePoolEntry.enabled.is_(True))
+                )).scalars().all()
+                pool = [{"provider": p.provider, "voice_id": p.voice_id, "gender": p.gender, "language": p.language} for p in pool_rows]
+
+                profiles_rows = (await resolve_session.execute(
+                    select(CharacterVoiceProfile).where(CharacterVoiceProfile.project_id == b_job.project_id)
+                )).scalars().all()
+                confirmed_char_ids = {p.character_id for p in profiles_rows if p.confirmed_by_user}
+
+                affected_seg_nums = []
+                seg_dict_by_id = {s["id"]: s for s in segments_data}
+                for conflict in schedule_result.unresolved_conflicts:
+                    cand_id = conflict.get("segment_id")
+                    prior_id = conflict.get("with")
+                    for sid in [cand_id, prior_id]:
+                        target_s = seg_dict_by_id.get(sid)
+                        if not target_s:
+                            continue
+                        if target_s.get("character_id") in confirmed_char_ids:
+                            continue
+                        curr_v = target_s.get("voice_id")
+                        alt_choices = [v for v in pool if v.get("voice_id") != curr_v]
+                        if alt_choices:
+                            chosen = alt_choices[0]
+                            target_s["voice_id"] = chosen["voice_id"]
+                            target_s["voice_provider"] = chosen["provider"]
+                            affected_seg_nums.append(target_s["segment_number"])
+                            s_f = tts_dir / f"seg_{target_s['segment_number']:03d}.wav"
+                            s_m = tts_dir / f"seg_{target_s['segment_number']:03d}.meta.json"
+                            s_f.unlink(missing_ok=True)
+                            s_m.unlink(missing_ok=True)
+                            log_job_event(job_id, "TTS_CACHE", f"[TTS_CACHE] Invalidating segments: [{target_s['segment_number']}]")
+                            log_job_event(job_id, "TTS", f"[TTS] Regenerating segments: [{target_s['segment_number']}]")
+                            sp = registry.get_audio(chosen["provider"]) or audio_provider
+                            await sp.generate_audio(text=target_s["translated_text"] or "", voice_id=chosen["voice_id"], output_path=s_f)
+                            if s_f.exists():
+                                dur = await probe_duration_async(s_f)
+                                target_s["tts_audio_path"] = str(s_f)
+                                target_s["tts_audio_duration"] = dur
+                                target_s["tts_duration"] = dur
+                                try:
+                                    with open(s_m, "w", encoding="utf-8") as mf:
+                                        json.dump({"voice_id": chosen["voice_id"], "voice_provider": chosen["provider"], "translated_text": target_s["translated_text"]}, mf)
+                                except Exception:
+                                    pass
+                            await resolve_session.execute(
+                                update(VideoTranslationSegment)
+                                .where(VideoTranslationSegment.id == sid)
+                                .values(
+                                    voice_id=chosen["voice_id"],
+                                    voice_provider=chosen["provider"],
+                                    tts_audio_path=target_s["tts_audio_path"],
+                                    tts_audio_duration=target_s["tts_audio_duration"],
+                                    tts_duration=target_s["tts_duration"],
+                                )
+                            )
+                            break
+                await resolve_session.commit()
+
+                if affected_seg_nums:
+                    schedule_result = schedule_segments(segments_data, video_dur, policy)
+                    if not schedule_result.requires_review:
+                        log_job_event(job_id, "AUDIO_SCHEDULE", f"[AUDIO_SCHEDULE] Conflict resolved for segments {affected_seg_nums}")
+
         async with async_session_factory() as schedule_session:
             for scheduled in schedule_result.segments:
                 seg = next(item for item in segments_data if item["id"] == scheduled["id"])
                 seg.update(scheduled)
-                await schedule_session.execute(update(VideoTranslationSegment).where(VideoTranslationSegment.id == seg["id"]).values(
-                    scheduled_start=seg["scheduled_start"], scheduled_end=seg["scheduled_end"],
-                    overlap_with=seg["overlap_with"], schedule_action=seg["schedule_action"],
-                ))
+                await schedule_session.execute(
+                    update(VideoTranslationSegment)
+                    .where(VideoTranslationSegment.id == seg["id"])
+                    .values(
+                        scheduled_start=seg["scheduled_start"],
+                        scheduled_end=seg["scheduled_end"],
+                        overlap_with=seg["overlap_with"],
+                        schedule_action=seg["schedule_action"],
+                    )
+                )
+
+            # CRITICAL: If schedule still requires review, HALT and KEEP NEEDS_REVIEW even if is_review_confirmed!
             if schedule_result.requires_review:
-                await schedule_session.execute(update(VideoTranslationJob).where(VideoTranslationJob.id == job_id).values(
-                    status=TranslationJobStatus.NEEDS_REVIEW.value, stage="AUDIO_SCHEDULE_REVIEW",
-                    current_step="Không thể xếp lịch TTS an toàn; cần kiểm tra thủ công",
-                ))
+                await schedule_session.execute(
+                    update(VideoTranslationJob)
+                    .where(VideoTranslationJob.id == job_id)
+                    .values(
+                        status=TranslationJobStatus.NEEDS_REVIEW.value,
+                        stage="AUDIO_SCHEDULE_REVIEW",
+                        current_step="Không thể xếp lịch TTS an toàn do xung đột cùng giọng đọc (same-voice overlap); cần kiểm tra thủ công",
+                    )
+                )
+                log_job_event(job_id, "NEEDS_REVIEW", f"[NEEDS_REVIEW] Waiting for user changes: {schedule_result.unresolved_conflicts}")
+                await schedule_session.commit()
+                stop_job_heartbeat(job_id)
+                return
+
+            # Proceed if and only if schedule passed
+            log_job_event(job_id, "AUDIO_SCHEDULE", "[AUDIO_SCHEDULE] Final validation passed")
+            await schedule_session.execute(
+                update(VideoTranslationJob)
+                .where(VideoTranslationJob.id == job_id)
+                .values(
+                    stage="SYNCING_AUDIO",
+                    last_checkpoint_stage="AUDIO_SYNC_DONE",
+                )
+            )
             await schedule_session.commit()
-        if schedule_result.requires_review:
+
+        # Validation Gate before Audio Sync:
+        sorted_chk = sorted(segments_data, key=lambda s: float(s.get("scheduled_start", 0.0)))
+        has_same_voice_overlap = False
+        for p, l_seg in enumerate(sorted_chk):
+            l_end = float(l_seg.get("scheduled_end", 0.0))
+            l_vox = l_seg.get("voice_id")
+            for r_seg in sorted_chk[p + 1:]:
+                r_start = float(r_seg.get("scheduled_start", 0.0))
+                if r_start >= l_end - 0.001:
+                    break
+                if l_vox and l_vox == r_seg.get("voice_id"):
+                    has_same_voice_overlap = True
+                    break
+            if has_same_voice_overlap:
+                break
+
+        if has_same_voice_overlap:
+            logger.error(f"[PRE-SYNC-GATE] Job {job_id} failed pre-sync gate: same-voice overlap detected.")
+            async with async_session_factory() as gate_session:
+                await gate_session.execute(
+                    update(VideoTranslationJob)
+                    .where(VideoTranslationJob.id == job_id)
+                    .values(
+                        status=TranslationJobStatus.NEEDS_REVIEW.value,
+                        stage="AUDIO_SCHEDULE_REVIEW",
+                        current_step="Phát hiện cùng giọng đọc overlap trước Audio Sync",
+                    )
+                )
+                await gate_session.commit()
+            stop_job_heartbeat(job_id)
             return
 
         # Step 2: Audio Synchronization Stage
@@ -1944,7 +2174,7 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                 )
             )
             await sync_init_session.commit()
-        log_job_event(job_id, "SYNCING_AUDIO", "Starting audio time-stretch synchronization...")
+        log_job_event(job_id, "SYNC", "[SYNC] Starting audio sync")
 
         for idx, seg in enumerate(segments_data, start=1):
             if is_job_cancelled(job_id) or cancel_evt.is_set():
@@ -2031,6 +2261,42 @@ async def execute_job_render_pipeline(job_id: str) -> None:
             )
             db_render_segments = seg_render_res.scalars().all()
 
+            # Final Pre-Render Validation Gate:
+            sorted_render_chk = sorted(db_render_segments, key=lambda s: float(s.scheduled_start if s.scheduled_start is not None else s.start_time))
+            render_overlap_found = False
+            overlap_detail = ""
+            for p, l_seg in enumerate(sorted_render_chk):
+                l_end = float(l_seg.scheduled_end if l_seg.scheduled_end is not None else l_seg.end_time)
+                l_vox = l_seg.voice_id
+                for r_seg in sorted_render_chk[p + 1:]:
+                    r_start = float(r_seg.scheduled_start if r_seg.scheduled_start is not None else r_seg.start_time)
+                    if r_start >= l_end - 0.001:
+                        break
+                    if l_vox and l_vox == r_seg.voice_id:
+                        render_overlap_found = True
+                        overlap_detail = f"Segment #{l_seg.segment_number} và #{r_seg.segment_number} cùng sử dụng voice '{l_vox}'"
+                        logger.error(f"[PRE-RENDER-GATE] Job {job_id}: {overlap_detail}")
+                        break
+                if render_overlap_found:
+                    break
+
+            if render_overlap_found:
+                logger.error(f"[PRE-RENDER-GATE] Job {job_id} aborted render: same_voice_overlap detected.")
+                async with async_session_factory() as gate_session:
+                    await gate_session.execute(
+                        update(VideoTranslationJob)
+                        .where(VideoTranslationJob.id == job_id)
+                        .values(
+                            status=TranslationJobStatus.NEEDS_REVIEW.value,
+                            stage="AUDIO_SCHEDULE_REVIEW",
+                            current_step=f"Phát hiện xung đột cùng giọng đọc overlap trước Render FFmpeg: {overlap_detail}",
+                        )
+                    )
+                    await gate_session.commit()
+                stop_job_heartbeat(job_id)
+                return
+
+            log_job_event(job_id, "RENDER", "[RENDER] Starting final render")
             rendered_path = await render_dubbed_video(
                 video_path=asset_file_path,
                 segments=db_render_segments,
@@ -2210,6 +2476,8 @@ async def render_final_translated_video(
     job = res.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="❌ Job không tồn tại.")
+    if job.status in [TranslationJobStatus.COMPLETED.value, "completed"]:
+        return {"success": True, "data": {"rendering": False, "job_id": job_id, "message": "Job đã hoàn tất."}}
 
     background_tasks.add_task(execute_job_render_pipeline, job_id)
     return {"success": True, "data": {"rendering": True, "job_id": job_id}}
@@ -2257,6 +2525,37 @@ async def smart_retry_job_api(
     job = res.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="❌ Job không tồn tại.")
+    if job.status in [TranslationJobStatus.COMPLETED.value, "completed"]:
+        return {"success": True, "data": {"started": False, "job_id": job_id, "message": "Job đã hoàn tất."}}
+
+    checkpoint = job.last_checkpoint_stage or job.stage or "CREATED"
+    phase2_checkpoints = [
+        "TRANSLATION_DONE", "TRANSLATION_CONFIRMED", "SEGMENT_EDITING_DONE",
+        "CHARACTER_VOICE_REVIEW_DONE", "TTS_DONE", "AUDIO_SYNC_DONE",
+    ]
+    phase2_stages = [
+        "DUB", "GENERATING_TTS", "AUDIO_SCHEDULE_REVIEW", "CHARACTER_VOICE_REVIEW",
+        "SYNCING_AUDIO", "PRODUCE", "RENDERING",
+    ]
+
+    # Check if translated segments already exist in DB
+    seg_res = await session.execute(
+        select(VideoTranslationSegment)
+        .where(VideoTranslationSegment.job_id == job_id)
+        .limit(1)
+    )
+    has_segments = seg_res.scalar_one_or_none() is not None
+
+    if has_segments and (checkpoint in phase2_checkpoints or job.stage in phase2_stages or job.status == TranslationJobStatus.SEGMENT_EDITING.value):
+        job.error_message = None
+        job.status = TranslationJobStatus.GENERATING_TTS.value
+        job.stage = "DUB"
+        job.current_step = "Thực hiện Smart Retry Phase 2 (TTS & Dubbing)..."
+        job.pid = None
+        await session.commit()
+        log_job_event(job_id, "RETRY", "Smart Retry resuming Phase 2 without re-translating existing segments.")
+        background_tasks.add_task(execute_job_render_pipeline, job_id)
+        return {"success": True, "data": {"started": True, "job_id": job_id, "phase": 2}}
 
     # Reset job status to CREATED for retry
     job.error_message = None
@@ -2267,7 +2566,7 @@ async def smart_retry_job_api(
     await session.commit()
     log_job_event(job_id, "RETRY", "Smart Retry initiated by user.")
 
-    # Trigger restart
+    # Trigger restart Phase 1
     return await start_translation_pipeline(job_id, background_tasks, session)
 
 
@@ -2379,8 +2678,11 @@ async def get_workflow_status_api(project_id: str, session: AsyncSession = Depen
         "CHARACTER_VOICE_REVIEW": ("TRANSLATE", 3),
         "DUB": ("DUB", 4),
         "GENERATING_TTS": ("DUB", 4),
+        "AUDIO_SCHEDULE_REVIEW": ("DUB", 4),
+        "TTS_DONE": ("DUB", 4),
         "SYNTHESIZING": ("DUB", 4),
         "SYNCING_AUDIO": ("DUB", 4),
+        "AUDIO_SYNC_DONE": ("DUB", 4),
         "PRODUCE": ("PRODUCE", 5),
         "RENDERING": ("PRODUCE", 5),
         "RENDER_DONE": ("PRODUCE", 5),
@@ -2741,13 +3043,27 @@ async def retry_stage_api(
         ]:
             signal_job_cancellation(job.id)
             job.error_message = None
-            job.status = TranslationJobStatus.CREATED.value
-            job.stage = "QUEUED"
-            job.current_step = f"Smart Retry từ stage {stage_name}..."
-            job.pid = None
-            await session.commit()
-            log_job_event(job.id, "RETRY", f"Smart Retry initiated for stage {stage_name}.")
-            await start_translation_pipeline(job.id, background_tasks, session)
+
+            phase2_stages = [
+                "DUB", "PRODUCE", "AUDIO_SCHEDULE_REVIEW", "GENERATING_TTS",
+                "SYNCING_AUDIO", "RENDERING",
+            ]
+            if stage_name in phase2_stages:
+                job.status = TranslationJobStatus.GENERATING_TTS.value
+                job.stage = "DUB"
+                job.current_step = f"Smart Retry từ stage {stage_name} (Phase 2)..."
+                job.pid = None
+                await session.commit()
+                log_job_event(job.id, "RETRY", f"Smart Retry initiated for stage {stage_name} (Phase 2 resume).")
+                background_tasks.add_task(execute_job_render_pipeline, job.id)
+            else:
+                job.status = TranslationJobStatus.CREATED.value
+                job.stage = "QUEUED"
+                job.current_step = f"Smart Retry từ stage {stage_name}..."
+                job.pid = None
+                await session.commit()
+                log_job_event(job.id, "RETRY", f"Smart Retry initiated for stage {stage_name}.")
+                await start_translation_pipeline(job.id, background_tasks, session)
     except Exception as retry_err:
         logger.warning(f"Failed to auto-restart job for project {project_id} in retry_stage_api: {retry_err}")
 
@@ -2907,6 +3223,7 @@ async def save_speaker_voice_map_api(
 
 
 class CharacterVoiceEdit(BaseModel):
+    segment_id: Optional[int] = None
     speaker_id: str
     character_id: str
     character_name: Optional[str] = None
@@ -2926,12 +3243,14 @@ async def _character_voice_review_data(job_id: str, session: AsyncSession) -> di
         raise HTTPException(status_code=404, detail="Job not found")
     rows = (await session.execute(select(VideoTranslationSegment).where(VideoTranslationSegment.job_id == job_id).order_by(VideoTranslationSegment.segment_number))).scalars().all()
     return {"job_id": job_id, "status": job.status, "passed": job.status != TranslationJobStatus.NEEDS_REVIEW.value, "segments": [{
-        "id": row.id, "speaker_id": row.speaker_id, "character_id": row.character_id,
+        "id": row.id, "segment_number": row.segment_number, "speaker_id": row.speaker_id, "character_id": row.character_id,
         "voice_provider": row.voice_provider, "voice_id": row.voice_id,
         "confidence": row.mapping_confidence, "conflict": row.overlap_with or [],
-        "original_start": row.original_start, "original_end": row.original_end,
+        "original_start": row.original_start if row.original_start is not None else row.start_time,
+        "original_end": row.original_end if row.original_end is not None else row.end_time,
         "scheduled_start": row.scheduled_start, "scheduled_end": row.scheduled_end,
         "schedule_action": row.schedule_action,
+        "tts_duration": row.tts_duration or row.tts_audio_duration or 0.0,
     } for row in rows]}
 
 
@@ -2945,6 +3264,11 @@ async def update_character_voice_review(job_id: str, body: CharacterVoiceReviewU
     job = (await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))).scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    job_dir = settings.DATA_DIR / "translator" / "jobs" / job_id
+    tts_dir = job_dir / "tts"
+    invalidated_segments = []
+
     for item in body.mappings:
         profile = (await session.execute(select(CharacterVoiceProfile).where(CharacterVoiceProfile.project_id == job.project_id, CharacterVoiceProfile.character_id == item.character_id))).scalar_one_or_none()
         if not profile:
@@ -2952,46 +3276,189 @@ async def update_character_voice_review(job_id: str, body: CharacterVoiceReviewU
             session.add(profile)
         profile.gender, profile.role = item.gender, item.role
         profile.voice_provider, profile.voice_id = item.voice_provider, item.voice_id
-        await session.execute(update(VideoTranslationSegment).where(VideoTranslationSegment.job_id == job_id, VideoTranslationSegment.speaker_id == item.speaker_id).values(character_id=item.character_id, voice_provider=item.voice_provider, voice_id=item.voice_id))
+
+        # Target segments
+        stmt = select(VideoTranslationSegment).where(VideoTranslationSegment.job_id == job_id)
+        if item.segment_id:
+            stmt = stmt.where(VideoTranslationSegment.id == item.segment_id)
+        else:
+            stmt = stmt.where(VideoTranslationSegment.speaker_id == item.speaker_id)
+        target_segs = (await session.execute(stmt)).scalars().all()
+
+        for seg in target_segs:
+            if seg.voice_id != item.voice_id or seg.voice_provider != item.voice_provider:
+                invalidated_segments.append(seg.segment_number)
+                seg_f = tts_dir / f"seg_{seg.segment_number:03d}.wav"
+                seg_meta = tts_dir / f"seg_{seg.segment_number:03d}.meta.json"
+                if seg_f.exists():
+                    seg_f.unlink(missing_ok=True)
+                if seg_meta.exists():
+                    seg_meta.unlink(missing_ok=True)
+                seg.tts_audio_path = None
+                seg.tts_audio_duration = None
+                seg.tts_duration = None
+
+            seg.character_id = item.character_id
+            seg.voice_provider = item.voice_provider
+            seg.voice_id = item.voice_id
+
         mapping = (await session.execute(select(SpeakerVoiceMapping).where(SpeakerVoiceMapping.project_id == job.project_id, SpeakerVoiceMapping.speaker_id == item.speaker_id))).scalar_one_or_none()
         if mapping:
             mapping.character_id, mapping.voice_provider, mapping.voice_id = item.character_id, item.voice_provider, item.voice_id
             mapping.needs_review = False
+
     await session.commit()
+    if invalidated_segments:
+        unique_invalidated = sorted(list(set(invalidated_segments)))
+        log_job_event(job_id, "TTS_CACHE", f"[TTS_CACHE] Invalidating segments: {unique_invalidated}")
+
     return {"success": True, "data": await _character_voice_review_data(job_id, session)}
 
 
 @router.post("/jobs/{job_id}/character-voice-review/validate")
 async def validate_character_voice_review(job_id: str, session: AsyncSession = Depends(get_session)):
     data = await _character_voice_review_data(job_id, session)
-    missing = [s["id"] for s in data["segments"] if not s["character_id"] or not s["voice_id"]]
-    issues = [{"reason": "missing_assignment", "segment_ids": missing}] if missing else []
-    ordered = sorted(data["segments"], key=lambda s: s["original_start"] or 0)
-    seen_conflict_pairs: set[tuple[str, str]] = set()
-    for index, left in enumerate(ordered):
-        for right in ordered[index + 1:]:
-            if (right["original_start"] or 0) >= (left["original_end"] or 0):
+    missing = [s["id"] for s in data["segments"] if not s.get("character_id") or not s.get("voice_id")]
+    issues: List[Dict[str, Any]] = []
+    if missing:
+        issues.append({
+            "reason": "missing_assignment",
+            "segment_ids": missing,
+            "message": f"Có {len(missing)} phân đoạn chưa được gán nhân vật hoặc giọng đọc.",
+        })
+
+    # Validate Audio Schedule and check for same-voice overlaps
+    from app.services.video_translator.timeline_scheduler import SchedulePolicy, schedule_segments
+    max_orig_end = max([s["original_end"] or 0.0 for s in data["segments"]] + [1.0])
+    sched_payload = [{
+        "id": s["id"],
+        "segment_number": s.get("segment_number", s["id"]),
+        "original_start": s["original_start"] or 0.0,
+        "original_end": s["original_end"] or 0.0,
+        "tts_duration": s.get("tts_duration", 0.0),
+        "voice_id": s.get("voice_id"),
+        "role": "supporting",
+    } for s in data["segments"]]
+
+    sched_res = schedule_segments(
+        sched_payload,
+        video_duration=max_orig_end + 60.0,
+        policy=SchedulePolicy(max_reschedule_seconds=60.0, max_tempo=2.0),
+    )
+
+    # 1. Direct overlap scan in scheduled timeline
+    sorted_sched = sorted(sched_res.segments, key=lambda s: float(s.get("scheduled_start", s.get("original_start", 0.0))))
+    for index, left in enumerate(sorted_sched):
+        left_start = float(left.get("scheduled_start", left.get("original_start", 0.0)))
+        left_end = float(left.get("scheduled_end", left.get("original_end", left_start)))
+        left_voice = left.get("voice_id")
+        left_num = left.get("segment_number", left.get("id"))
+        for right in sorted_sched[index + 1:]:
+            right_start = float(right.get("scheduled_start", right.get("original_start", 0.0)))
+            right_end = float(right.get("scheduled_end", right.get("original_end", right_start)))
+            right_voice = right.get("voice_id")
+            right_num = right.get("segment_number", right.get("id"))
+
+            if right_start >= left_end - 0.001:
                 break
-            if left["character_id"] != right["character_id"] and left["voice_id"] == right["voice_id"]:
-                pair_key = tuple(sorted((left["character_id"], right["character_id"])))
-                if pair_key not in seen_conflict_pairs:
-                    seen_conflict_pairs.add(pair_key)
-                    issues.append({"reason": "voice_conflict", "segment_ids": [left["id"], right["id"]]})
-    passed = len(missing) == 0
-    return {"success": True, "data": {**data, "passed": passed, "issues": issues}}
+
+            if left_voice and right_voice and left_voice == right_voice:
+                issues.append({
+                    "reason": "same_voice_overlap",
+                    "segment_ids": [left["id"], right["id"]],
+                    "segment_numbers": [left_num, right_num],
+                    "voice_id": left_voice,
+                    "message": f"Segment {left_num} và {right_num} đang sử dụng cùng voice {left_voice} trong khoảng thời gian overlap ({left_start:.2f}s - {right_end:.2f}s). Vui lòng thay đổi voice hoặc chỉnh schedule trước khi tiếp tục.",
+                })
+
+    # 2. Check scheduler unresolved conflicts
+    if sched_res.unresolved_conflicts:
+        seg_lookup = {s["id"]: s for s in data["segments"]}
+        for conf in sched_res.unresolved_conflicts:
+            l_s = seg_lookup.get(conf.get("with"))
+            r_s = seg_lookup.get(conf.get("segment_id"))
+            if l_s and r_s and l_s.get("voice_id") == r_s.get("voice_id"):
+                l_num = l_s.get("segment_number", l_s["id"])
+                r_num = r_s.get("segment_number", r_s["id"])
+                v_id = l_s.get("voice_id")
+                issues.append({
+                    "reason": "same_voice_overlap",
+                    "segment_ids": [l_s["id"], r_s["id"]],
+                    "segment_numbers": [l_num, r_num],
+                    "voice_id": v_id,
+                    "message": f"Segment {l_num} và {r_num} đang sử dụng cùng voice {v_id} trong khoảng thời gian overlap. Vui lòng thay đổi voice hoặc chỉnh schedule trước khi tiếp tục.",
+                })
+
+    # Deduplicate issues with stable key
+    deduped_issues: List[Dict[str, Any]] = []
+    seen_keys: set = set()
+    for issue in issues:
+        key = (issue.get("reason"), tuple(sorted(issue.get("segment_ids", []))), issue.get("voice_id"))
+        if key not in seen_keys:
+            seen_keys.add(key)
+            deduped_issues.append(issue)
+
+    passed = (len(missing) == 0) and (len(deduped_issues) == 0)
+    return {"success": True, "data": {**data, "passed": passed, "issues": deduped_issues}}
 
 
 @router.post("/jobs/{job_id}/character-voice-review/confirm-resume")
 async def confirm_character_voice_review(job_id: str, background_tasks: BackgroundTasks, session: AsyncSession = Depends(get_session)):
+    job = (await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))).scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Idempotency checks:
+    if job.status in [TranslationJobStatus.COMPLETED.value, "completed"]:
+        logger.info(f"[CONFIRM] Job {job_id} is already COMPLETED. Ignoring duplicate confirm.")
+        return {"success": True, "data": {"job_id": job_id, "resumed": False, "status": job.status, "message": "Job is already completed."}}
+
+    if job_id in _active_render_jobs or job.status in [
+        TranslationJobStatus.GENERATING_TTS.value,
+        TranslationJobStatus.SYNCING_AUDIO.value,
+        TranslationJobStatus.RENDERING.value,
+    ]:
+        logger.info(f"[CONFIRM] Job {job_id} is already processing ({job.status}). Ignoring duplicate confirm.")
+        return {"success": True, "data": {"job_id": job_id, "resumed": False, "status": job.status, "message": "Job is already processing."}}
+
+    log_job_event(job_id, "CONFIRM", "[CONFIRM] User confirmed review")
+    log_job_event(job_id, "CONFIRM", "[CONFIRM] Re-validating audio schedule")
+
     validation = await validate_character_voice_review(job_id, session)
     if not validation["data"]["passed"]:
+        remaining_issues = validation["data"].get("issues", [])
+        issue_msgs = [i.get("message") or i.get("reason") for i in remaining_issues]
+        err_msg = "; ".join(issue_msgs) if issue_msgs else "Còn xung đột giọng đọc / lịch trình audio."
+        log_job_event(job_id, "CONFIRM", f"[CONFIRM] Validation failed - remaining conflicts: {remaining_issues}")
+        log_job_event(job_id, "CONFIRM", "[CONFIRM] Review confirmation rejected because unresolved conflicts remain")
+
+        # Keep state as NEEDS_REVIEW
+        job.status = TranslationJobStatus.NEEDS_REVIEW.value
+        job.current_step = f"Không thể tiếp tục: {err_msg}"
+        await session.commit()
+
         raise HTTPException(status_code=409, detail=validation["data"])
-    job = (await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))).scalar_one()
+
+    log_job_event(job_id, "CONFIRM", "[CONFIRM] Validation passed. Proceeding to TTS & Dubbing.")
+
     profiles = (await session.execute(select(CharacterVoiceProfile).where(CharacterVoiceProfile.project_id == job.project_id))).scalars().all()
     for profile in profiles:
         profile.confirmed_by_user = True
+
+    snap = {}
+    if job.settings_snapshot_json:
+        try:
+            snap = json.loads(job.settings_snapshot_json)
+        except Exception:
+            snap = {}
+    snap["review_confirmed"] = True
+    snap["audio_schedule_confirmed"] = True
+    job.settings_snapshot_json = json.dumps(snap)
+    job.last_checkpoint_stage = "CHARACTER_VOICE_REVIEW_DONE"
     job.status, job.stage = TranslationJobStatus.GENERATING_TTS.value, "DUB"
+    job.current_step = "Đã xác nhận Character/Voice. Đang tiếp tục xử lý TTS & Dubbing..."
     await session.commit()
+    log_job_event(job_id, "CONFIRM_RESUME", "User confirmed Character/Voice and Audio Schedule review. Proceeding to TTS & Dubbing.")
     background_tasks.add_task(execute_job_render_pipeline, job_id)
     return {"success": True, "data": {"job_id": job_id, "resumed": True}}
 

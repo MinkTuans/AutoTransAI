@@ -141,6 +141,8 @@ export default function WorkflowTimeline({
   const isRunning = currentStatus === 'running' || ['extracting_audio', 'stt', 'translating', 'generating_tts', 'syncing_audio', 'rendering'].includes(currentStatus);
   const isPaused = currentStatus === 'paused';
   const isFailed = currentStatus === 'failed' || Boolean(pipelineError);
+  const isCompleted = currentStatus === 'completed';
+  const isNeedsReview = currentStatus === 'needs_review' || currentStatus === 'segment_editing';
 
   return (
     <div className={`wf-panel ${isFailed ? 'is-failed' : ''}`}>
@@ -163,7 +165,7 @@ export default function WorkflowTimeline({
               Log
             </button>
           )}
-          {!isRunning && !isPaused && (
+          {!isRunning && !isPaused && !isCompleted && !isNeedsReview && !isFailed && (
             <button type="button" className="btn btn-primary btn-sm" onClick={onStart} disabled={loadingAction}>
               {loadingAction === 'start' ? 'Starting...' : 'Start'}
             </button>
