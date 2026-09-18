@@ -374,7 +374,18 @@ async def delete_merge_job(
     job_id: str,
     session: AsyncSession = Depends(get_session),
 ):
-    """Delete a merge job record."""
-    await session.execute(delete(VideoMergeJob).where(VideoMergeJob.id == job_id))
+    """Delete a merge job record and its output file on disk."""
+    res = await session.execute(select(VideoMergeJob).where(VideoMergeJob.id == job_id))
+    job = res.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Không tìm thấy merge job.")
+
+    if job.output_video_path:
+        try:
+            Path(job.output_video_path).unlink(missing_ok=True)
+        except Exception as e:
+            logger.warning("Failed to unlink output video file on job deletion", path=job.output_video_path, error=str(e))
+
+    await session.delete(job)
     await session.commit()
-    return {"success": True, "message": "Đã xóa merge job."}
+    return {"success": True, "message": "Đã xóa merge job và file liên quan."}

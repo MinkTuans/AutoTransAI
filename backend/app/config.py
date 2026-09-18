@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     )
 
     # ── Database & Storage Paths ───────────────────────────────────────────────
-    DATABASE_URL: Optional[str] = "mysql+aiomysql://root:210606@127.0.0.1:3306/autotransai"
+    DATABASE_URL: Optional[str] = ""
     DATA_DIR: Path = ROOT_DIR / "data"
     STORAGE_ROOT: Path = ROOT_DIR / "storage"
     STORAGE_DRIVER: str = "local"

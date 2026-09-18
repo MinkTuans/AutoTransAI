@@ -242,7 +242,6 @@ class KeyManager:
                     var_name = main_env if idx == 1 else f"{main_env}_{idx}"
                     new_lines.append(f"{var_name}={k.api_key}")
                     if idx == 1 and k.api_key:
-                        os.environ[main_env] = k.api_key
                         setattr(settings, main_env, k.api_key)
 
             env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
@@ -390,7 +389,6 @@ class KeyManager:
             # Synchronize to settings/os env if first key
             if len(k_list) == 1:
                 env_var = f"{provider_id.upper()}_API_KEY"
-                os.environ[env_var] = api_key.strip()
                 setattr(settings, env_var, api_key.strip())
 
             self._save_keys()

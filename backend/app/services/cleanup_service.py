@@ -31,6 +31,8 @@ from app.models import (
     VideoAsset,
     VideoTranslationJob,
     VideoTranslationSegment,
+    VideoMergeJob,
+    VideoMergeAsset,
 )
 
 logger = get_logger(__name__)
@@ -303,6 +305,31 @@ class FileCleanupService:
             if p_r2:
                 valid_r2_keys.add(p_r2.lstrip("/\\").replace("\\", "/"))
 
+        # Video Merge Jobs & Assets
+        valid_merge_job_ids: Set[str] = set()
+        valid_disk_files: Set[str] = set()
+        merge_job_rows = await session.execute(
+            select(VideoMergeJob.id, VideoMergeJob.output_video_path, VideoMergeJob.output_relative_url)
+        )
+        for m_id, m_path, m_url in merge_job_rows.fetchall():
+            if m_id:
+                valid_merge_job_ids.add(m_id)
+            if m_path:
+                try:
+                    valid_disk_files.add(str(Path(m_path).resolve()))
+                except Exception:
+                    pass
+            if m_url:
+                valid_r2_keys.add(m_url.lstrip("/\\").replace("\\", "/"))
+
+        merge_asset_rows = await session.execute(select(VideoMergeAsset.file_path))
+        for (ma_path,) in merge_asset_rows.fetchall():
+            if ma_path:
+                try:
+                    valid_disk_files.add(str(Path(ma_path).resolve()))
+                except Exception:
+                    pass
+
         orphan_local_files: List[Dict[str, Any]] = []
         orphan_local_dirs: List[Path] = []
         orphan_r2_keys: List[str] = []
@@ -375,7 +402,20 @@ class FileCleanupService:
                 for f in files:
                     fp = Path(root) / f
                     rel_key = str(fp.relative_to(sub_local_dir)).replace("\\", "/")
-                    if rel_key not in valid_r2_keys and not any(rel_key.startswith(f"translator/jobs/{j}/") for j in valid_job_ids):
+                    abs_path_str = ""
+                    try:
+                        abs_path_str = str(fp.resolve())
+                    except Exception:
+                        pass
+
+                    is_valid_file = (
+                        rel_key in valid_r2_keys
+                        or abs_path_str in valid_disk_files
+                        or any(rel_key.startswith(f"translator/jobs/{j}/") for j in valid_job_ids)
+                        or any(rel_key.startswith(f"merger/jobs/{j}/") for j in valid_merge_job_ids)
+                    )
+
+                    if not is_valid_file:
                         age = now - fp.stat().st_mtime
                         if age >= max_age_sec:
                             try:
@@ -392,6 +432,7 @@ class FileCleanupService:
             "valid_jobs_count": len(valid_job_ids),
             "valid_assets_count": len(valid_asset_ids),
             "valid_projects_count": len(valid_proj_ids),
+            "valid_merge_jobs_count": len(valid_merge_job_ids),
             "orphan_files_count": len(orphan_local_files),
             "orphan_dirs_count": len(orphan_local_dirs),
             "orphan_r2_keys_count": len(orphan_r2_keys),

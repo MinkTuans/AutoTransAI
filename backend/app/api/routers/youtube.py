@@ -12,8 +12,7 @@ from sqlalchemy import select
 from pydantic import BaseModel
 import google_auth_oauthlib.flow
 
-# Allow non-HTTPS (HTTP) callback during local development
-os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+# Local development insecure transport should be configured at app startup if needed
 
 from app.api.deps import get_db
 from app.config import get_settings
@@ -110,9 +109,8 @@ async def oauth_callback(request: Request, state: str = None, code: str = None, 
         if state and state in _oauth_verifiers:
             flow.code_verifier = _oauth_verifiers.pop(state)
 
-        # Use the full URL to fetch tokens (allow local HTTP transport)
+        # Use the full URL to fetch tokens
         authorization_response = str(request.url)
-        os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
         flow.fetch_token(authorization_response=authorization_response)
         credentials = flow.credentials

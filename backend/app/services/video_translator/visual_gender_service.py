@@ -212,10 +212,11 @@ async def create_contact_sheet(image_paths: List[Path], output_path: Path) -> Pa
     if not actual_images:
         raise FileNotFoundError("None of the provided image paths exist on disk.")
 
-    # In mock/test environments where dummy files are touched with 0 bytes, return touched output
-    if any(p.stat().st_size == 0 for p in actual_images):
-        output_path.touch()
-        return output_path
+    # Validate that images exist and are non-empty
+    valid_images = [p for p in actual_images if p.stat().st_size > 0]
+    if not valid_images:
+        raise ValueError("Provided image files are empty (0 bytes). Cannot generate contact sheet.")
+    actual_images = valid_images
 
     padded = list(actual_images)
     while len(padded) < 4:

@@ -233,6 +233,32 @@ class AIModelResolver:
         )
 
     @classmethod
+    async def _resolve_requested_provider(
+        cls,
+        db: Optional[AsyncSession],
+        requested_model: str,
+    ) -> str:
+        if db:
+            try:
+                from app.models.settings import AIModel
+                stmt = select(AIModel.provider_id).where(AIModel.id == requested_model)
+                res = await db.execute(stmt)
+                prov = res.scalar_one_or_none()
+                if prov:
+                    return prov
+            except Exception:
+                pass
+
+        r_low = requested_model.lower()
+        if "gemini" in r_low:
+            return "gemini"
+        if "gpt" in r_low or "whisper" in r_low or "openai" in r_low:
+            return "openai"
+        if "claude" in r_low:
+            return "anthropic"
+        return "openai"
+
+    @classmethod
     async def resolve_stt_model(
         cls,
         db: Optional[AsyncSession] = None,
@@ -240,8 +266,9 @@ class AIModelResolver:
     ) -> Dict[str, Any]:
         """Convenience method to resolve STT model strictly from Database (or explicit override)."""
         if requested_model:
+            provider_id = await cls._resolve_requested_provider(db, requested_model)
             return {
-                "provider_id": "gemini" if "gemini" in requested_model.lower() else "openai",
+                "provider_id": provider_id,
                 "model_id": requested_model,
                 "source": "REQUESTED MODEL",
             }
@@ -256,8 +283,9 @@ class AIModelResolver:
     ) -> Dict[str, Any]:
         """Convenience method to resolve LLM/Translation model strictly from Database (or explicit override)."""
         if requested_model:
+            provider_id = await cls._resolve_requested_provider(db, requested_model)
             return {
-                "provider_id": "gemini" if "gemini" in requested_model.lower() else "openai",
+                "provider_id": provider_id,
                 "model_id": requested_model,
                 "source": "REQUESTED MODEL",
             }

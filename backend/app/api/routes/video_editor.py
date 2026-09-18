@@ -352,11 +352,24 @@ async def publish_youtube_endpoint(
             detail="❌ Video thành phẩm chưa ready để upload. (Lỗi: Video chưa được render hoàn tất hoặc không tìm thấy file thành phẩm trên hệ thống. Vui lòng kiểm tra lại tiến trình render/merge)."
         )
 
-    # Fetch active YouTube OAuth channel from database
-    channel_res = await session.execute(
-        select(YouTubeChannel).where(YouTubeChannel.is_active == True)
-    )
-    active_channel = channel_res.scalars().first()
+    # Fetch YouTube OAuth channel from database
+    active_channel = None
+    if body.channel_id:
+        channel_res = await session.execute(
+            select(YouTubeChannel).where(YouTubeChannel.id == body.channel_id)
+        )
+        active_channel = channel_res.scalar_one_or_none()
+        if not active_channel:
+            channel_res = await session.execute(
+                select(YouTubeChannel).where(YouTubeChannel.channel_id == body.channel_id)
+            )
+            active_channel = channel_res.scalar_one_or_none()
+    
+    if not active_channel:
+        channel_res = await session.execute(
+            select(YouTubeChannel).where(YouTubeChannel.is_active == True)
+        )
+        active_channel = channel_res.scalars().first()
 
     credentials_json = None
     if active_channel and active_channel.credentials_json:

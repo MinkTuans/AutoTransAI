@@ -38,6 +38,11 @@ async def lifespan(app: FastAPI):
     logger = get_logger("app.main")
     logger.info("Starting AutoTransAi backend")
 
+    # Allow non-HTTPS OAuth transport only in DEBUG / local development mode
+    if settings.DEBUG:
+        import os
+        os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
     # Ensure data directories exist
     settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
     settings.PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -45,6 +50,10 @@ async def lifespan(app: FastAPI):
     # Initialize database
     await init_db()
     logger.info("Database initialized")
+
+    # Reconcile any zombie / interrupted jobs from prior crashes or restarts
+    from app.services.reconciliation import reconcile_zombie_jobs
+    await reconcile_zombie_jobs()
 
     # Register providers
     registry = get_registry()

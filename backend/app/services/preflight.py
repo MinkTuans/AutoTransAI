@@ -326,12 +326,12 @@ async def run_video_translator_preflight(
 
     # 8. TTS Audio Provider Check (CRITICAL)
     audio_provider = registry.get_audio(audio_provider_id)
-    audio_ok = True  # Edge TTS is free and built-in
+    audio_ok = False
     if audio_provider:
         try:
             audio_ok = await audio_provider.validate_configuration()
         except Exception:
-            audio_ok = True
+            audio_ok = False
     checks.append(PreflightCheck(
         name="tts_provider_health",
         description=f"TTS Provider '{audio_provider_id.upper()}' hoạt động sẵn sàng",

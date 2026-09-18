@@ -21,32 +21,30 @@ settings = get_settings()
 async def get_storage_file(file_path: str):
     """Stream media file stored in persistent local storage."""
     raw_path = file_path.replace("\\", "/")
-    
-    # 1. Direct absolute path check
-    p_abs = Path(raw_path)
-    if p_abs.is_absolute() and p_abs.exists() and p_abs.is_file():
-        return FileResponse(p_abs)
-
-    # Clean relative path prefixes
     clean_path = raw_path.lstrip("/\\")
     for prefix in ("api/storage/files/", "storage/files/", "media/", "storage/"):
         if clean_path.startswith(prefix):
             clean_path = clean_path[len(prefix):]
 
-    # 2. Check local storage dir
-    local_target = SupabaseStorageService.get_local_storage_dir() / clean_path
-    if local_target.exists() and local_target.is_file():
-        return FileResponse(local_target)
+    # Valid roots
+    local_dir = SupabaseStorageService.get_local_storage_dir()
+    data_dir = settings.DATA_DIR
 
-    # 3. Check data directory
-    data_target = settings.DATA_DIR / clean_path
-    if data_target.exists() and data_target.is_file():
-        return FileResponse(data_target)
+    # Try local storage dir
+    try:
+        local_target = (local_dir / clean_path).resolve()
+        if local_target.is_relative_to(local_dir.resolve()) and local_target.exists() and local_target.is_file():
+            return FileResponse(local_target)
+    except Exception:
+        pass
 
-    # 4. Check relative path from current directory
-    root_target = Path(clean_path)
-    if root_target.exists() and root_target.is_file():
-        return FileResponse(root_target)
+    # Try data directory
+    try:
+        data_target = (data_dir / clean_path).resolve()
+        if data_target.is_relative_to(data_dir.resolve()) and data_target.exists() and data_target.is_file():
+            return FileResponse(data_target)
+    except Exception:
+        pass
 
     raise HTTPException(status_code=404, detail=f"❌ File not found: {file_path}")
 
@@ -57,35 +55,31 @@ async def download_file(path: str, filename: str = "download.mp4"):
         raise HTTPException(status_code=400, detail="❌ Khuyết đường dẫn file download.")
 
     raw_path = path.replace("\\", "/")
-    target_file: Optional[Path] = None
+    clean_path = raw_path.lstrip("/\\")
+    for prefix in ("api/storage/files/", "storage/files/", "media/", "storage/"):
+        if clean_path.startswith(prefix):
+            clean_path = clean_path[len(prefix):]
 
-    # 1. Direct absolute path check
-    p_abs = Path(raw_path)
-    if p_abs.is_absolute() and p_abs.exists() and p_abs.is_file():
-        target_file = p_abs
-    else:
-        # Clean relative path prefixes
-        clean_path = raw_path.lstrip("/\\")
-        for prefix in ("api/storage/files/", "storage/files/", "media/", "storage/"):
-            if clean_path.startswith(prefix):
-                clean_path = clean_path[len(prefix):]
+    local_dir = SupabaseStorageService.get_local_storage_dir()
+    data_dir = settings.DATA_DIR
+    target_file = None
 
-        # 2. Check local storage dir
-        local_target = SupabaseStorageService.get_local_storage_dir() / clean_path
-        if local_target.exists() and local_target.is_file():
+    try:
+        local_target = (local_dir / clean_path).resolve()
+        if local_target.is_relative_to(local_dir.resolve()) and local_target.exists() and local_target.is_file():
             target_file = local_target
-        else:
-            # 3. Check data directory
-            data_target = settings.DATA_DIR / clean_path
-            if data_target.exists() and data_target.is_file():
-                target_file = data_target
-            else:
-                # 4. Check relative path
-                root_target = Path(clean_path)
-                if root_target.exists() and root_target.is_file():
-                    target_file = root_target
+    except Exception:
+        pass
 
-    if target_file and target_file.exists() and target_file.is_file():
+    if not target_file:
+        try:
+            data_target = (data_dir / clean_path).resolve()
+            if data_target.is_relative_to(data_dir.resolve()) and data_target.exists() and data_target.is_file():
+                target_file = data_target
+        except Exception:
+            pass
+
+    if target_file:
         return FileResponse(
             path=target_file,
             filename=filename,

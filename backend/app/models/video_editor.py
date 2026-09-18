@@ -51,8 +51,8 @@ class VideoEditConfig(Base):
     __tablename__ = "video_edit_configs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    job_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
-    project_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    job_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=True, index=True)
+    project_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     
     target_aspect_ratio: Mapped[str] = mapped_column(String(20), default=AspectRatioEnum.LANDSCAPE_16_9.value)
     
@@ -95,8 +95,8 @@ class QCReport(Base):
     __tablename__ = "qc_reports"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    job_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
-    project_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    job_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=True, index=True)
+    project_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     
     audio_lufs: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     sync_drift_ms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -153,8 +153,8 @@ class YouTubePublication(Base):
     __tablename__ = "youtube_publications"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    job_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
-    project_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    job_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=True, index=True)
+    project_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     channel_id: Mapped[str] = mapped_column(String(36), ForeignKey("youtube_channels.id", ondelete="CASCADE"))
     
     title: Mapped[str] = mapped_column(String(100))

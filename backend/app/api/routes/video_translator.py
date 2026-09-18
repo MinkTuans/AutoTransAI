@@ -429,6 +429,45 @@ async def get_media_transfer(transfer_id: str):
     return {"success": True, "data": rec}
 
 
+@router.get("/assets/{asset_id}", response_model=dict)
+async def get_video_asset(
+    asset_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Retrieve details of a video asset by ID."""
+    res = await session.execute(select(VideoAsset).where(VideoAsset.id == asset_id))
+    asset = res.scalar_one_or_none()
+    if not asset:
+        raise HTTPException(status_code=404, detail="❌ Không tìm thấy VideoAsset.")
+
+    return {
+        "success": True,
+        "data": {
+            "id": asset.id,
+            "asset_id": asset.id,
+            "title": asset.title,
+            "source_type": asset.source_type,
+            "source_url": asset.source_url,
+            "source_domain": asset.source_domain,
+            "original_filename": asset.original_filename,
+            "file_path": asset.file_path,
+            "mime_type": asset.mime_type,
+            "file_size": asset.file_size,
+            "duration": asset.duration,
+            "width": asset.width,
+            "height": asset.height,
+            "audio_available": asset.audio_available,
+            "status": asset.status,
+            "r2_key": asset.r2_key,
+            "url": asset.url,
+            "thumbnail_url": asset.thumbnail_url,
+            "error_message": asset.error_message,
+            "created_at": asset.created_at.isoformat() if asset.created_at else None,
+            "updated_at": asset.updated_at.isoformat() if asset.updated_at else None,
+        },
+    }
+
+
 @router.post("/upload-watermark-logo", response_model=dict)
 async def upload_watermark_logo(
     file: UploadFile = File(...),

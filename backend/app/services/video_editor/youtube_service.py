@@ -320,16 +320,7 @@ class YouTubePublishingService:
                 log_job_event(job_id, "PUBLISHING", f"[YOUTUBE-API] ⚠️ Upload failed: {str(yt_err)}")
                 raise yt_err
 
-        # Simulated upload for development / staging when credentials not set
-        mock_id = f"yt_{job_id.replace('-', '_').lower()}"
-        mock_url = f"https://www.youtube.com/watch?v={mock_id}"
-        log_job_event(job_id, "PUBLISHING", f"[YOUTUBE-API] (Dev Mode) Published video metadata ready: {mock_url}")
-        return {
-            "success": True,
-            "youtube_video_id": mock_id,
-            "youtube_url": mock_url,
-            "status": "PUBLISHED",
-        }
+        raise ValueError("YouTube OAuth credentials are required to publish video.")
 
     @classmethod
     async def execute_async_upload(cls, publication_id: str, video_path: str) -> None:

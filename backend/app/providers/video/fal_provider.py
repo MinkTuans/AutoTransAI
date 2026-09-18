@@ -175,14 +175,15 @@ class FalVideoProvider(VideoProvider):
                             last_error_code = "MISSING_VIDEO_URL"
                         continue
 
-                    # 4. Download video file
-                    video_dl_res = await client.get(video_url)
-                    if video_dl_res.status_code != 200:
-                        last_error = f"Failed to download video file HTTP {video_dl_res.status_code}"
-                        last_error_code = "DOWNLOAD_FAILED"
-                        continue
-
-                    output_path.write_bytes(video_dl_res.content)
+                    # 4. Download video file (streaming to avoid OOM)
+                    async with client.stream("GET", video_url) as resp:
+                        if resp.status_code != 200:
+                            last_error = f"Failed to download video file HTTP {resp.status_code}"
+                            last_error_code = "DOWNLOAD_FAILED"
+                            continue
+                        with open(output_path, "wb") as f:
+                            async for chunk in resp.aiter_bytes(chunk_size=8192):
+                                f.write(chunk)
                     if not output_path.exists() or output_path.stat().st_size == 0:
                         last_error = "Downloaded video file on disk is empty or 0 bytes"
                         last_error_code = "FILE_WRITE_ERROR"

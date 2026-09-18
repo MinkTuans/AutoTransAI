@@ -55,7 +55,7 @@ def validate_path_within(path: Path, base_dir: Path) -> Path:
     resolved = path.resolve()
     base_resolved = base_dir.resolve()
 
-    if not str(resolved).startswith(str(base_resolved)):
+    if not resolved.is_relative_to(base_resolved):
         raise ValueError(
             f"Path traversal detected: {path} resolves outside {base_dir}"
         )

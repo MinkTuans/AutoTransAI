@@ -856,10 +856,18 @@ async def save_project_settings(
     }
 
 
+class ConfigureProjectRequest(BaseModel):
+    audio_provider_id: Optional[str] = None
+    video_provider_id: Optional[str] = None
+    voice_id: Optional[str] = None
+    voice_name: Optional[str] = None
+    sync_strategy: Optional[str] = None
+
+
 @router.post("/{project_id}/configure", response_model=dict)
 async def configure_project(
     project_id: str,
-    body: dict,
+    body: ConfigureProjectRequest,
     session: AsyncSession = Depends(get_session),
 ):
     """Configure project providers and voice."""
@@ -870,16 +878,16 @@ async def configure_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    if "audio_provider_id" in body:
-        project.audio_provider_id = body["audio_provider_id"]
-    if "video_provider_id" in body:
-        project.video_provider_id = body["video_provider_id"]
-    if "voice_id" in body:
-        project.voice_id = body["voice_id"]
-    if "voice_name" in body:
-        project.voice_name = body["voice_name"]
-    if "sync_strategy" in body:
-        project.sync_strategy = body["sync_strategy"]
+    if body.audio_provider_id is not None:
+        project.audio_provider_id = body.audio_provider_id
+    if body.video_provider_id is not None:
+        project.video_provider_id = body.video_provider_id
+    if body.voice_id is not None:
+        project.voice_id = body.voice_id
+    if body.voice_name is not None:
+        project.voice_name = body.voice_name
+    if body.sync_strategy is not None:
+        project.sync_strategy = body.sync_strategy
 
     project.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await session.commit()

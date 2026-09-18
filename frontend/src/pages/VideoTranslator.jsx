@@ -718,7 +718,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     let retryTimeout = null;
 
     const connectSSE = () => {
-      const sseUrl = `http://127.0.0.1:8000/api/projects/${activeProjectId}/workflow-stream`;
+      const sseUrl = `/api/projects/${activeProjectId}/workflow-stream`;
       eventSource = new EventSource(sseUrl);
 
       eventSource.onmessage = (event) => {
@@ -2581,7 +2581,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
           </div>
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
             <a
-              href={`http://127.0.0.1:8000/api/storage/download?path=${encodeURIComponent(job.output_video_path?.replace(/^.*[\\\/]data[\\\/]/, '') || '')}&filename=video_long_tieng.mp4`}
+              href={`/api/storage/download?path=${encodeURIComponent(job.output_video_path?.replace(/^.*[\\\/]data[\\\/]/, '') || '')}&filename=video_long_tieng.mp4`}
               download="final_translated_video.mp4"
               target="_blank"
               rel="noopener noreferrer"
