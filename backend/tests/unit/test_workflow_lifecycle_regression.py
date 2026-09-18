@@ -122,6 +122,7 @@ async def test_confirmed_review_persists_in_snapshot():
     mock_session = AsyncMock()
     mock_session.execute.return_value = MagicMock(
         scalar_one=lambda: fake_job,
+        scalar_one_or_none=lambda: fake_job,
         scalars=lambda: MagicMock(all=lambda: []),
     )
 

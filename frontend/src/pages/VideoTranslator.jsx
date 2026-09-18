@@ -49,8 +49,19 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   const [originalAudioMode, setOriginalAudioMode] = useState('mute');
   const [originalAudioVolume, setOriginalAudioVolume] = useState(0.20);
   const [autoConfirmTranslation, setAutoConfirmTranslation] = useState(true);
+  const [autoConfirmVoice, setAutoConfirmVoice] = useState(false);
   const [trimFillerEnabled, setTrimFillerEnabled] = useState(true);
   const [copyrightCheckEnabled, setCopyrightCheckEnabled] = useState(true);
+
+  // Audio Providers, Character Profiles & Voice Cache
+  const [audioProviders, setAudioProviders] = useState([
+    { id: 'edge_tts', name: 'Edge TTS (Microsoft)', configured: true, free_tier: true, availability: 'available' },
+    { id: 'google_cloud_tts', name: 'Google Cloud TTS', configured: false, free_tier: false, availability: 'api_key_missing' },
+    { id: 'elevenlabs', name: 'ElevenLabs', configured: false, free_tier: false, availability: 'api_key_missing' },
+  ]);
+  const [characterProfiles, setCharacterProfiles] = useState([]);
+  const [voicesCache, setVoicesCache] = useState({});
+  const [loadingVoices, setLoadingVoices] = useState({});
 
   // Watermark Settings State
   const [watermarkEnabled, setWatermarkEnabled] = useState(false);
@@ -150,6 +161,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     original_audio_mode: originalAudioMode,
     original_audio_volume: originalAudioVolume,
     auto_confirm_translation: autoConfirmTranslation,
+    auto_confirm_voice: autoConfirmVoice,
     trim_filler_enabled: trimFillerEnabled,
     copyright_check_enabled: copyrightCheckEnabled,
     watermark_enabled: watermarkEnabled,
@@ -277,6 +289,211 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     fetchProjectsList();
   }, []);
 
+  // Load Providers List on Mount
+  useEffect(() => {
+    providersApi.list()
+      .then(res => {
+        if (res?.data?.audio && Array.isArray(res.data.audio)) {
+          setAudioProviders(res.data.audio);
+        }
+      })
+      .catch(err => console.warn('[PROVIDERS] Failed to fetch audio providers:', err));
+  }, []);
+
+  // Load Character Profiles when active project changes
+  useEffect(() => {
+    if (!activeProjectId || activeProjectId === 'default_project') return;
+    videoTranslatorApi.listCharacterProfiles(activeProjectId)
+      .then(res => {
+        if (res?.data && Array.isArray(res.data)) {
+          setCharacterProfiles(res.data);
+        }
+      })
+      .catch(err => console.warn('[CHARACTERS] Failed to fetch profiles:', err));
+  }, [activeProjectId]);
+
+  // Load voices for a given provider
+  const loadVoicesForProvider = async (pId) => {
+    const providerId = pId || 'edge_tts';
+    if (voicesCache[providerId] && voicesCache[providerId].length > 0) {
+      return voicesCache[providerId];
+    }
+    if (loadingVoices[providerId]) return [];
+
+    setLoadingVoices(prev => ({ ...prev, [providerId]: true }));
+    try {
+      const res = await providersApi.listVoices(providerId);
+      const voiceList = res?.data || [];
+      setVoicesCache(prev => ({ ...prev, [providerId]: voiceList }));
+      setLoadingVoices(prev => ({ ...prev, [providerId]: false }));
+      return voiceList;
+    } catch (err) {
+      console.warn(`[VOICES] Failed to fetch voices for ${providerId}:`, err);
+      let fallbackList = [];
+      if (providerId === 'edge_tts') {
+        fallbackList = [
+          { id: 'vi-VN-HoaiMyNeural', name: 'Hoài My', gender: 'Female', language: 'vi-VN' },
+          { id: 'vi-VN-NamMinhNeural', name: 'Nam Minh', gender: 'Male', language: 'vi-VN' },
+          { id: 'en-US-AriaNeural', name: 'Aria', gender: 'Female', language: 'en-US' },
+          { id: 'en-US-GuyNeural', name: 'Guy', gender: 'Male', language: 'en-US' },
+          { id: 'zh-CN-XiaoxiaoNeural', name: 'Xiaoxiao', gender: 'Female', language: 'zh-CN' },
+          { id: 'zh-CN-YunxiNeural', name: 'Yunxi', gender: 'Male', language: 'zh-CN' },
+        ];
+      } else if (providerId === 'google_cloud_tts') {
+        fallbackList = [
+          { id: 'vi-VN-Standard-A', name: 'Vietnamese Standard A', gender: 'Female', language: 'vi-VN' },
+          { id: 'vi-VN-Neural2-A', name: 'Vietnamese Neural2 A', gender: 'Female', language: 'vi-VN' },
+          { id: 'vi-VN-Standard-B', name: 'Vietnamese Standard B', gender: 'Male', language: 'vi-VN' },
+          { id: 'vi-VN-Neural2-D', name: 'Vietnamese Neural2 D', gender: 'Male', language: 'vi-VN' },
+          { id: 'en-US-Neural2-F', name: 'English Neural2 F', gender: 'Female', language: 'en-US' },
+          { id: 'en-US-Neural2-D', name: 'English Neural2 D', gender: 'Male', language: 'en-US' },
+        ];
+      } else if (providerId === 'elevenlabs') {
+        fallbackList = [
+          { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel', gender: 'Female', language: 'en-US' },
+          { id: 'AZnzlk1XvdvUeBnXmlld', name: 'Domi', gender: 'Female', language: 'en-US' },
+          { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni', gender: 'Male', language: 'en-US' },
+        ];
+      }
+      setVoicesCache(prev => ({ ...prev, [providerId]: fallbackList }));
+      setLoadingVoices(prev => ({ ...prev, [providerId]: false }));
+      return fallbackList;
+    }
+  };
+
+  // Pre-fetch voices for default audioProviderId and for any provider used in segments
+  useEffect(() => {
+    loadVoicesForProvider(audioProviderId);
+  }, [audioProviderId]);
+
+  useEffect(() => {
+    if (segments && segments.length > 0) {
+      const providersInSegments = new Set(segments.map(s => s.voice_provider || 'edge_tts'));
+      providersInSegments.forEach(p => loadVoicesForProvider(p));
+    }
+  }, [segments]);
+
+  // Format Helpers
+  const formatVoiceLabel = (v) => {
+    if (!v) return '';
+    let displayName = v.name || v.id;
+    if (displayName.includes('Microsoft') && displayName.includes('Online (Natural)')) {
+      const m = displayName.match(/Microsoft\s+([A-Za-z0-9]+)\s+Online/);
+      if (m) displayName = m[1];
+    }
+    if (v.id === 'vi-VN-HoaiMyNeural') displayName = 'Hoài My';
+    else if (v.id === 'vi-VN-NamMinhNeural') displayName = 'Nam Minh';
+
+    const g = (v.gender || '').toLowerCase();
+    const genderLabel = g === 'female' ? 'Nữ' : (g === 'male' ? 'Nam' : '');
+    const parts = [displayName];
+    if (genderLabel) parts.push(genderLabel);
+    if (v.language) parts.push(v.language);
+    return parts.join(' — ');
+  };
+
+  const formatProviderLabel = (p) => {
+    if (!p) return '';
+    if (p.id === 'edge_tts') return 'Edge TTS (Miễn phí / Nhanh)';
+    if (!p.configured && p.availability === 'api_key_missing') {
+      return `${p.name || p.id} (Chưa cấu hình API Key)`;
+    }
+    return p.name || p.id;
+  };
+
+  const formatCharacterLabel = (c) => {
+    if (!c) return '';
+    const name = c.name || c.character_id || 'Nhân vật';
+    const g = (c.gender || 'unknown').toLowerCase();
+    const genderLabel = g === 'male' ? 'Nam' : (g === 'female' ? 'Nữ' : 'Chưa xác định');
+    return `${name} — ${genderLabel}`;
+  };
+
+  const filterVoicesByLanguage = (voicesList, targetLang) => {
+    if (!voicesList) return [];
+    if (!targetLang) return voicesList;
+    const normTarget = targetLang.toLowerCase().split('-')[0];
+    return voicesList.filter(v => {
+      const l = (v.language || '').toLowerCase();
+      return l.startsWith(normTarget) || l === targetLang.toLowerCase();
+    });
+  };
+
+  const filterVoicesByGender = (voicesList, gender) => {
+    if (!voicesList) return [];
+    const g = (gender || 'unknown').toLowerCase();
+    if (g !== 'male' && g !== 'female') return [];
+    return voicesList.filter(v => (v.gender || '').toLowerCase() === g);
+  };
+
+  const allAvailableCharacters = React.useMemo(() => {
+    const list = [...characterProfiles];
+    const seen = new Set(list.map(c => c.character_id));
+    segments.forEach(s => {
+      if (s.character_id && !seen.has(s.character_id)) {
+        seen.add(s.character_id);
+        list.push({
+          character_id: s.character_id,
+          name: s.character_name || s.character_id,
+          gender: s.gender || 'unknown',
+          role: s.role || 'supporting',
+        });
+      }
+    });
+    return list;
+  }, [characterProfiles, segments]);
+
+  const handleSegmentProviderChange = (segId, newProvider) => {
+    loadVoicesForProvider(newProvider);
+    setSegments(prev => prev.map(s => {
+      if (s.id !== segId) return s;
+      return {
+        ...s,
+        voice_provider: newProvider,
+        voice_id: '', // Never keep voice from previous provider (Requirement 3)
+      };
+    }));
+  };
+
+  const handleSegmentCharacterChange = (segId, newCharId) => {
+    const char = allAvailableCharacters.find(c => c.character_id === newCharId);
+    const charGender = char ? (char.gender || 'unknown').toLowerCase() : 'unknown';
+    setSegments(prev => prev.map(s => {
+      if (s.id !== segId) return s;
+      const provVoices = voicesCache[s.voice_provider || 'edge_tts'] || [];
+      const currVoice = provVoices.find(v => v.id === s.voice_id);
+      const keepVoice = charGender !== 'unknown' && currVoice && (currVoice.gender || '').toLowerCase() === charGender;
+      return {
+        ...s,
+        character_id: newCharId,
+        character_name: char?.name || s.character_name || newCharId,
+        gender: charGender,
+        voice_id: keepVoice ? s.voice_id : '',
+      };
+    }));
+  };
+
+  const handleToggleCharacterGender = (charId, newGender) => {
+    setCharacterProfiles(prev => {
+      const exists = prev.some(c => c.character_id === charId);
+      if (exists) {
+        return prev.map(c => c.character_id === charId ? { ...c, gender: newGender } : c);
+      }
+      return [...prev, { character_id: charId, name: charId, gender: newGender, role: 'supporting' }];
+    });
+    setSegments(prev => prev.map(s => {
+      if (s.character_id !== charId) return s;
+      const provVoices = voicesCache[s.voice_provider || 'edge_tts'] || [];
+      const currVoice = provVoices.find(v => v.id === s.voice_id);
+      const keepVoice = currVoice && (currVoice.gender || '').toLowerCase() === newGender;
+      return {
+        ...s,
+        gender: newGender,
+        voice_id: keepVoice ? s.voice_id : '',
+      };
+    }));
+  };
+
   const parseBool = (val, defaultVal = false) => {
     if (val === null || val === undefined) return defaultVal;
     if (typeof val === 'boolean') return val;
@@ -302,6 +519,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     if (cfg.original_audio_mode) setOriginalAudioMode(cfg.original_audio_mode);
     if (cfg.original_audio_volume !== undefined) setOriginalAudioVolume(cfg.original_audio_volume);
     setAutoConfirmTranslation(parseBool(cfg.auto_confirm_translation, true));
+    setAutoConfirmVoice(parseBool(cfg.auto_confirm_voice, false));
     setTrimFillerEnabled(parseBool(cfg.trim_filler_enabled, true));
     setCopyrightCheckEnabled(parseBool(cfg.copyright_check_enabled, true));
 
@@ -1058,6 +1276,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         voice_id: voiceId,
         original_audio_mode: originalAudioMode,
         auto_confirm_translation: autoConfirmTranslation,
+        auto_confirm_voice: autoConfirmVoice,
         trim_filler_enabled: trimFillerEnabled,
         copyright_check_enabled: copyrightCheckEnabled,
         watermark_enabled: watermarkEnabled,
@@ -1416,7 +1635,15 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                 <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: '#94a3b8' }}>Target Language:</label>
                 <select
                   value={targetLanguage}
-                  onChange={(e) => setTargetLanguage(e.target.value)}
+                  onChange={(e) => {
+                    const newLang = e.target.value;
+                    setTargetLanguage(newLang);
+                    const provVoices = voicesCache[audioProviderId] || [];
+                    const filtered = filterVoicesByLanguage(provVoices, newLang);
+                    if (filtered.length > 0 && !filtered.some(v => v.id === voiceId)) {
+                      setVoiceId(filtered[0].id);
+                    }
+                  }}
                   style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
                 >
                   <option value="vi">🇻🇳 Tiếng Việt (Vietnamese)</option>
@@ -1432,25 +1659,59 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                 <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: '#94a3b8' }}>TTS Provider:</label>
                 <select
                   value={audioProviderId}
-                  onChange={(e) => setAudioProviderId(e.target.value)}
+                  onChange={(e) => {
+                    const newProv = e.target.value;
+                    setAudioProviderId(newProv);
+                    loadVoicesForProvider(newProv).then(voicesList => {
+                      const filtered = filterVoicesByLanguage(voicesList, targetLanguage);
+                      if (filtered.length > 0) {
+                        setVoiceId(filtered[0].id);
+                      } else if (voicesList && voicesList.length > 0) {
+                        setVoiceId(voicesList[0].id);
+                      } else {
+                        setVoiceId('');
+                      }
+                    });
+                  }}
                   style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
                 >
-                  <option value="edge_tts">Edge TTS (Miễn phí / Nhanh)</option>
-                  <option value="elevenlabs">ElevenLabs (Cao cấp)</option>
-                  <option value="google_tts">Google Cloud TTS</option>
+                  {audioProviders.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {formatProviderLabel(p)}
+                    </option>
+                  ))}
                 </select>
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: '#94a3b8' }}>Giọng đọc (Voice):</label>
+                <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: '#94a3b8' }}>Giọng đọc mặc định (Default Voice):</label>
                 <select
                   value={voiceId}
                   onChange={(e) => setVoiceId(e.target.value)}
                   style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
                 >
-                  {voices.map(v => (
-                    <option key={v.id} value={v.id}>{v.name} ({v.gender})</option>
-                  ))}
+                  {(() => {
+                    const provVoices = voicesCache[audioProviderId] || [];
+                    const filtered = filterVoicesByLanguage(provVoices, targetLanguage);
+                    const listToUse = filtered.length > 0 ? filtered : provVoices;
+                    const hasCurrent = voiceId && listToUse.some(v => v.id === voiceId);
+
+                    return (
+                      <>
+                        {!hasCurrent && voiceId && (
+                          <option value={voiceId} disabled>
+                            ⚠️ {voiceId} (Không khả dụng với provider/ngôn ngữ này)
+                          </option>
+                        )}
+                        {(!voiceId || !hasCurrent) && <option value="">-- Chọn giọng đọc --</option>}
+                        {listToUse.map(v => (
+                          <option key={v.id} value={v.id}>
+                            {formatVoiceLabel(v)}
+                          </option>
+                        ))}
+                      </>
+                    );
+                  })()}
                 </select>
               </div>
 
@@ -1471,8 +1732,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-                columnGap: '16px',
+                gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                gap: '10px 16px',
                 marginBottom: '14px',
                 width: '100%',
               }}
@@ -1484,7 +1745,16 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                   onChange={(e) => setAutoConfirmTranslation(e.target.checked)}
                   style={{ width: '16px', height: '16px', flexShrink: 0, accentColor: '#10b981', cursor: 'pointer' }}
                 />
-                Auto-Confirm Translation
+                Tự xác nhận bản dịch hợp lệ
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0', minHeight: '28px' }}>
+                <input
+                  type="checkbox"
+                  checked={autoConfirmVoice}
+                  onChange={(e) => setAutoConfirmVoice(e.target.checked)}
+                  style={{ width: '16px', height: '16px', flexShrink: 0, accentColor: '#10b981', cursor: 'pointer' }}
+                />
+                Tự xác nhận nhân vật & giọng đọc hợp lệ
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0', minHeight: '28px' }}>
                 <input
@@ -1903,21 +2173,244 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
           <h3 style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '12px' }}>📝 Xem lại & Chỉnh sửa Văn Bản Dịch / Nhân Vật</h3>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '400px', overflowY: 'auto', paddingRight: '4px' }}>
-            {segments.map((seg) => (
-              <div key={seg.id} style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', padding: '12px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', color: '#818cf8', fontWeight: 'bold', fontSize: '12px' }}>
-                  <span>Phân đoạn #{seg.number}</span>
-                  <span>⏱ {formatTime(seg.start_time)} → {formatTime(seg.end_time)}</span>
-                </div>
-                <div style={{ fontSize: '12px', color: '#cbd5e1', marginBottom: '6px', fontStyle: 'italic' }}>
-                  Gốc ({job.detected_language || 'Auto'}): "{seg.original_text}"
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '6px', marginBottom: '8px', fontSize: '11px' }}>
-                  <label>Speaker<input value={seg.speaker_id || ''} readOnly style={{ width: '100%' }} /></label>
-                  <label>Character<input value={seg.character_id || ''} onChange={(e) => handleSegmentFieldChange(seg.id, 'character_id', e.target.value)} style={{ width: '100%' }} /></label>
-                  <label>Provider<input value={seg.voice_provider || ''} onChange={(e) => handleSegmentFieldChange(seg.id, 'voice_provider', e.target.value)} style={{ width: '100%' }} /></label>
-                  <label>Voice<input value={seg.voice_id || ''} onChange={(e) => handleSegmentFieldChange(seg.id, 'voice_id', e.target.value)} style={{ width: '100%' }} /></label>
-                </div>
+            {segments.map((seg) => {
+              const currentTargetLang = job?.target_language || targetLanguage || 'vi';
+              const normTarget = currentTargetLang.toLowerCase().split('-')[0];
+
+              const charProf = allAvailableCharacters.find(c => c.character_id === seg.character_id);
+              const charGender = (charProf?.gender || seg.gender || 'unknown').toLowerCase();
+              const currentProvider = seg.voice_provider || 'edge_tts';
+              const rawVoices = voicesCache[currentProvider] || [];
+              const isProvLoading = Boolean(loadingVoices[currentProvider]);
+
+              // Target language filter (Requirement 4)
+              const langFilteredVoices = rawVoices.filter(v => {
+                const l = (v.language || '').toLowerCase();
+                return l.startsWith(normTarget) || l === currentTargetLang.toLowerCase();
+              });
+
+              // Gender filter (Requirement 5)
+              const availableVoices = (charGender === 'male' || charGender === 'female')
+                ? langFilteredVoices.filter(v => (v.gender || '').toLowerCase() === charGender)
+                : [];
+
+              const hasCurrentVoice = availableVoices.some(v => v.id === seg.voice_id);
+
+              return (
+                <div key={seg.id} style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', padding: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', color: '#818cf8', fontWeight: 'bold', fontSize: '12px' }}>
+                    <span>Phân đoạn #{seg.number}</span>
+                    <span>⏱ {formatTime(seg.start_time)} → {formatTime(seg.end_time)}</span>
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#cbd5e1', marginBottom: '6px', fontStyle: 'italic' }}>
+                    Gốc ({job.detected_language || 'Auto'}): "{seg.original_text}"
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px', marginBottom: '8px', fontSize: '11px' }}>
+                    {/* 1. SPEAKER */}
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                      <span style={{ color: '#94a3b8', fontWeight: '500' }}>Speaker</span>
+                      <input
+                        value={seg.speaker_id || ''}
+                        readOnly
+                        style={{
+                          width: '100%',
+                          padding: '6px 8px',
+                          borderRadius: '6px',
+                          background: '#1e293b',
+                          color: '#94a3b8',
+                          border: '1px solid #334155',
+                          fontSize: '11px',
+                          cursor: 'default',
+                        }}
+                      />
+                    </label>
+
+                    {/* 2. CHARACTER */}
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                      <span style={{ color: '#94a3b8', fontWeight: '500' }}>Character</span>
+                      <select
+                        value={seg.character_id || ''}
+                        onChange={(e) => handleSegmentCharacterChange(seg.id, e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '6px 8px',
+                          borderRadius: '6px',
+                          background: '#1e293b',
+                          color: '#fff',
+                          border: '1px solid #475569',
+                          fontSize: '11px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {!seg.character_id && <option value="" disabled>-- Chọn nhân vật --</option>}
+                        {seg.character_id && !allAvailableCharacters.some(c => c.character_id === seg.character_id) && (
+                          <option value={seg.character_id}>
+                            {seg.character_name || seg.character_id} — {seg.gender === 'male' ? 'Nam' : (seg.gender === 'female' ? 'Nữ' : 'Chưa xác định')}
+                          </option>
+                        )}
+                        {allAvailableCharacters.map(c => (
+                          <option key={c.character_id} value={c.character_id}>
+                            {formatCharacterLabel(c)}
+                          </option>
+                        ))}
+                      </select>
+                      {charGender === 'unknown' && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
+                          <span style={{ fontSize: '10px', color: '#f59e0b' }}>Giới tính:</span>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleCharacterGender(seg.character_id || seg.id, 'male')}
+                            style={{
+                              padding: '1px 6px',
+                              fontSize: '10px',
+                              background: '#1e3a8a',
+                              color: '#bfdbfe',
+                              border: '1px solid #3b82f6',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                            }}
+                            title="Gán giới tính Nam cho nhân vật"
+                          >
+                            ♂ Nam
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleCharacterGender(seg.character_id || seg.id, 'female')}
+                            style={{
+                              padding: '1px 6px',
+                              fontSize: '10px',
+                              background: '#831843',
+                              color: '#fbcfe8',
+                              border: '1px solid #ec4899',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                            }}
+                            title="Gán giới tính Nữ cho nhân vật"
+                          >
+                            ♀ Nữ
+                          </button>
+                        </div>
+                      )}
+                    </label>
+
+                    {/* 3. PROVIDER */}
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                      <span style={{ color: '#94a3b8', fontWeight: '500' }}>Provider</span>
+                      <select
+                        value={seg.voice_provider || 'edge_tts'}
+                        onChange={(e) => handleSegmentProviderChange(seg.id, e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '6px 8px',
+                          borderRadius: '6px',
+                          background: '#1e293b',
+                          color: '#fff',
+                          border: '1px solid #475569',
+                          fontSize: '11px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {seg.voice_provider && !audioProviders.some(p => p.id === seg.voice_provider) && (
+                          <option value={seg.voice_provider} disabled>
+                            ⚠️ Nhà cung cấp không khả dụng ({seg.voice_provider})
+                          </option>
+                        )}
+                        {audioProviders.map(p => {
+                          const isUnavailable = !p.configured && p.availability === 'api_key_missing';
+                          return (
+                            <option key={p.id} value={p.id} disabled={isUnavailable}>
+                              {formatProviderLabel(p)}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </label>
+
+                    {/* 4. VOICE */}
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                      <span style={{ color: '#94a3b8', fontWeight: '500' }}>Voice</span>
+                      {charGender === 'unknown' ? (
+                        <select
+                          disabled
+                          value=""
+                          style={{
+                            width: '100%',
+                            padding: '6px 8px',
+                            borderRadius: '6px',
+                            background: '#0f172a',
+                            color: '#f59e0b',
+                            border: '1px dashed #f59e0b',
+                            fontSize: '11px',
+                            cursor: 'not-allowed',
+                          }}
+                        >
+                          <option value="" disabled>[ Chưa xác định giới tính ]</option>
+                        </select>
+                      ) : isProvLoading ? (
+                        <select
+                          disabled
+                          value=""
+                          style={{
+                            width: '100%',
+                            padding: '6px 8px',
+                            borderRadius: '6px',
+                            background: '#0f172a',
+                            color: '#94a3b8',
+                            border: '1px solid #475569',
+                            fontSize: '11px',
+                            cursor: 'wait',
+                          }}
+                        >
+                          <option value="" disabled>⏳ Đang tải danh sách giọng...</option>
+                        </select>
+                      ) : availableVoices.length === 0 ? (
+                        <select
+                          disabled
+                          value=""
+                          style={{
+                            width: '100%',
+                            padding: '6px 8px',
+                            borderRadius: '6px',
+                            background: '#0f172a',
+                            color: '#f87171',
+                            border: '1px solid #ef4444',
+                            fontSize: '11px',
+                            cursor: 'not-allowed',
+                          }}
+                        >
+                          <option value="" disabled>[ Không có giọng phù hợp ]</option>
+                        </select>
+                      ) : (
+                        <select
+                          value={seg.voice_id || ''}
+                          onChange={(e) => handleSegmentFieldChange(seg.id, 'voice_id', e.target.value)}
+                          style={{
+                            width: '100%',
+                            padding: '6px 8px',
+                            borderRadius: '6px',
+                            background: '#1e293b',
+                            color: '#fff',
+                            border: '1px solid #475569',
+                            fontSize: '11px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {!seg.voice_id && <option value="" disabled>-- Chọn giọng đọc --</option>}
+                          {seg.voice_id && !hasCurrentVoice && (
+                            <option value={seg.voice_id} disabled>
+                              ⚠️ Giọng không khả dụng ({seg.voice_id})
+                            </option>
+                          )}
+                          {availableVoices.map(v => (
+                            <option key={v.id} value={v.id}>
+                              {formatVoiceLabel(v)}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </label>
+                  </div>
                 <div style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '6px' }}>
                   Confidence: {Math.round((seg.confidence || 0) * 100)}% · Conflict: {(seg.overlap_with || []).join(', ') || 'None'} · Original: {formatTime(seg.original_start ?? seg.start_time)}–{formatTime(seg.original_end ?? seg.end_time)} · Scheduled: {seg.scheduled_start == null ? 'Pending' : `${formatTime(seg.scheduled_start)}–${formatTime(seg.scheduled_end)}`} · Action: {seg.schedule_action || 'Pending'}
                 </div>
@@ -1938,8 +2431,9 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                   />
                 </div>
               </div>
-            ))}
-          </div>
+            );
+          })}
+        </div>
 
           {job.status === 'segment_editing' && (
             <button

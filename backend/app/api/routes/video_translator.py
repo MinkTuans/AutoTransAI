@@ -145,6 +145,7 @@ class CreateJobRequest(BaseModel):
     voice_id: Optional[str] = None
     original_audio_mode: str = "mute"
     auto_confirm_translation: bool = True
+    auto_confirm_voice: bool = False
     trim_filler_enabled: bool = True
     copyright_check_enabled: bool = True
     thumbnail_enabled: bool = False
@@ -541,6 +542,7 @@ async def create_translation_job(
     wm_font_size = body.watermark_font_size if body.watermark_font_size != 32 else proj_settings.get("watermark_font_size", 32)
 
     auto_confirm = _parse_bool(body.auto_confirm_translation, proj_settings.get("auto_confirm_translation", True))
+    auto_confirm_voice = _parse_bool(getattr(body, "auto_confirm_voice", False), proj_settings.get("auto_confirm_voice", False))
     trim_filler = _parse_bool(getattr(body, "trim_filler_enabled", True), proj_settings.get("trim_filler_enabled", True))
     copyright_check = _parse_bool(
         getattr(body, "copyright_check_enabled", True),
@@ -549,6 +551,7 @@ async def create_translation_job(
 
     settings_snapshot = {
         "auto_confirm_translation": auto_confirm,
+        "auto_confirm_voice": auto_confirm_voice,
         "trim_filler_enabled": trim_filler,
         "copyright_check_enabled": copyright_check,
         "stt": {
@@ -624,6 +627,7 @@ async def create_translation_job(
         voice_id=body.voice_id,
         original_audio_mode=body.original_audio_mode,
         auto_confirm_translation=auto_confirm,
+        auto_confirm_voice=auto_confirm_voice,
         status=TranslationJobStatus.CREATED.value,
         stage="QUEUED",
         stage_progress_pct=0.0,
@@ -692,7 +696,11 @@ async def auto_confirm_and_start_render_if_needed(job_id: str) -> bool:
             and job.auto_confirm_translation
             and job.status not in [TranslationJobStatus.FAILED.value, TranslationJobStatus.NEEDS_REVIEW.value, "needs_review"]
         ):
-            # Mark segments as confirmed
+            auto_confirm_voice = getattr(job, "auto_confirm_voice", False) or bool(snap.get("auto_confirm_voice"))
+            profiles = (await session.execute(select(CharacterVoiceProfile).where(CharacterVoiceProfile.project_id == job.project_id))).scalars().all()
+            all_confirmed = bool(profiles) and all(p.confirmed_by_user for p in profiles)
+
+            # Mark text segments as confirmed
             await session.execute(
                 update(VideoTranslationSegment)
                 .where(VideoTranslationSegment.job_id == job_id)
@@ -701,6 +709,22 @@ async def auto_confirm_and_start_render_if_needed(job_id: str) -> bool:
             snap["auto_confirm_executed"] = True
             job.settings_snapshot_json = json.dumps(snap)
             job.last_checkpoint_stage = "TRANSLATION_CONFIRMED"
+
+            if not all_confirmed and not auto_confirm_voice:
+                job.status = TranslationJobStatus.NEEDS_REVIEW.value
+                job.stage = "CHARACTER_VOICE_REVIEW"
+                job.current_step = "Cần kiểm tra Character / Voice trước TTS"
+                job.studio_state_json = json.dumps({"active_step": "character_voice_review", "active_tab": "editor"})
+                job.pid = None
+                job.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                await session.commit()
+                log_job_event(job_id, "NEEDS_REVIEW", "Auto-confirmed translation segments, but voice review remains pending.")
+                return False
+
+            if auto_confirm_voice and not all_confirmed:
+                for p in profiles:
+                    p.confirmed_by_user = True
+
             job.status = TranslationJobStatus.GENERATING_TTS.value
             job.stage = "DUB"
             job.current_step = "Bản dịch đã hoàn tất. Tự động chuyển sang Phase 2 (TTS & Dubbing)..."
@@ -1017,6 +1041,18 @@ async def start_translation_pipeline(
                         decision = mapping_result.by_speaker[source.get("speaker_id") or row.speaker_id]
                         row.character_id = decision["character_id"]
                         row.mapping_confidence = decision["confidence"]
+                    # Resolve target_language from job settings snapshot or job model
+                    resolved_target_lang = b_job.target_language
+                    if b_job.settings_snapshot_json:
+                        try:
+                            snap = json.loads(b_job.settings_snapshot_json)
+                            if isinstance(snap.get("language"), dict) and snap["language"].get("target_language"):
+                                resolved_target_lang = snap["language"]["target_language"]
+                            elif snap.get("target_language"):
+                                resolved_target_lang = snap["target_language"]
+                        except Exception:
+                            pass
+
                     voice_result = await assign_project_voices(
                         bg_session,
                         b_job.project_id,
@@ -1025,6 +1061,7 @@ async def start_translation_pipeline(
                             "original_start": row.original_start,
                             "original_end": row.original_end,
                         } for row in segment_rows],
+                        target_language=resolved_target_lang,
                     )
                     for row in segment_rows:
                         assignment = voice_result.assignments.get(row.character_id, {})
@@ -1033,9 +1070,35 @@ async def start_translation_pipeline(
                     character_voice_needs_review = mapping_result.requires_review or voice_result.requires_review
 
                     now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
-                    auto_confirm = getattr(b_job, "auto_confirm_translation", True)
-                    if auto_confirm is None:
-                        auto_confirm = True
+                    auto_confirm_translation = getattr(b_job, "auto_confirm_translation", True)
+                    if auto_confirm_translation is None:
+                        auto_confirm_translation = True
+
+                    auto_confirm_voice = getattr(b_job, "auto_confirm_voice", False)
+                    if b_job.settings_snapshot_json:
+                        try:
+                            snap = json.loads(b_job.settings_snapshot_json)
+                            if "auto_confirm_voice" in snap:
+                                auto_confirm_voice = bool(snap["auto_confirm_voice"])
+                        except Exception:
+                            pass
+
+                    # Query character profiles for project to verify user confirmation state
+                    profiles_in_db = (
+                        await bg_session.execute(
+                            select(CharacterVoiceProfile).where(
+                                CharacterVoiceProfile.project_id == b_job.project_id
+                            )
+                        )
+                    ).scalars().all()
+                    all_voices_user_confirmed = bool(profiles_in_db) and all(
+                        p.confirmed_by_user for p in profiles_in_db
+                    )
+
+                    voice_review_required = (
+                        character_voice_needs_review
+                        or (not auto_confirm_voice and not all_voices_user_confirmed)
+                    )
 
                     b_job.stage_progress_pct = 100.0
                     b_job.overall_progress_pct = 60.0
@@ -1045,8 +1108,14 @@ async def start_translation_pipeline(
                     b_job.last_checkpoint_stage = "TRANSLATION_DONE"
                     b_job.last_checkpoint_at = now_dt
 
+                    # If auto_confirm_translation is True, confirm text segments
+                    if auto_confirm_translation:
+                        for db_seg in created_segment_rows:
+                            db_seg.status = "confirmed"
+
                     should_launch_render = False
-                    if character_voice_needs_review:
+
+                    if voice_review_required:
                         b_job.status = TranslationJobStatus.NEEDS_REVIEW.value
                         b_job.stage = "CHARACTER_VOICE_REVIEW"
                         b_job.current_step = "Cần kiểm tra Character / Voice trước TTS"
@@ -1059,10 +1128,11 @@ async def start_translation_pipeline(
                             f"progress={b_job.overall_progress_pct}% | segments={len(translated_segs)}"
                         )
                         log_job_event(job_id, "NEEDS_REVIEW", snapshot_str)
-                    elif auto_confirm:
-                        for db_seg in bg_session.new:
-                            if isinstance(db_seg, VideoTranslationSegment):
-                                db_seg.status = "confirmed"
+
+                    elif auto_confirm_translation:
+                        if auto_confirm_voice and not all_voices_user_confirmed:
+                            for profile in profiles_in_db:
+                                profile.confirmed_by_user = True
 
                         b_job.status = TranslationJobStatus.GENERATING_TTS.value
                         b_job.stage = "DUB"
@@ -1077,6 +1147,7 @@ async def start_translation_pipeline(
                         )
                         log_job_event(job_id, "TRANSLATE", snapshot_str)
                         should_launch_render = True
+
                     else:
                         b_job.status = TranslationJobStatus.SEGMENT_EDITING.value
                         b_job.stage = "TRANSLATE"
@@ -1293,6 +1364,13 @@ async def get_translation_job(
     elif job.stage == "TRANSLATING":
         translation_status = "RUNNING"
 
+    profiles = []
+    if job.project_id:
+        profiles = (await session.execute(
+            select(CharacterVoiceProfile).where(CharacterVoiceProfile.project_id == job.project_id)
+        )).scalars().all()
+    char_map = {p.character_id: p for p in profiles}
+
     return {
         "success": True,
         "data": {
@@ -1352,6 +1430,18 @@ async def get_translation_job(
             "output_video_path": job.output_video_path,
             "total_segments_count": job.total_segments_count or len(segments),
             "completed_segments_count": job.completed_segments_count or 0,
+            "characters": [
+                {
+                    "character_id": p.character_id,
+                    "name": p.name,
+                    "gender": p.gender,
+                    "role": p.role,
+                    "voice_provider": p.voice_provider,
+                    "voice_id": p.voice_id,
+                    "confirmed_by_user": p.confirmed_by_user,
+                }
+                for p in profiles
+            ],
             "segments": [
                 {
                     "id": s.id,
@@ -1363,6 +1453,8 @@ async def get_translation_job(
                     "status": s.status,
                     "speaker_id": s.speaker_id,
                     "character_id": s.character_id,
+                    "character_name": char_map[s.character_id].name if (s.character_id and s.character_id in char_map) else (s.character_id or s.speaker_id),
+                    "gender": char_map[s.character_id].gender if (s.character_id and s.character_id in char_map) else "unknown",
                     "voice_provider": s.voice_provider,
                     "voice_id": s.voice_id,
                     "confidence": s.mapping_confidence,
@@ -3237,21 +3329,112 @@ class CharacterVoiceReviewUpdate(BaseModel):
     mappings: List[CharacterVoiceEdit]
 
 
+async def validate_voice_assignment(
+    provider_id: Optional[str],
+    voice_id: Optional[str],
+    target_language: Optional[str] = None,
+    character_gender: Optional[str] = None,
+) -> Optional[Dict[str, str]]:
+    """Validate provider, voice existence, target language compatibility, and character gender matching."""
+    if not provider_id:
+        return {"reason": "missing_provider", "message": "Chưa chọn nhà cung cấp giọng đọc (Provider)."}
+    if not voice_id:
+        return {"reason": "missing_voice", "message": "Chưa chọn giọng đọc (Voice)."}
+
+    registry = get_registry()
+    provider = registry.get_audio(provider_id)
+    if not provider:
+        return {
+            "reason": "invalid_provider",
+            "message": f"Nhà cung cấp âm thanh '{provider_id}' không hợp lệ hoặc không được hỗ trợ.",
+        }
+
+    try:
+        voices = await provider.get_voices()
+    except Exception:
+        voices = []
+
+    matched_voice = next((v for v in voices if v.id == voice_id), None)
+    if not matched_voice:
+        return {
+            "reason": "invalid_voice",
+            "message": f"Giọng đọc '{voice_id}' không tồn tại hoặc không thuộc nhà cung cấp '{provider_id}'.",
+        }
+
+    if target_language:
+        norm_target = target_language.lower().split("-")[0]
+        v_lang = str(matched_voice.language or "").lower()
+        if not (v_lang.startswith(norm_target) or v_lang == target_language.lower()):
+            return {
+                "reason": "target_language_mismatch",
+                "message": f"Giọng đọc '{voice_id}' (ngôn ngữ: {matched_voice.language}) không phù hợp với ngôn ngữ đích '{target_language}'.",
+            }
+
+    if character_gender is not None:
+        c_gender = str(character_gender).strip().lower()
+        v_gender = str(matched_voice.gender or "").lower()
+        if c_gender == "unknown":
+            return {
+                "reason": "gender_unresolved",
+                "message": "Chưa xác định giới tính nhân vật. Vui lòng chọn Nam hoặc Nữ trước khi gán giọng.",
+            }
+        if c_gender in ("male", "female") and v_gender in ("male", "female") and v_gender != c_gender:
+            return {
+                "reason": "gender_mismatch",
+                "message": f"Giọng đọc '{voice_id}' ({'Nữ' if v_gender == 'female' else 'Nam'}) không khớp với giới tính nhân vật ({'Nam' if c_gender == 'male' else 'Nữ'}).",
+            }
+
+    return None
+
+
 async def _character_voice_review_data(job_id: str, session: AsyncSession) -> dict:
     job = (await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))).scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     rows = (await session.execute(select(VideoTranslationSegment).where(VideoTranslationSegment.job_id == job_id).order_by(VideoTranslationSegment.segment_number))).scalars().all()
-    return {"job_id": job_id, "status": job.status, "passed": job.status != TranslationJobStatus.NEEDS_REVIEW.value, "segments": [{
-        "id": row.id, "segment_number": row.segment_number, "speaker_id": row.speaker_id, "character_id": row.character_id,
-        "voice_provider": row.voice_provider, "voice_id": row.voice_id,
-        "confidence": row.mapping_confidence, "conflict": row.overlap_with or [],
-        "original_start": row.original_start if row.original_start is not None else row.start_time,
-        "original_end": row.original_end if row.original_end is not None else row.end_time,
-        "scheduled_start": row.scheduled_start, "scheduled_end": row.scheduled_end,
-        "schedule_action": row.schedule_action,
-        "tts_duration": row.tts_duration or row.tts_audio_duration or 0.0,
-    } for row in rows]}
+    profiles = []
+    if job.project_id:
+        profiles = (await session.execute(
+            select(CharacterVoiceProfile).where(CharacterVoiceProfile.project_id == job.project_id)
+        )).scalars().all()
+    char_map = {p.character_id: p for p in profiles}
+
+    return {
+        "job_id": job_id,
+        "target_language": job.target_language,
+        "status": job.status,
+        "passed": job.status != TranslationJobStatus.NEEDS_REVIEW.value,
+        "characters": [
+            {
+                "character_id": p.character_id,
+                "name": p.name,
+                "gender": p.gender,
+                "role": p.role,
+                "voice_provider": p.voice_provider,
+                "voice_id": p.voice_id,
+                "confirmed_by_user": p.confirmed_by_user,
+            }
+            for p in profiles
+        ],
+        "segments": [{
+            "id": row.id,
+            "segment_number": row.segment_number,
+            "speaker_id": row.speaker_id,
+            "character_id": row.character_id,
+            "character_name": char_map[row.character_id].name if (row.character_id and row.character_id in char_map) else (row.character_id or row.speaker_id),
+            "gender": char_map[row.character_id].gender if (row.character_id and row.character_id in char_map) else "unknown",
+            "voice_provider": row.voice_provider,
+            "voice_id": row.voice_id,
+            "confidence": row.mapping_confidence,
+            "conflict": row.overlap_with or [],
+            "original_start": row.original_start if row.original_start is not None else row.start_time,
+            "original_end": row.original_end if row.original_end is not None else row.end_time,
+            "scheduled_start": row.scheduled_start,
+            "scheduled_end": row.scheduled_end,
+            "schedule_action": row.schedule_action,
+            "tts_duration": row.tts_duration or row.tts_audio_duration or 0.0,
+        } for row in rows],
+    }
 
 
 @router.get("/jobs/{job_id}/character-voice-review")
@@ -3264,6 +3447,31 @@ async def update_character_voice_review(job_id: str, body: CharacterVoiceReviewU
     job = (await session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))).scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    target_lang = job.target_language or "vi"
+    for item in body.mappings:
+        cur_gender = item.gender
+        if cur_gender == "unknown":
+            exist_prof = (await session.execute(
+                select(CharacterVoiceProfile).where(
+                    CharacterVoiceProfile.project_id == job.project_id,
+                    CharacterVoiceProfile.character_id == item.character_id,
+                )
+            )).scalar_one_or_none()
+            if exist_prof and exist_prof.gender != "unknown":
+                cur_gender = exist_prof.gender
+
+        err = await validate_voice_assignment(
+            provider_id=item.voice_provider,
+            voice_id=item.voice_id,
+            target_language=target_lang,
+            character_gender=cur_gender,
+        )
+        if err:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Lỗi cấu hình giọng đọc: {err['message']} ({err['reason']})",
+            )
 
     job_dir = settings.DATA_DIR / "translator" / "jobs" / job_id
     tts_dir = job_dir / "tts"
@@ -3327,6 +3535,7 @@ async def validate_character_voice_review(job_id: str, session: AsyncSession = D
             "message": f"Có {len(missing)} phân đoạn chưa được gán nhân vật hoặc giọng đọc.",
         })
 
+
     # Validate Audio Schedule and check for same-voice overlaps
     from app.services.video_translator.timeline_scheduler import SchedulePolicy, schedule_segments
     max_orig_end = max([s["original_end"] or 0.0 for s in data["segments"]] + [1.0])
@@ -3388,6 +3597,25 @@ async def validate_character_voice_review(job_id: str, session: AsyncSession = D
                     "voice_id": v_id,
                     "message": f"Segment {l_num} và {r_num} đang sử dụng cùng voice {v_id} trong khoảng thời gian overlap. Vui lòng thay đổi voice hoặc chỉnh schedule trước khi tiếp tục.",
                 })
+
+    target_lang = data.get("target_language")
+    for s in data["segments"]:
+        if not s.get("character_id") or not s.get("voice_id"):
+            continue
+        err = await validate_voice_assignment(
+            provider_id=s.get("voice_provider"),
+            voice_id=s.get("voice_id"),
+            target_language=target_lang,
+            character_gender=s.get("gender"),
+        )
+        if err:
+            issues.append({
+                "reason": err["reason"],
+                "segment_ids": [s["id"]],
+                "segment_numbers": [s.get("segment_number", s["id"])],
+                "voice_id": s.get("voice_id"),
+                "message": f"Phân đoạn #{s.get('segment_number', s['id'])}: {err['message']}",
+            })
 
     # Deduplicate issues with stable key
     deduped_issues: List[Dict[str, Any]] = []

@@ -90,7 +90,6 @@ async def download_file(path: str, filename: str = "download.mp4"):
             path=target_file,
             filename=filename,
             media_type="application/octet-stream",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
         )
 
     raise HTTPException(status_code=404, detail=f"❌ File không tồn tại để tải về: {path}")

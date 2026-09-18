@@ -55,6 +55,23 @@ async def map_and_persist(db, project_id: str, segments: list[dict[str, Any]], l
         threshold = 0.85
     speakers = sorted({str(s["speaker_id"]) for s in segments})
     transcript = [{"speaker_id": s["speaker_id"], "text": s.get("translated_text") or s.get("text", "")} for s in segments]
+
+    # Priority 1: Query existing persistent SpeakerVoiceMapping records for this project
+    existing_mappings = (
+        await db.execute(
+            select(SpeakerVoiceMapping).where(SpeakerVoiceMapping.project_id == project_id)
+        )
+    ).scalars().all()
+    mapping_by_speaker = {m.speaker_id: m for m in existing_mappings if m.character_id}
+
+    # Query existing CharacterVoiceProfile records for this project
+    existing_profiles = (
+        await db.execute(
+            select(CharacterVoiceProfile).where(CharacterVoiceProfile.project_id == project_id)
+        )
+    ).scalars().all()
+    profile_by_char_id = {p.character_id: p for p in existing_profiles}
+
     prompt = (
         "Analyze the complete dialogue and map speakers to characters conservatively. "
         "Only merge speakers when strongly supported. Return JSON only: "
@@ -68,23 +85,87 @@ async def map_and_persist(db, project_id: str, segments: list[dict[str, Any]], l
         candidates = parsed.get("characters", [])
     except Exception:
         candidates = []
+
     for candidate in candidates:
-        raw_character_id = str(candidate.get("character_id") or candidate.get("name") or "unknown")
-        candidate["character_id"] = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{project_id}:{raw_character_id}"))
+        cand_speakers = [str(spk) for spk in candidate.get("speaker_ids", [])]
+        resolved_cid = None
+        # Priority 1: reuse existing persistent character_id mapped to stable speaker_id
+        for spk in cand_speakers:
+            if spk in mapping_by_speaker:
+                resolved_cid = mapping_by_speaker[spk].character_id
+                break
+
+        # Priority 2: candidate matches existing character_id
+        if not resolved_cid:
+            raw_cid = candidate.get("character_id")
+            if raw_cid and raw_cid in profile_by_char_id:
+                resolved_cid = raw_cid
+
+        # Priority 3: create new UUID only if no existing persistent mapping found
+        if not resolved_cid:
+            raw_character_id = str(candidate.get("character_id") or candidate.get("name") or "unknown")
+            resolved_cid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{project_id}:{raw_character_id}"))
+
+        candidate["character_id"] = resolved_cid
+
     result = validate_character_mapping(speakers, candidates, threshold)
-    for decision in result.by_speaker.values():
-        if len(str(decision["character_id"])) != 36:
-            decision["character_id"] = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{project_id}:{decision['character_id']}"))
+
+    # Ensure result decisions strictly respect stable speaker_id persistent mappings
     for speaker_id, decision in result.by_speaker.items():
-        mapping = (await db.execute(select(SpeakerVoiceMapping).where(SpeakerVoiceMapping.project_id == project_id, SpeakerVoiceMapping.speaker_id == speaker_id))).scalar_one_or_none()
+        if speaker_id in mapping_by_speaker:
+            decision["character_id"] = mapping_by_speaker[speaker_id].character_id
+
+    for speaker_id, decision in result.by_speaker.items():
+        mapping = mapping_by_speaker.get(speaker_id)
         if not mapping:
-            mapping = SpeakerVoiceMapping(id=str(uuid.uuid4()), project_id=project_id, speaker_id=speaker_id, speaker_name=speaker_id, voice_provider="edge_tts", voice_id="", character_id=decision["character_id"])
+            mapping = (await db.execute(select(SpeakerVoiceMapping).where(SpeakerVoiceMapping.project_id == project_id, SpeakerVoiceMapping.speaker_id == speaker_id))).scalar_one_or_none()
+
+        if not mapping:
+            mapping = SpeakerVoiceMapping(
+                id=str(uuid.uuid4()),
+                project_id=project_id,
+                speaker_id=speaker_id,
+                speaker_name=speaker_id,
+                voice_provider="edge_tts",
+                voice_id="",
+                character_id=decision["character_id"]
+            )
             db.add(mapping)
+        else:
+            decision["character_id"] = mapping.character_id
+
         mapping.character_id = decision["character_id"]
         mapping.confidence = decision["confidence"]
         mapping.needs_review = decision["confidence"] < threshold
-        profile = (await db.execute(select(CharacterVoiceProfile).where(CharacterVoiceProfile.project_id == project_id, CharacterVoiceProfile.character_id == decision["character_id"]))).scalar_one_or_none()
+
+        profile = profile_by_char_id.get(decision["character_id"])
         if not profile:
-            db.add(CharacterVoiceProfile(id=str(uuid.uuid4()), project_id=project_id, character_id=decision["character_id"], name=decision.get("name") or speaker_id, gender=decision.get("gender", "unknown"), role=decision.get("role", "supporting"), mapping_confidence=decision["confidence"]))
+            profile = (await db.execute(select(CharacterVoiceProfile).where(CharacterVoiceProfile.project_id == project_id, CharacterVoiceProfile.character_id == decision["character_id"]))).scalar_one_or_none()
+
+        norm_gender = str(decision.get("gender", "unknown")).lower()
+        if norm_gender not in ("male", "female"):
+            norm_gender = "unknown"
+
+        if not profile:
+            new_prof = CharacterVoiceProfile(
+                id=str(uuid.uuid4()),
+                project_id=project_id,
+                character_id=decision["character_id"],
+                name=decision.get("name") or speaker_id,
+                gender=norm_gender,
+                role=decision.get("role", "supporting"),
+                mapping_confidence=decision["confidence"]
+            )
+            db.add(new_prof)
+            profile_by_char_id[decision["character_id"]] = new_prof
+        elif not profile.confirmed_by_user:
+            # Update unconfirmed profile with higher confidence LLM metadata
+            if decision.get("name") and decision["name"] != speaker_id:
+                profile.name = decision["name"]
+            if norm_gender != "unknown":
+                profile.gender = norm_gender
+            profile.mapping_confidence = max(profile.mapping_confidence or 0.0, decision["confidence"])
+        # If profile.confirmed_by_user is True: preserve all user-confirmed data intact
+
     await db.flush()
     return result

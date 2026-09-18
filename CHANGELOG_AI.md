@@ -1,3 +1,70 @@
+- **Convert Provider & Voice to Controlled Select Dropdowns with Authoritative Validation (2026-09-18)**:
+  - **Summary**: Converted plain text inputs for Provider, Voice, and Character into controlled HTML/React `<select>` dropdowns across both the Translation Configuration panel and Segment Review editor, backed by authoritative backend validation.
+  - **Frontend Enhancements (`VideoTranslator.jsx`)**:
+    - Replaced raw text inputs with `<select>` elements for Provider, Voice, and Character.
+    - Provider select dynamically draws registered audio providers (`edge_tts`, `google_cloud_tts`, `elevenlabs`) with formatted display labels and availability indicators.
+    - Voice select is dynamically populated from provider voice cache, strictly filtered by target language (`target_language`) and character gender (`male`/`female`).
+    - Genders marked as `unknown` display `[ Chưa xác định giới tính ]` without pre-selecting a voice, and provide quick toggles (`♂ Nam` / `♀ Nữ`) to resolve gender interactively.
+    - Character select displays human-readable character labels (`Name — Gender`) while preserving stable `character_id` as the underlying value.
+    - Switching provider immediately invalidates previous voice selection, preventing provider/voice mismatch.
+    - Existing/legacy records resolve to human-readable options or display explicit disabled `⚠️` options when unavailable.
+  - **Backend Audio Providers & Voice Registries**:
+    - Updated `edge_tts_provider.py`, `google_tts_provider.py`, and `elevenlabs_provider.py` with fallback voices and gender/language metadata for resilient offline and test operation.
+  - **Authoritative Backend API Validation (`video_translator.py`)**:
+    - Implemented `validate_voice_assignment()` helper to validate provider registration, voice existence for provider, target language compatibility, and character gender matching.
+    - `PUT /jobs/{job_id}/character-voice-review`: Validates voice assignments and rejects invalid assignments with HTTP 400.
+    - `POST /jobs/{job_id}/character-voice-review/validate`: Validates all segment voice assignments, reporting specific issues (`invalid_provider`, `invalid_voice`, `target_language_mismatch`, `gender_mismatch`, `gender_unresolved`).
+    - Enriched segment review data with `characters` array and mapped `character_name` and `gender` per segment.
+  - **Test Suite & Build Verification**:
+    - Created `backend/tests/unit/test_character_voice_validation_api.py` with 13 unit tests covering all validation rules and API endpoints (100% passing).
+    - Executed full unit test suite: 307 passed, 4 skipped out of 311 tests.
+    - Executed frontend production build: `npm run build` compiled 100% cleanly without errors.
+  - **Affected Files**: `frontend/src/pages/VideoTranslator.jsx`, `backend/app/api/routes/video_translator.py`, `backend/app/providers/audio/edge_tts_provider.py`, `backend/app/providers/audio/google_tts_provider.py`, `backend/app/providers/audio/elevenlabs_provider.py`, `backend/tests/unit/test_character_voice_validation_api.py`, `PROJECT_KNOWLEDGE_BASE.md`, `CHANGELOG_AI.md`.
+
+- **Execution of Post-Implementation Verification Audit Fixes (2026-09-18)**:
+  - **Summary**: Implemented five verified fixes identified during the post-implementation audit, investigated browser playback codecs, added 5 regression tests, and synchronized documentation.
+  - **Fix 1 — Target Language Injection (`video_translator.py`, `voice_assignment_service.py`)**:
+    - Resolved `target_language` dynamically from `b_job.settings_snapshot_json` / job configuration instead of defaulting to `vi-VN` at call site.
+    - Supported normalized language codes (`vi`, `vi-VN`, `en`, `en-US`, `zh`, `zh-CN`).
+    - Filtered candidate voices in `assign_voices` strictly by target language.
+  - **Fix 2 — Auto-Confirm Cross-Contamination (`video_translator.py`, `projects.py`, `video_translator.py` model)**:
+    - Decoupled `auto_confirm_translation` and `auto_confirm_voice`.
+    - Added `auto_confirm_voice` setting to job model, requests, default project settings, and snapshot.
+    - If any required character voice profile is unconfirmed (`confirmed_by_user=False`) and `auto_confirm_voice=False`, translation confirmation will not trigger TTS rendering; job halts cleanly at `NEEDS_REVIEW` / `CHARACTER_VOICE_REVIEW`.
+  - **Fix 3 — Stable Character Identity (`character_mapping_service.py`)**:
+    - Updated `map_and_persist` to prioritize stable `speaker_id` persistent mapping lookup in `SpeakerVoiceMapping` to reuse `character_id`.
+    - Protected user-confirmed `CharacterVoiceProfile` records (`confirmed_by_user=True`) from LLM name/gender/role overwrite on retries or character mapping regeneration.
+  - **Fix 4 — Unicode Download Headers (`storage.py`)**:
+    - Removed manual `headers={"Content-Disposition": ...}` string formatting from `FileResponse` in download endpoint.
+    - Relied on Starlette's native `FileResponse(path, filename)` RFC 5987 header formatting, resolving `UnicodeEncodeError` for filenames with Chinese characters (`未日临先锋圣母_哔哩哔哩_bilibili.mp4`), Vietnamese diacritics, spaces, and special characters.
+  - **Fix 5 — Async File Copy (`service.py`)**:
+    - Replaced synchronous `shutil.copy2(...)` in `VideoSourceService.import_uploaded_file` with `await asyncio.to_thread(shutil.copy2, source_path, dest_path)` to prevent blocking the FastAPI event loop.
+  - **Fix 6 — Browser Playback Codecs Investigation (`ffprobe.py`, `sync_service.py`)**:
+    - `get_video_metadata` extracts `video_codec` (`codec_name`).
+    - `VideoAudioSyncService.render_and_mux_video` uses `-c:v copy` for standard H.264/avc1 video streams, but automatically falls back to `-c:v libx264 -pix_fmt yuv420p` when muxing non-H.264 video streams (HEVC/VP9/AV1/ProRes) to guarantee universal browser playback compatibility.
+  - **Fix 7 — Unit & Regression Test Verification (`test_audit_verified_fixes_regression.py`)**:
+    - Added 5 regression tests covering target language boundary, independent confirmation, confirmed character persistence, unicode download, and async file copy.
+    - Ran unit test suite: 294 passed out of 294.
+    - Ran frontend production build: `npm run build` 100% clean.
+  - **Affected Files**: `backend/app/api/routes/video_translator.py`, `backend/app/services/video_translator/voice_assignment_service.py`, `backend/app/services/video_translator/character_mapping_service.py`, `backend/app/api/routes/storage.py`, `backend/app/services/video_source/service.py`, `backend/app/media/ffprobe.py`, `backend/app/services/video_translator/sync_service.py`, `backend/app/models/video_translator.py`, `backend/app/api/routes/projects.py`, `backend/tests/unit/test_audit_verified_fixes_regression.py`, `PROJECT_KNOWLEDGE_BASE.md`, `CHANGELOG_AI.md`.
+
+- **Execution of Plan.md: Voice Allocation, Dual Confirmation Gates & Workflow Engine Refinements (2026-09-18)**:
+  - **Summary**: Implemented comprehensive architectural fixes and validation policies outlined in `Plan.md`.
+  - **Voice Allocation & Target Language / Gender Enforcement (`voice_assignment_service.py`)**:
+    - `assign_voices` and `assign_project_voices` strictly filter candidate voices by job target language (`target_language`, e.g. `vi-VN`) and gender (`male` / `female`).
+    - Foreign-language fallback (e.g., assigning English voice `en-US-GuyNeural` for Vietnamese target) has been completely removed. Unresolvable voice/gender now triggers `no_available_voice` / `GENDER_UNRESOLVED` review gate.
+    - Preserved user-confirmed `CharacterVoiceProfile` records from LLM overwrite.
+    - Voice conflict identity now uses provider identity tuple `(voice_provider, voice_id)`.
+  - **Dual Independent Confirmation Gates (`video_translator.py`, `VideoTranslator.jsx`)**:
+    - Introduced `auto_confirm_voice` setting alongside `auto_confirm_translation`. Both gates must pass validation before Phase 2 (`GENERATING_TTS` / `DUB`) execution.
+    - Updated studio UI with checkboxes for `Tự xác nhận bản dịch hợp lệ` and `Tự xác nhận nhân vật & giọng đọc hợp lệ`.
+  - **Unified Workflow Engine Repair (`dub_stage.py`, `produce_stage.py`)**:
+    - Replaced calls to non-existent `VideoTranslatorService` with direct calls to `get_registry()` and `VideoAudioSyncService` (`build_dubbed_audio_timeline`, `render_and_mux_video`).
+  - **Audio & Render Quality Enforcement (`translator_service.py`)**:
+    - TTS synthesis errors are logged with full tracebacks and fail cleanly instead of silently replacing speech clips with silence.
+    - Output video FFprobe duration and stream validation strictly enforced before job completion.
+  - **Affected Files**: `backend/app/services/video_translator/voice_assignment_service.py`, `backend/app/services/video_translator/character_mapping_service.py`, `backend/app/api/routes/video_translator.py`, `backend/app/workflow/stages/dub_stage.py`, `backend/app/workflow/stages/produce_stage.py`, `frontend/src/api.js`, `frontend/src/pages/VideoTranslator.jsx`, `PROJECT_KNOWLEDGE_BASE.md`, `CHANGELOG_AI.md`.
+
 - **Fix SAME_VOICE_OVERLAP & Confirm Validation Gate in Video Translator (2026-09-17)**:
   - **Symptom & Stack**:
     ```text

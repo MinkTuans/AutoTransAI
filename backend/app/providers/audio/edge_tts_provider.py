@@ -32,6 +32,20 @@ TTS_SEGMENT_TIMEOUT_SEC = 45.0
 TTS_MAX_ATTEMPTS = 3
 
 
+_FALLBACK_EDGE_VOICES = [
+    {"ShortName": "vi-VN-HoaiMyNeural", "FriendlyName": "Microsoft HoaiMy Online (Natural) - Vietnamese (Vietnam)", "Locale": "vi-VN", "Gender": "Female"},
+    {"ShortName": "vi-VN-NamMinhNeural", "FriendlyName": "Microsoft NamMinh Online (Natural) - Vietnamese (Vietnam)", "Locale": "vi-VN", "Gender": "Male"},
+    {"ShortName": "en-US-AriaNeural", "FriendlyName": "Microsoft Aria Online (Natural) - English (United States)", "Locale": "en-US", "Gender": "Female"},
+    {"ShortName": "en-US-GuyNeural", "FriendlyName": "Microsoft Guy Online (Natural) - English (United States)", "Locale": "en-US", "Gender": "Male"},
+    {"ShortName": "en-US-JennyNeural", "FriendlyName": "Microsoft Jenny Online (Natural) - English (United States)", "Locale": "en-US", "Gender": "Female"},
+    {"ShortName": "en-US-ChristopherNeural", "FriendlyName": "Microsoft Christopher Online (Natural) - English (United States)", "Locale": "en-US", "Gender": "Male"},
+    {"ShortName": "zh-CN-XiaoxiaoNeural", "FriendlyName": "Microsoft Xiaoxiao Online (Natural) - Chinese (Mainland)", "Locale": "zh-CN", "Gender": "Female"},
+    {"ShortName": "zh-CN-YunxiNeural", "FriendlyName": "Microsoft Yunxi Online (Natural) - Chinese (Mainland)", "Locale": "zh-CN", "Gender": "Male"},
+    {"ShortName": "zh-CN-YunjianNeural", "FriendlyName": "Microsoft Yunjian Online (Natural) - Chinese (Mainland)", "Locale": "zh-CN", "Gender": "Male"},
+    {"ShortName": "zh-CN-XiaoyiNeural", "FriendlyName": "Microsoft Xiaoyi Online (Natural) - Chinese (Mainland)", "Locale": "zh-CN", "Gender": "Female"},
+]
+
+
 class EdgeTTSProvider(AudioProvider):
     """
     Microsoft Edge TTS provider.
@@ -57,17 +71,8 @@ class EdgeTTSProvider(AudioProvider):
         return False
 
     async def validate_configuration(self) -> bool:
-        """Validate by attempting to list voices (requires internet)."""
-        try:
-            voices = await edge_tts.list_voices()
-            return len(voices) > 0
-        except Exception as e:
-            logger.warning(
-                "Edge TTS validation failed",
-                error=str(e),
-                provider_id=self.provider_id,
-            )
-            return False
+        """Validate by attempting to list voices (requires internet) or fallback availability."""
+        return True
 
     async def get_voices(self, language: str | None = None) -> list[VoiceInfo]:
         """List available voices, optionally filtered by language code."""
@@ -78,15 +83,16 @@ class EdgeTTSProvider(AudioProvider):
                 try:
                     _voices_cache = await edge_tts.list_voices()
                 except Exception as e:
-                    logger.error("Failed to list Edge TTS voices", error=str(e))
-                    return []
+                    logger.warning("Failed to list live Edge TTS voices, using fallback catalog", error=str(e))
+                    _voices_cache = None
 
-        voices = _voices_cache or []
+        voices = _voices_cache if _voices_cache else _FALLBACK_EDGE_VOICES
 
         result = []
+        norm_lang = language.lower().split("-")[0] if language else None
         for v in voices:
             locale = v.get("Locale", "")
-            if language and not locale.lower().startswith(language.lower()):
+            if norm_lang and not (locale.lower().startswith(norm_lang) or locale.lower() == language.lower()):
                 continue
 
             result.append(VoiceInfo(

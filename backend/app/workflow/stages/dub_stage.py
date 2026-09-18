@@ -81,16 +81,47 @@ class DubStage:
         return {"speaker_voice_mappings": len(ctx.speaker_voice_map)}
 
     async def _tts_generation(self, ctx: WorkflowContext) -> dict[str, Any]:
-        from app.services.video_translator.translator_service import VideoTranslatorService
-        svc = VideoTranslatorService()
+        from app.providers.registry import get_registry
+        from app.media.ffprobe import probe_duration_async
 
-        # Generate TTS audio clips for each translated segment
-        audio_info = await svc.synthesize_speech(
-            segments=ctx.translated_segments,
-            voice_id=ctx.tts_voice_id,
-            output_dir=str(Path(ctx.video_path).parent / "tts_clips") if ctx.video_path else None,
-            speaker_voice_map=ctx.speaker_voice_map,
-        )
+        output_dir = Path(ctx.video_path).parent / "tts_clips" if ctx.video_path else Path("tts_clips")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        registry = get_registry()
+
+        audio_info = []
+        segments = ctx.translated_segments or ctx.source_segments or []
+        for seg in segments:
+            seg_num = seg.get("number") or seg.get("segment_number") or 1
+            spk = seg.get("speaker_id")
+            spk_info = ctx.speaker_voice_map.get(spk, {}) if spk else {}
+            provider_id = spk_info.get("provider") or ctx.tts_provider_id or "edge_tts"
+            voice_id = spk_info.get("voice_id") or ctx.tts_voice_id or "vi-VN-HoaiMyNeural"
+
+            provider = registry.get_audio(provider_id)
+            if not provider:
+                raise RuntimeError(f"Audio provider '{provider_id}' is unavailable.")
+
+            out_clip = output_dir / f"seg_{seg_num:03d}.wav"
+            res = await provider.generate_audio(
+                text=seg.get("translated_text") or seg.get("text") or "",
+                voice_id=voice_id,
+                output_path=out_clip,
+            )
+            if not res.success or not out_clip.exists():
+                raise RuntimeError(f"TTS synthesis failed for segment #{seg_num}: {res.error_message}")
+
+            dur = await probe_duration_async(out_clip)
+            audio_info.append({
+                "id": seg.get("id"),
+                "segment_number": seg_num,
+                "start_time": seg.get("start_time", 0.0),
+                "end_time": seg.get("end_time", 0.0),
+                "tts_audio_path": str(out_clip),
+                "tts_audio_duration": dur,
+                "tts_duration": dur,
+                "speaker_id": spk,
+            })
+
         ctx.audio_segments_info = audio_info
         return {"tts_clips_generated": len(ctx.audio_segments_info)}
 
@@ -98,22 +129,19 @@ class DubStage:
         return {"audio_durations_analyzed": True}
 
     async def _time_stretch(self, ctx: WorkflowContext) -> dict[str, Any]:
-        # Time-stretching logic is applied during sample-accurate timeline assembly
         return {"time_stretch_applied": True}
 
     async def _timeline_audio_assembly(self, ctx: WorkflowContext) -> dict[str, Any]:
-        from app.services.video_translator.translator_service import VideoTranslatorService
-        svc = VideoTranslatorService()
+        from app.services.video_translator.sync_service import VideoAudioSyncService
 
-        output_dub_path = str(Path(ctx.video_path).parent / "dubbed_audio.wav") if ctx.video_path else "dubbed_audio.wav"
-        
-        # Assemble sample-accurate 44.1kHz stereo PCM timeline using existing algorithm
-        assembled_path = await svc.assemble_pcm_timeline(
-            audio_segments=ctx.audio_segments_info,
-            target_duration=ctx.duration,
-            output_path=output_dub_path,
+        output_dub_path = Path(ctx.video_path).parent / "dubbed_audio.wav" if ctx.video_path else Path("dubbed_audio.wav")
+        res = await VideoAudioSyncService.build_dubbed_audio_timeline(
+            segments=ctx.audio_segments_info,
+            total_video_duration=ctx.duration or 0.0,
+            output_wav_path=output_dub_path,
+            job_id=ctx.project_id,
         )
-        ctx.dubbed_audio_path = assembled_path
+        ctx.dubbed_audio_path = res["output_path"]
         return {"dubbed_audio_path": ctx.dubbed_audio_path}
 
     async def _audio_normalization(self, ctx: WorkflowContext) -> dict[str, Any]:

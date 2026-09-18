@@ -82,11 +82,20 @@ class ElevenLabsAudioProvider(AudioProvider):
                 logger.warning("Failed to fetch live ElevenLabs voices", error=str(e))
 
         # Fallback default voices
-        return [
-            VoiceInfo(id="21m00Tcm4TlvDq8ikWAM", name="Rachel", language="en-US"),
-            VoiceInfo(id="AZnzlk1XvdvUeBnXmlld", name="Domi", language="en-US"),
-            VoiceInfo(id="EXAVITQu4vr4xnSDxMaL", name="Bella", language="en-US"),
+        fallbacks = [
+            VoiceInfo(id="21m00Tcm4TlvDq8ikWAM", name="Rachel", language="en-US", gender="Female"),
+            VoiceInfo(id="AZnzlk1XvdvUeBnXmlld", name="Domi", language="en-US", gender="Female"),
+            VoiceInfo(id="EXAVITQu4vr4xnSDxMaL", name="Bella", language="en-US", gender="Female"),
+            VoiceInfo(id="ErXwobaYiN019PkySvjV", name="Antoni", language="en-US", gender="Male"),
+            VoiceInfo(id="TxGEqnHWrfWFTfGW9XjX", name="Josh", language="en-US", gender="Male"),
         ]
+        if language:
+            norm_lang = language.lower().split("-")[0]
+            fallbacks = [
+                v for v in fallbacks
+                if v.language.lower().startswith(norm_lang) or v.language.lower() == language.lower()
+            ]
+        return fallbacks
 
     async def generate_audio(
         self,

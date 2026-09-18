@@ -7,6 +7,7 @@ metadata extraction, streaming downloads, and local file imports.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import shutil
 from pathlib import Path
@@ -136,7 +137,7 @@ class VideoSourceService:
 
 
         if source_path.resolve() != dest_path.resolve():
-            shutil.copy2(source_path, dest_path)
+            await asyncio.to_thread(shutil.copy2, source_path, dest_path)
 
         meta = await get_video_metadata_async(dest_path)
         max_duration_sec = settings.VIDEO_MAX_DURATION_MINUTES * 60

@@ -97,24 +97,25 @@ class ProduceStage:
         return {"bgm_applied": False}
 
     async def _final_render(self, ctx: WorkflowContext) -> dict[str, Any]:
-        from app.services.video_translator.translator_service import VideoTranslatorService
-        svc = VideoTranslatorService()
+        from app.services.video_translator.sync_service import VideoAudioSyncService
 
         in_video = ctx.video_path or ctx.final_video_path
         if not in_video:
             raise FileNotFoundError("PRODUCE_STAGE: Original video_path is missing in WorkflowContext.")
 
-        out_final = str(Path(in_video).parent / "final_dubbed_video.mp4")
-        
-        # Multiplex dubbed audio track with original video using FFmpeg
-        final_path = await svc.mux_video_and_audio(
-            video_path=in_video,
-            audio_path=ctx.dubbed_audio_path,
-            output_path=out_final,
-            subtitles_ass=ctx.subtitle_files.get("ass"),
+        out_final = Path(in_video).parent / "final_dubbed_video.mp4"
+        dubbed_audio = Path(ctx.dubbed_audio_path) if ctx.dubbed_audio_path else Path(in_video).parent / "dubbed_audio.wav"
+
+        final_path = await VideoAudioSyncService.render_and_mux_video(
+            video_path=Path(in_video),
+            dubbed_audio_path=dubbed_audio,
+            original_audio_mode=getattr(ctx, "original_audio_mode", "mute"),
+            output_video_path=out_final,
+            total_video_duration=ctx.duration or 0.0,
+            job_id=ctx.project_id,
         )
-        ctx.final_video_path = final_path
-        return {"final_video_rendered": True, "output_path": final_path}
+        ctx.final_video_path = str(final_path)
+        return {"final_video_rendered": True, "output_path": ctx.final_video_path}
 
     async def _add_watermark_logo(self, ctx: WorkflowContext) -> dict[str, Any]:
         wm_enabled = getattr(ctx, "watermark_enabled", False)

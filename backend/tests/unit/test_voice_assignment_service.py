@@ -4,6 +4,7 @@ from app.services.video_translator.voice_assignment_service import assign_voices
 POOL = [
     {"provider": "edge_tts", "voice_id": "vi-VN-NamMinhNeural", "gender": "male", "language": "vi-VN"},
     {"provider": "edge_tts", "voice_id": "vi-VN-HoaiMyNeural", "gender": "female", "language": "vi-VN"},
+    {"provider": "edge_tts", "voice_id": "vi-VN-PhuongNamNeural", "gender": "male", "language": "vi-VN"},
     {"provider": "edge_tts", "voice_id": "en-US-GuyNeural", "gender": "male", "language": "en-US"},
 ]
 
@@ -13,7 +14,7 @@ def test_assigns_vietnamese_main_voices_and_distinct_supporting_voice():
     result = assign_voices(chars, POOL, {("m", "s")})
     assert result.assignments["m"]["voice_id"] == "vi-VN-NamMinhNeural"
     assert result.assignments["f"]["voice_id"] == "vi-VN-HoaiMyNeural"
-    assert result.assignments["s"]["voice_id"] == "en-US-GuyNeural"
+    assert result.assignments["s"]["voice_id"] == "vi-VN-PhuongNamNeural"
 
 
 def test_confirmed_profile_is_never_changed_on_conflict():

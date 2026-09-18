@@ -86,11 +86,23 @@ class GoogleCloudTTSProvider(AudioProvider):
                 logger.warning("Failed to fetch Google Cloud TTS voices", error=str(e))
 
         # Fallback default voices
-        return [
-            VoiceInfo(id="vi-VN-Standard-A", name="Vietnamese Standard A", language="vi-VN"),
-            VoiceInfo(id="vi-VN-Neural2-A", name="Vietnamese Neural2 A", language="vi-VN"),
-            VoiceInfo(id="en-US-Neural2-F", name="English Neural2 F", language="en-US"),
+        fallbacks = [
+            VoiceInfo(id="vi-VN-Standard-A", name="Vietnamese Standard A", language="vi-VN", gender="Female"),
+            VoiceInfo(id="vi-VN-Neural2-A", name="Vietnamese Neural2 A", language="vi-VN", gender="Female"),
+            VoiceInfo(id="vi-VN-Standard-B", name="Vietnamese Standard B", language="vi-VN", gender="Male"),
+            VoiceInfo(id="vi-VN-Neural2-D", name="Vietnamese Neural2 D", language="vi-VN", gender="Male"),
+            VoiceInfo(id="en-US-Neural2-F", name="English Neural2 F", language="en-US", gender="Female"),
+            VoiceInfo(id="en-US-Neural2-D", name="English Neural2 D", language="en-US", gender="Male"),
+            VoiceInfo(id="cmn-CN-Standard-A", name="Chinese Standard A", language="zh-CN", gender="Female"),
+            VoiceInfo(id="cmn-CN-Standard-B", name="Chinese Standard B", language="zh-CN", gender="Male"),
         ]
+        if language:
+            norm_lang = language.lower().split("-")[0]
+            fallbacks = [
+                v for v in fallbacks
+                if v.language.lower().startswith(norm_lang) or v.language.lower() == language.lower()
+            ]
+        return fallbacks
 
     async def generate_audio(
         self,

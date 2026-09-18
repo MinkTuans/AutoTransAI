@@ -186,6 +186,7 @@ def get_video_metadata(file_path: Path | str) -> dict:
 
     width = 0
     height = 0
+    video_codec = ""
     has_audio = False
 
     for s in streams:
@@ -193,6 +194,7 @@ def get_video_metadata(file_path: Path | str) -> dict:
         if c_type == "video" and not width:
             width = int(s.get("width", 0))
             height = int(s.get("height", 0))
+            video_codec = str(s.get("codec_name", "")).lower()
         elif c_type == "audio":
             has_audio = True
 
@@ -201,6 +203,7 @@ def get_video_metadata(file_path: Path | str) -> dict:
         "width": width,
         "height": height,
         "format": format_name,
+        "video_codec": video_codec,
         "file_size": file_size,
         "has_audio": has_audio,
     }

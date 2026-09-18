@@ -355,12 +355,16 @@ class VideoAudioSyncService:
             f"[VIDEO-SYNC] Muxing video (Duration: {total_video_duration:.1f}s) with dubbed audio (Mode: {effective_mode})..."
         )
 
+        v_codec = str(meta.get("video_codec", "h264")).lower()
+        is_browser_safe_vcodec = v_codec in ("h264", "avc1", "")
+        v_encoder_args = ["-c:v", "copy"] if is_browser_safe_vcodec else ["-c:v", "libx264", "-pix_fmt", "yuv420p"]
+
         if effective_mode == AudioMixMode.MUTE.value:
             cmd = [
                 "ffmpeg", "-y",
                 "-i", str(video_path),
                 "-i", str(dubbed_audio_path),
-                "-c:v", "copy",
+                *v_encoder_args,
                 "-c:a", "aac",
                 "-b:a", "192k",
                 "-map", "0:v:0",
@@ -375,7 +379,7 @@ class VideoAudioSyncService:
                 "-i", str(dubbed_audio_path),
                 "-filter_complex",
                 "[0:a]volume=0.40[orig];[1:a]volume=1.0[dub];[orig][dub]amix=inputs=2:duration=first:dropout_transition=0[outa]",
-                "-c:v", "copy",
+                *v_encoder_args,
                 "-c:a", "aac",
                 "-b:a", "192k",
                 "-map", "0:v:0",
@@ -390,7 +394,7 @@ class VideoAudioSyncService:
                 "-i", str(dubbed_audio_path),
                 "-filter_complex",
                 "[0:a]volume=1.0[orig];[1:a]volume=1.0[dub];[orig][dub]amix=inputs=2:duration=first:dropout_transition=0[outa]",
-                "-c:v", "copy",
+                *v_encoder_args,
                 "-c:a", "aac",
                 "-b:a", "192k",
                 "-map", "0:v:0",
