@@ -73,6 +73,8 @@ DEFAULT_PROJECT_SETTINGS = {
     "audio_provider_id": "edge_tts",
     "voice_id": "vi-VN-HoaiMyNeural",
     "voice_name": "Vietnamese - HoaiMy",
+    "default_male_voice_id": "vi-VN-NamMinhNeural",
+    "default_female_voice_id": "vi-VN-HoaiMyNeural",
     "speed": 1.0,
     "pitch": 0.0,
     "volume": 1.0,

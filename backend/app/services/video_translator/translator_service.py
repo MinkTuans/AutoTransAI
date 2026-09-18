@@ -489,9 +489,10 @@ async def transcribe_audio_with_gemini(
                     audio_bytes = f.read()
 
                 prompt = (
-                    f"Phân tích file audio này (độ dài thực tế file audio: {actual_chunk_dur:.2f} giây) và thực hiện 2 việc:\n"
+                    f"Phân tích file audio này (độ dài thực tế file audio: {actual_chunk_dur:.2f} giây) và thực hiện 3 việc:\n"
                     "1. Nhận diện ngôn ngữ được nói trong audio (ví dụ: English, Vietnamese, Japanese, Chinese, French, German).\n"
-                    "2. Trích xuất toàn bộ bản chép lời (transcript) theo từng câu có mốc thời gian start_time và end_time tính bằng giây.\n"
+                    "2. Phân loại người nói (Speaker Diarization). Gán cho mỗi người nói một ID (ví dụ: Speaker 1, Speaker 2).\n"
+                    "3. Trích xuất toàn bộ bản chép lời (transcript) theo từng câu có mốc thời gian start_time và end_time tính bằng giây, KÈM THEO ID của người nói (speaker_id).\n"
                     "LƯU Ý BẮT BUỘC VỀ TIMESTAMP:\n"
                     f"- mốc thời gian (start_time, end_time) BẮT BUỘC là thời gian RELATIVE tính từ 0.0 giây đến tối đa {actual_chunk_dur:.2f} giây trong file audio chunk này.\n"
                     f"- KHÔNG ĐƯỢC tạo timestamp vượt quá {actual_chunk_dur:.2f} giây.\n"
@@ -500,7 +501,7 @@ async def transcribe_audio_with_gemini(
                     "{\n"
                     '  "language": "English",\n'
                     '  "segments": [\n'
-                    '    {"start_time": 0.0, "end_time": 4.5, "text": "Sentence text"}\n'
+                    '    {"start_time": 0.0, "end_time": 4.5, "speaker_id": "Speaker 1", "text": "Sentence text"}\n'
                     '  ]\n'
                     "}"
                 )

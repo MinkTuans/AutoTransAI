@@ -1,3 +1,33 @@
+- **Implement STT Speaker Diarization & Multimodal Visual Gender Detection (2026-09-18)**:
+  - **Summary**: Updated STT prompt to require Speaker Diarization to fix fragmented character mapping, and added a visual AI pipeline to auto-detect speaker genders via video keyframes.
+  - **Backend STT Enhancements (`translator_service.py`, `stt_parser.py`)**:
+    - Updated Gemini STT prompt to explicitly request `Speaker Diarization` (e.g. `Speaker 1`, `Speaker 2`), mitigating the issue where every segment defaulted to unique `UNRESOLVED_xxxx` speakers.
+  - **Visual Gender Detection (`visual_gender_service.py`, `character_mapping_service.py`)**:
+    - Created `visual_gender_service.py` to extract mid-segment video keyframes using FFmpeg for each distinct speaker.
+    - Integrated Gemini 2.0 Flash (Multimodal) to inspect these keyframes and return whether the speaking character is `male` or `female`.
+    - Integrated visual detection directly into `map_and_persist` within `character_mapping_service.py`. Visually detected gender is now injected as the authoritative gender prior to character profile creation, falling back to LLM transcript-based guesses if the visual result is uncertain.
+  - **Testing (`test_visual_gender_service.py`, `test_stt_parser_diarization.py`)**:
+    - Wrote unit tests for `visual_gender_service` logic with mocked API dependencies.
+    - Wrote unit tests verifying `stt_parser.py` extracts `speaker_id` successfully.
+    - Passed backend test suite (6/6).
+
+- **Support Dual Default Male and Female Voice Configuration (2026-09-18)**:
+  - **Summary**: Replaced single default voice control in the Studio configuration panel with two dedicated dropdowns for **Mặc định Nam (Default Male Voice)** and **Mặc định Nữ (Default Female Voice)**, persisting preferences in project settings and applying them during automatic character voice allocation.
+  - **Frontend (`VideoTranslator.jsx`)**:
+    - Replaced single `Giọng đọc mặc định (Default Voice)` select with two controlled selects: `Mặc định Nam (Default Male)` and `Mặc định Nữ (Default Female)`.
+    - Filtered male select strictly to male voices and female select to female voices matching current target language and provider.
+    - Synchronized `onChange` handlers of `targetLanguage` and `audioProviderId` to auto-update male and female default selections.
+    - Added `default_male_voice_id` and `default_female_voice_id` to settings hydration, dirty checking, and job creation payloads.
+  - **Backend (`projects.py`, `video_translator.py`, `voice_assignment_service.py`)**:
+    - Added `default_male_voice_id` (`vi-VN-NamMinhNeural`) and `default_female_voice_id` (`vi-VN-HoaiMyNeural`) to `DEFAULT_PROJECT_SETTINGS` and `normalize_project_settings`.
+    - Added `default_male_voice_id` and `default_female_voice_id` to `CreateJobRequest` and `settings_snapshot["tts"]`.
+    - Updated `assign_voices` and `assign_project_voices` in `voice_assignment_service.py` to prioritize the user's default male and female voice IDs when assigning character voices.
+  - **Test Suite & Build Verification**:
+    - Added unit test `test_assigns_custom_default_male_and_female_voices` in `test_voice_assignment_service.py` (passing).
+    - Executed full unit test suite: 308 passed, 4 skipped out of 312 tests.
+    - Executed frontend production build: `npm run build` compiled 100% cleanly without errors.
+  - **Affected Files**: `frontend/src/pages/VideoTranslator.jsx`, `backend/app/api/routes/projects.py`, `backend/app/api/routes/video_translator.py`, `backend/app/services/video_translator/voice_assignment_service.py`, `backend/tests/unit/test_voice_assignment_service.py`, `PROJECT_KNOWLEDGE_BASE.md`, `CHANGELOG_AI.md`.
+
 - **Convert Provider & Voice to Controlled Select Dropdowns with Authoritative Validation (2026-09-18)**:
   - **Summary**: Converted plain text inputs for Provider, Voice, and Character into controlled HTML/React `<select>` dropdowns across both the Translation Configuration panel and Segment Review editor, backed by authoritative backend validation.
   - **Frontend Enhancements (`VideoTranslator.jsx`)**:

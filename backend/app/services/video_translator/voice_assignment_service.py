@@ -24,6 +24,8 @@ def assign_voices(
     conflict_edges: set[tuple[str, str]],
     profiles: dict[str, dict[str, Any]] | None = None,
     target_language: str = "vi-VN",
+    default_male_voice_id: str | None = None,
+    default_female_voice_id: str | None = None,
 ) -> VoiceValidationResult:
     profiles = profiles or {}
     assignments: dict[str, dict[str, Any]] = {}
@@ -66,10 +68,10 @@ def assign_voices(
             continue
 
         preferred = None
-        if character.get("role") == "main" and char_gender == "male":
-            preferred = "vi-VN-NamMinhNeural"
-        elif character.get("role") == "main" and char_gender == "female":
-            preferred = "vi-VN-HoaiMyNeural"
+        if char_gender == "male":
+            preferred = default_male_voice_id or "vi-VN-NamMinhNeural"
+        elif char_gender == "female":
+            preferred = default_female_voice_id or "vi-VN-HoaiMyNeural"
 
         used_tuples = {(assignments[n]["voice_provider"], assignments[n]["voice_id"]) for n in neighbors.get(character_id, set()) if n in assignments}
         choices = [v for v in filtered_pool if (v.get("provider"), v.get("voice_id")) not in used_tuples and str(v.get("gender", "")).lower() == char_gender]
@@ -116,7 +118,14 @@ def assign_voices(
     return VoiceValidationResult(assignments, bool(conflicts), conflicts)
 
 
-async def assign_project_voices(db, project_id: str, segments: list[dict[str, Any]], target_language: str = "vi-VN") -> VoiceValidationResult:
+async def assign_project_voices(
+    db,
+    project_id: str,
+    segments: list[dict[str, Any]],
+    target_language: str = "vi-VN",
+    default_male_voice_id: str | None = None,
+    default_female_voice_id: str | None = None,
+) -> VoiceValidationResult:
     defaults = [
         ("vi-VN-NamMinhNeural", "male", "vi-VN"),
         ("vi-VN-HoaiMyNeural", "female", "vi-VN"),
@@ -151,7 +160,15 @@ async def assign_project_voices(db, project_id: str, segments: list[dict[str, An
             if left.get("character_id") and right.get("character_id") and left["character_id"] != right["character_id"]:
                 edges.add((left["character_id"], right["character_id"]))
 
-    result = assign_voices(characters, pool, edges, profiles, target_language=target_language)
+    result = assign_voices(
+        characters,
+        pool,
+        edges,
+        profiles,
+        target_language=target_language,
+        default_male_voice_id=default_male_voice_id,
+        default_female_voice_id=default_female_voice_id,
+    )
     for profile in profiles_rows:
         assignment = result.assignments.get(profile.character_id)
         if assignment and not profile.confirmed_by_user:

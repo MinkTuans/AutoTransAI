@@ -44,8 +44,9 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   const [audioProviderId, setAudioProviderId] = useState('edge_tts');
   const [llmProviderId, setLlmProviderId] = useState('gemini');
   const [sttModel, setSttModel] = useState('gemini-2.0-flash');
-  const [voices, setVoices] = useState([]);
   const [voiceId, setVoiceId] = useState('vi-VN-HoaiMyNeural');
+  const [defaultMaleVoiceId, setDefaultMaleVoiceId] = useState('vi-VN-NamMinhNeural');
+  const [defaultFemaleVoiceId, setDefaultFemaleVoiceId] = useState('vi-VN-HoaiMyNeural');
   const [originalAudioMode, setOriginalAudioMode] = useState('mute');
   const [originalAudioVolume, setOriginalAudioVolume] = useState(0.20);
   const [autoConfirmTranslation, setAutoConfirmTranslation] = useState(true);
@@ -157,7 +158,9 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     translation_provider_id: llmProviderId,
     translation_model: sttModel,
     audio_provider_id: audioProviderId,
-    voice_id: voiceId,
+    voice_id: defaultFemaleVoiceId || voiceId,
+    default_male_voice_id: defaultMaleVoiceId,
+    default_female_voice_id: defaultFemaleVoiceId,
     original_audio_mode: originalAudioMode,
     original_audio_volume: originalAudioVolume,
     auto_confirm_translation: autoConfirmTranslation,
@@ -516,6 +519,13 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     if (cfg.llm_provider_id) setLlmProviderId(cfg.llm_provider_id);
     if (cfg.stt_model) setSttModel(cfg.stt_model);
     if (cfg.voice_id) setVoiceId(cfg.voice_id);
+    if (cfg.default_male_voice_id) setDefaultMaleVoiceId(cfg.default_male_voice_id);
+    if (cfg.default_female_voice_id) {
+      setDefaultFemaleVoiceId(cfg.default_female_voice_id);
+      setVoiceId(cfg.default_female_voice_id);
+    } else if (cfg.voice_id) {
+      setDefaultFemaleVoiceId(cfg.voice_id);
+    }
     if (cfg.original_audio_mode) setOriginalAudioMode(cfg.original_audio_mode);
     if (cfg.original_audio_volume !== undefined) setOriginalAudioVolume(cfg.original_audio_volume);
     setAutoConfirmTranslation(parseBool(cfg.auto_confirm_translation, true));
@@ -572,7 +582,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     const current = getCurrentSettingsObject();
     const compareKeys = [
       'target_language', 'source_language', 'audio_provider_id', 'llm_provider_id',
-      'stt_model', 'voice_id', 'original_audio_mode', 'original_audio_volume', 'auto_confirm_translation',
+      'stt_model', 'voice_id', 'default_male_voice_id', 'default_female_voice_id', 'original_audio_mode', 'original_audio_volume', 'auto_confirm_translation',
       'trim_filler_enabled',
       'copyright_check_enabled',
       'watermark_enabled', 'watermark_type', 'watermark_image_path', 'watermark_text',
@@ -1273,7 +1283,9 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         target_language: targetLanguage,
         audio_provider_id: audioProviderId,
         llm_provider_id: llmProviderId,
-        voice_id: voiceId,
+        voice_id: defaultFemaleVoiceId || voiceId,
+        default_male_voice_id: defaultMaleVoiceId,
+        default_female_voice_id: defaultFemaleVoiceId,
         original_audio_mode: originalAudioMode,
         auto_confirm_translation: autoConfirmTranslation,
         auto_confirm_voice: autoConfirmVoice,
@@ -1640,8 +1652,15 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                     setTargetLanguage(newLang);
                     const provVoices = voicesCache[audioProviderId] || [];
                     const filtered = filterVoicesByLanguage(provVoices, newLang);
-                    if (filtered.length > 0 && !filtered.some(v => v.id === voiceId)) {
-                      setVoiceId(filtered[0].id);
+                    const pool = filtered.length > 0 ? filtered : provVoices;
+                    const maleVoices = filterVoicesByGender(pool, 'male');
+                    const femaleVoices = filterVoicesByGender(pool, 'female');
+                    if (maleVoices.length > 0 && !maleVoices.some(v => v.id === defaultMaleVoiceId)) {
+                      setDefaultMaleVoiceId(maleVoices[0].id);
+                    }
+                    if (femaleVoices.length > 0 && !femaleVoices.some(v => v.id === defaultFemaleVoiceId)) {
+                      setDefaultFemaleVoiceId(femaleVoices[0].id);
+                      setVoiceId(femaleVoices[0].id);
                     }
                   }}
                   style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
@@ -1664,11 +1683,19 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                     setAudioProviderId(newProv);
                     loadVoicesForProvider(newProv).then(voicesList => {
                       const filtered = filterVoicesByLanguage(voicesList, targetLanguage);
-                      if (filtered.length > 0) {
-                        setVoiceId(filtered[0].id);
-                      } else if (voicesList && voicesList.length > 0) {
-                        setVoiceId(voicesList[0].id);
+                      const pool = filtered.length > 0 ? filtered : voicesList;
+                      const maleVoices = filterVoicesByGender(pool, 'male');
+                      const femaleVoices = filterVoicesByGender(pool, 'female');
+                      if (maleVoices.length > 0) {
+                        setDefaultMaleVoiceId(maleVoices[0].id);
                       } else {
+                        setDefaultMaleVoiceId('');
+                      }
+                      if (femaleVoices.length > 0) {
+                        setDefaultFemaleVoiceId(femaleVoices[0].id);
+                        setVoiceId(femaleVoices[0].id);
+                      } else {
+                        setDefaultFemaleVoiceId('');
                         setVoiceId('');
                       }
                     });
@@ -1684,26 +1711,61 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: '#94a3b8' }}>Giọng đọc mặc định (Default Voice):</label>
+                <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: '#94a3b8' }}>Mặc định Nam (Default Male):</label>
                 <select
-                  value={voiceId}
-                  onChange={(e) => setVoiceId(e.target.value)}
+                  value={defaultMaleVoiceId}
+                  onChange={(e) => setDefaultMaleVoiceId(e.target.value)}
                   style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
                 >
                   {(() => {
                     const provVoices = voicesCache[audioProviderId] || [];
-                    const filtered = filterVoicesByLanguage(provVoices, targetLanguage);
-                    const listToUse = filtered.length > 0 ? filtered : provVoices;
-                    const hasCurrent = voiceId && listToUse.some(v => v.id === voiceId);
+                    const langFiltered = filterVoicesByLanguage(provVoices, targetLanguage);
+                    const listToUse = filterVoicesByGender(langFiltered.length > 0 ? langFiltered : provVoices, 'male');
+                    const hasCurrent = defaultMaleVoiceId && listToUse.some(v => v.id === defaultMaleVoiceId);
 
                     return (
                       <>
-                        {!hasCurrent && voiceId && (
-                          <option value={voiceId} disabled>
-                            ⚠️ {voiceId} (Không khả dụng với provider/ngôn ngữ này)
+                        {!hasCurrent && defaultMaleVoiceId && (
+                          <option value={defaultMaleVoiceId} disabled>
+                            ⚠️ {defaultMaleVoiceId} (Không khả dụng)
                           </option>
                         )}
-                        {(!voiceId || !hasCurrent) && <option value="">-- Chọn giọng đọc --</option>}
+                        {(!defaultMaleVoiceId || !hasCurrent) && <option value="">-- Chọn giọng Nam --</option>}
+                        {listToUse.map(v => (
+                          <option key={v.id} value={v.id}>
+                            {formatVoiceLabel(v)}
+                          </option>
+                        ))}
+                      </>
+                    );
+                  })()}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: '#94a3b8' }}>Mặc định Nữ (Default Female):</label>
+                <select
+                  value={defaultFemaleVoiceId}
+                  onChange={(e) => {
+                    setDefaultFemaleVoiceId(e.target.value);
+                    setVoiceId(e.target.value);
+                  }}
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
+                >
+                  {(() => {
+                    const provVoices = voicesCache[audioProviderId] || [];
+                    const langFiltered = filterVoicesByLanguage(provVoices, targetLanguage);
+                    const listToUse = filterVoicesByGender(langFiltered.length > 0 ? langFiltered : provVoices, 'female');
+                    const hasCurrent = defaultFemaleVoiceId && listToUse.some(v => v.id === defaultFemaleVoiceId);
+
+                    return (
+                      <>
+                        {!hasCurrent && defaultFemaleVoiceId && (
+                          <option value={defaultFemaleVoiceId} disabled>
+                            ⚠️ {defaultFemaleVoiceId} (Không khả dụng)
+                          </option>
+                        )}
+                        {(!defaultFemaleVoiceId || !hasCurrent) && <option value="">-- Chọn giọng Nữ --</option>}
                         {listToUse.map(v => (
                           <option key={v.id} value={v.id}>
                             {formatVoiceLabel(v)}

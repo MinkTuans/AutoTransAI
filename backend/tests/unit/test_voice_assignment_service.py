@@ -23,3 +23,22 @@ def test_confirmed_profile_is_never_changed_on_conflict():
     result = assign_voices(chars, POOL, {("a", "b")}, profiles)
     assert result.requires_review is True
     assert result.assignments["a"]["voice_id"] == result.assignments["b"]["voice_id"] == "same"
+
+
+def test_assigns_custom_default_male_and_female_voices():
+    chars = [
+        {"character_id": "c_male", "gender": "male", "role": "supporting"},
+        {"character_id": "c_female", "gender": "female", "role": "supporting"},
+    ]
+    # Pass custom default male voice vi-VN-PhuongNamNeural
+    result = assign_voices(
+        chars,
+        POOL,
+        set(),
+        target_language="vi",
+        default_male_voice_id="vi-VN-PhuongNamNeural",
+        default_female_voice_id="vi-VN-HoaiMyNeural",
+    )
+    assert result.assignments["c_male"]["voice_id"] == "vi-VN-PhuongNamNeural"
+    assert result.assignments["c_female"]["voice_id"] == "vi-VN-HoaiMyNeural"
+

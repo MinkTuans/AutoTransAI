@@ -143,6 +143,8 @@ class CreateJobRequest(BaseModel):
     audio_provider_id: str = "edge_tts"
     llm_provider_id: str = "gemini"
     voice_id: Optional[str] = None
+    default_male_voice_id: Optional[str] = None
+    default_female_voice_id: Optional[str] = None
     original_audio_mode: str = "mute"
     auto_confirm_translation: bool = True
     auto_confirm_voice: bool = False
@@ -565,6 +567,8 @@ async def create_translation_job(
         "tts": {
             "provider": body.audio_provider_id or proj_settings.get("audio_provider_id", "edge_tts"),
             "voice_id": body.voice_id or proj_settings.get("voice_id", "vi-VN-HoaiMyNeural"),
+            "default_male_voice_id": body.default_male_voice_id or proj_settings.get("default_male_voice_id", "vi-VN-NamMinhNeural"),
+            "default_female_voice_id": body.default_female_voice_id or proj_settings.get("default_female_voice_id", "vi-VN-HoaiMyNeural"),
         },
         "language": {
             "source_language": body.source_language or proj_settings.get("source_language", "auto"),
@@ -1035,7 +1039,10 @@ async def start_translation_pipeline(
                     from app.services.video_translator.character_mapping_service import map_and_persist
                     from app.services.video_translator.voice_assignment_service import assign_project_voices
                     llm = get_registry().get_llm(b_job.llm_provider_id or "gemini")
-                    mapping_result = await map_and_persist(bg_session, b_job.project_id, translated_segs, llm)
+                    
+                    video_path_str = str(local_asset_path) if 'local_asset_path' in locals() and local_asset_path and local_asset_path.exists() else None
+                    mapping_result = await map_and_persist(bg_session, b_job.project_id, translated_segs, llm, video_path=video_path_str)
+                    
                     segment_rows = created_segment_rows
                     for row, source in zip(segment_rows, translated_segs):
                         decision = mapping_result.by_speaker[source.get("speaker_id") or row.speaker_id]
@@ -1043,6 +1050,8 @@ async def start_translation_pipeline(
                         row.mapping_confidence = decision["confidence"]
                     # Resolve target_language from job settings snapshot or job model
                     resolved_target_lang = b_job.target_language
+                    default_male_voice = None
+                    default_female_voice = None
                     if b_job.settings_snapshot_json:
                         try:
                             snap = json.loads(b_job.settings_snapshot_json)
@@ -1050,6 +1059,9 @@ async def start_translation_pipeline(
                                 resolved_target_lang = snap["language"]["target_language"]
                             elif snap.get("target_language"):
                                 resolved_target_lang = snap["target_language"]
+                            if isinstance(snap.get("tts"), dict):
+                                default_male_voice = snap["tts"].get("default_male_voice_id")
+                                default_female_voice = snap["tts"].get("default_female_voice_id")
                         except Exception:
                             pass
 
@@ -1062,6 +1074,8 @@ async def start_translation_pipeline(
                             "original_end": row.original_end,
                         } for row in segment_rows],
                         target_language=resolved_target_lang,
+                        default_male_voice_id=default_male_voice,
+                        default_female_voice_id=default_female_voice,
                     )
                     for row in segment_rows:
                         assignment = voice_result.assignments.get(row.character_id, {})
