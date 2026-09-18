@@ -47,7 +47,14 @@ def validate_character_mapping(speaker_ids: list[str], candidates: list[dict[str
     return CharacterMappingResult(mapped, bool(issues), issues)
 
 
-async def map_and_persist(db, project_id: str, segments: list[dict[str, Any]], llm, video_path: str | None = None) -> CharacterMappingResult:
+async def map_and_persist(
+    db,
+    project_id: str,
+    segments: list[dict[str, Any]],
+    llm,
+    video_path: str | None = None,
+    visual_genders: dict[str, str] | None = None,
+) -> CharacterMappingResult:
     setting = (await db.execute(select(SystemSetting).where(SystemSetting.key == "character_mapping_confidence_threshold"))).scalar_one_or_none()
     try:
         threshold = float(setting.value) if setting else 0.85
@@ -56,14 +63,15 @@ async def map_and_persist(db, project_id: str, segments: list[dict[str, Any]], l
     speakers = sorted({str(s["speaker_id"]) for s in segments})
     transcript = [{"speaker_id": s["speaker_id"], "text": s.get("translated_text") or s.get("text", "")} for s in segments]
 
-    visual_genders = {}
-    if video_path:
-        try:
-            from app.services.video_translator.visual_gender_service import detect_speakers_gender
-            visual_genders = await detect_speakers_gender(video_path, segments)
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Failed to detect visual genders: {e}")
+    if visual_genders is None:
+        visual_genders = {}
+        if video_path:
+            try:
+                from app.services.video_translator.visual_gender_service import detect_speakers_gender
+                visual_genders = await detect_speakers_gender(video_path, segments, db=db)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to detect visual genders: {e}")
 
     # Priority 1: Query existing persistent SpeakerVoiceMapping records for this project
     existing_mappings = (
@@ -152,9 +160,12 @@ async def map_and_persist(db, project_id: str, segments: list[dict[str, Any]], l
             profile = (await db.execute(select(CharacterVoiceProfile).where(CharacterVoiceProfile.project_id == project_id, CharacterVoiceProfile.character_id == decision["character_id"]))).scalar_one_or_none()
 
         visual_gender = visual_genders.get(speaker_id)
-        norm_gender = str(visual_gender or decision.get("gender", "unknown")).lower()
-        if norm_gender not in ("male", "female"):
-            norm_gender = "unknown"
+        if visual_gender in ("male", "female"):
+            norm_gender = visual_gender
+        else:
+            norm_gender = str(decision.get("gender", "unknown")).lower()
+            if norm_gender not in ("male", "female"):
+                norm_gender = "unknown"
 
         if not profile:
             new_prof = CharacterVoiceProfile(
@@ -168,6 +179,7 @@ async def map_and_persist(db, project_id: str, segments: list[dict[str, Any]], l
             )
             db.add(new_prof)
             profile_by_char_id[decision["character_id"]] = new_prof
+            decision["gender"] = norm_gender
         elif not profile.confirmed_by_user:
             # Update unconfirmed profile with higher confidence LLM metadata
             if decision.get("name") and decision["name"] != speaker_id:
@@ -175,7 +187,10 @@ async def map_and_persist(db, project_id: str, segments: list[dict[str, Any]], l
             if norm_gender != "unknown":
                 profile.gender = norm_gender
             profile.mapping_confidence = max(profile.mapping_confidence or 0.0, decision["confidence"])
-        # If profile.confirmed_by_user is True: preserve all user-confirmed data intact
+            decision["gender"] = profile.gender or norm_gender
+        else:
+            # Profile is confirmed by user: manual user override has highest priority!
+            decision["gender"] = profile.gender or norm_gender
 
     await db.flush()
     return result

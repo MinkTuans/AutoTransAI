@@ -20,7 +20,11 @@ class ScheduleResult:
 
 
 def _overlap(left: dict[str, Any], right_start: float, right_end: float) -> float:
-    return max(0.0, min(float(left["scheduled_end"]), right_end) - max(float(left["scheduled_start"]), right_start))
+    l_start = float(left.get("scheduled_start", 0.0))
+    l_end = float(left.get("scheduled_end", 0.0))
+    if right_end <= right_start:
+        return 0.05 if (l_start <= right_start < l_end) else 0.0
+    return max(0.0, min(l_end, right_end) - max(l_start, right_start))
 
 
 def schedule_segments(segments: list[dict[str, Any]], video_duration: float, policy: SchedulePolicy | None = None) -> ScheduleResult:
@@ -58,6 +62,14 @@ def schedule_segments(segments: list[dict[str, Any]], video_duration: float, pol
             if displacement <= policy.max_reschedule_seconds and candidate + duration <= video_duration:
                 start, end = candidate, candidate + duration
                 action = "serialized_same_voice" if tempo == 1.0 else "compressed_and_rescheduled"
+            elif policy.max_reschedule_seconds > 0.0 and candidate < video_duration:
+                start = candidate
+                avail = max(0.2, video_duration - start)
+                if duration > avail:
+                    tempo = min(2.5, max(tempo, raw_duration / avail))
+                    duration = max(0.1, raw_duration / tempo)
+                end = min(video_duration, start + duration)
+                action = "serialized_same_voice"
             else:
                 action = "cannot_fit"
                 conflicts.append({"segment_id": item.get("id"), "with": prior.get("id"), "reason": "same_voice_overlap"})

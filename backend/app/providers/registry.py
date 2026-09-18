@@ -8,7 +8,7 @@ use this registry to get providers by ID, never importing them directly.
 from __future__ import annotations
 
 from app.core import get_logger
-from app.providers.base import AudioProvider, VideoProvider, LLMProvider, ImageProvider
+from app.providers.base import AudioProvider, VideoProvider, LLMProvider, ImageProvider, VisionProvider
 
 logger = get_logger(__name__)
 
@@ -30,6 +30,7 @@ class ProviderRegistry:
         self._video: dict[str, VideoProvider] = {}
         self._llm: dict[str, LLMProvider] = {}
         self._image: dict[str, ImageProvider] = {}
+        self._vision: dict[str, VisionProvider] = {}
 
     def register_audio(self, provider: AudioProvider) -> None:
         """Register an audio provider."""
@@ -51,6 +52,11 @@ class ProviderRegistry:
         self._image[provider.provider_id] = provider
         logger.info("Registered image provider", provider_id=provider.provider_id)
 
+    def register_vision(self, provider: VisionProvider) -> None:
+        """Register a Vision multimodal provider."""
+        self._vision[provider.provider_id] = provider
+        logger.info("Registered vision provider", provider_id=provider.provider_id)
+
     def get_audio(self, provider_id: str) -> AudioProvider | None:
         """Get an audio provider by ID."""
         return self._audio.get(provider_id)
@@ -66,6 +72,10 @@ class ProviderRegistry:
     def get_image(self, provider_id: str) -> ImageProvider | None:
         """Get an image provider by ID."""
         return self._image.get(provider_id)
+
+    def get_vision(self, provider_id: str) -> VisionProvider | None:
+        """Get a vision provider by ID."""
+        return self._vision.get(provider_id)
 
     def list_audio(self) -> list[AudioProvider]:
         """List all registered audio providers."""
@@ -83,6 +93,10 @@ class ProviderRegistry:
         """List all registered image providers."""
         return list(self._image.values())
 
+    def list_vision(self) -> list[VisionProvider]:
+        """List all registered vision providers."""
+        return list(self._vision.values())
+
     def get_all_providers(self) -> dict[str, list]:
         """Get all providers grouped by type. Used by the /providers endpoint."""
         return {
@@ -90,6 +104,7 @@ class ProviderRegistry:
             "video": self.list_video(),
             "llm": self.list_llm(),
             "image": self.list_image(),
+            "vision": self.list_vision(),
         }
 
 
@@ -129,6 +144,14 @@ def _register_defaults(reg: ProviderRegistry) -> None:
         reg.register_llm(GeminiLLMProvider())
     except Exception as e:
         logger.warning("Failed to register LLM providers", error=str(e))
+
+    try:
+        from app.providers.vision.gemini_vision import GeminiVisionProvider
+        from app.providers.vision.openai_vision import OpenAIVisionProvider
+        reg.register_vision(GeminiVisionProvider())
+        reg.register_vision(OpenAIVisionProvider())
+    except Exception as e:
+        logger.warning("Failed to register Vision providers", error=str(e))
 
     try:
         from app.providers.image.pollinations_provider import PollinationsImageProvider

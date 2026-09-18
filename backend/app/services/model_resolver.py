@@ -75,6 +75,7 @@ _CAPABILITY_TO_FUNCTION = {
     "TTS": "tts",
     "VIDEO_GENERATION": "video_generation",
     "IMAGE_GENERATION": "image_generation",
+    "VISUAL_GENDER": "visual_gender",
 }
 
 

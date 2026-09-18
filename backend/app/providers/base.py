@@ -277,3 +277,59 @@ class ImageProvider(ABC):
     async def get_quota(self) -> list[QuotaInfo]:
         ...
 
+
+class VisionProvider(ABC):
+    """Abstract base class for Multimodal / Vision AI providers."""
+
+    @property
+    @abstractmethod
+    def provider_id(self) -> str:
+        """Unique identifier for this vision provider."""
+        ...
+
+    @property
+    @abstractmethod
+    def provider_name(self) -> str:
+        """Human-readable name."""
+        ...
+
+    @property
+    @abstractmethod
+    def is_free(self) -> bool:
+        """Whether this provider has a free tier."""
+        ...
+
+    @property
+    @abstractmethod
+    def requires_api_key(self) -> bool:
+        """Whether this provider needs an API key."""
+        ...
+
+    @abstractmethod
+    async def validate_configuration(self) -> bool:
+        """Check if provider is configured and accessible."""
+        ...
+
+    @abstractmethod
+    async def analyze_image(
+        self,
+        image_path: Path | str,
+        prompt: str,
+        model: str | None = None,
+        api_key: str | None = None,
+        **kwargs: Any,
+    ) -> str:
+        """
+        Analyze an image with a textual prompt using vision model.
+
+        Args:
+            image_path: Path to the image file.
+            prompt: Question or instruction prompt for the model.
+            model: Optional model identifier override.
+            api_key: Optional API key override.
+
+        Returns:
+            Raw text response from the vision model.
+        """
+        ...
+

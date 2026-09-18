@@ -466,12 +466,26 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       const provVoices = voicesCache[s.voice_provider || 'edge_tts'] || [];
       const currVoice = provVoices.find(v => v.id === s.voice_id);
       const keepVoice = charGender !== 'unknown' && currVoice && (currVoice.gender || '').toLowerCase() === charGender;
+      
+      let newVoiceId = s.voice_id;
+      if (!keepVoice) {
+         if (charGender === 'male') {
+            const hasDefault = provVoices.some(v => v.id === defaultMaleVoiceId);
+            newVoiceId = hasDefault ? defaultMaleVoiceId : (provVoices.find(v => (v.gender || '').toLowerCase() === 'male')?.id || '');
+         } else if (charGender === 'female') {
+            const hasDefault = provVoices.some(v => v.id === defaultFemaleVoiceId);
+            newVoiceId = hasDefault ? defaultFemaleVoiceId : (provVoices.find(v => (v.gender || '').toLowerCase() === 'female')?.id || '');
+         } else {
+            newVoiceId = '';
+         }
+      }
+
       return {
         ...s,
         character_id: newCharId,
         character_name: char?.name || s.character_name || newCharId,
         gender: charGender,
-        voice_id: keepVoice ? s.voice_id : '',
+        voice_id: newVoiceId,
       };
     }));
   };
@@ -489,10 +503,24 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       const provVoices = voicesCache[s.voice_provider || 'edge_tts'] || [];
       const currVoice = provVoices.find(v => v.id === s.voice_id);
       const keepVoice = currVoice && (currVoice.gender || '').toLowerCase() === newGender;
+      
+      let newVoiceId = s.voice_id;
+      if (!keepVoice) {
+         if (newGender === 'male') {
+            const hasDefault = provVoices.some(v => v.id === defaultMaleVoiceId);
+            newVoiceId = hasDefault ? defaultMaleVoiceId : (provVoices.find(v => (v.gender || '').toLowerCase() === 'male')?.id || '');
+         } else if (newGender === 'female') {
+            const hasDefault = provVoices.some(v => v.id === defaultFemaleVoiceId);
+            newVoiceId = hasDefault ? defaultFemaleVoiceId : (provVoices.find(v => (v.gender || '').toLowerCase() === 'female')?.id || '');
+         } else {
+            newVoiceId = '';
+         }
+      }
+
       return {
         ...s,
         gender: newGender,
-        voice_id: keepVoice ? s.voice_id : '',
+        voice_id: newVoiceId,
       };
     }));
   };

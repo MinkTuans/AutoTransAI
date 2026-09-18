@@ -99,6 +99,13 @@ DEFAULT_AI_FUNCTIONS = [
         "fallback_provider_id": None,
     },
     {
+        "function_id": "visual_gender",
+        "function_name": "Character & Visual Gender Detection",
+        "capability": "VISUAL_GENDER",
+        "primary_provider_id": "gemini",
+        "model_id": "gemini-1.5-flash",
+    },
+    {
         "function_id": "image_generation",
         "function_name": "Image & Asset Generation",
         "capability": "IMAGE_GENERATION",
@@ -111,9 +118,9 @@ DEFAULT_AI_FUNCTIONS = [
 
 DEFAULT_AI_MODELS = [
     # Gemini
-    {"id": "gemini-1.5-flash", "provider_id": "gemini", "model_name": "Gemini 1.5 Flash", "capabilities": json.dumps(["STT", "LLM", "TRANSLATION"]), "is_default": True},
+    {"id": "gemini-1.5-flash", "provider_id": "gemini", "model_name": "Gemini 1.5 Flash", "capabilities": json.dumps(["STT", "LLM", "TRANSLATION", "VISUAL_GENDER"]), "is_default": True},
     {"id": "gemini-1.5-pro", "provider_id": "gemini", "model_name": "Gemini 1.5 Pro", "capabilities": json.dumps(["LLM", "TRANSLATION"]), "is_default": False},
-    {"id": "gemini-2.0-flash", "provider_id": "gemini", "model_name": "Gemini 2.0 Flash", "capabilities": json.dumps(["STT", "LLM", "TRANSLATION"]), "is_default": False},
+    {"id": "gemini-2.0-flash", "provider_id": "gemini", "model_name": "Gemini 2.0 Flash", "capabilities": json.dumps(["STT", "LLM", "TRANSLATION", "VISUAL_GENDER"]), "is_default": False},
     # OpenAI
     {"id": "gpt-4o", "provider_id": "openai", "model_name": "GPT-4o", "capabilities": json.dumps(["LLM", "TRANSLATION"]), "is_default": True},
     {"id": "gpt-4o-mini", "provider_id": "openai", "model_name": "GPT-4o Mini", "capabilities": json.dumps(["LLM", "TRANSLATION"]), "is_default": False},
@@ -299,6 +306,7 @@ class SettingsService:
             "tts": "TTS",
             "video_generation": "VIDEO_GENERATION",
             "image_generation": "IMAGE_GENERATION",
+            "visual_gender": "VISUAL_GENDER",
         }
         target_cap = cap_map.get(function_id, "LLM")
 
@@ -307,8 +315,8 @@ class SettingsService:
 
         # Build list of all system known providers
         known_providers = [
-            {"id": "gemini", "name": "Google Gemini", "type": "llm", "caps": ["STT", "LLM", "TRANSLATION"], "free": False},
-            {"id": "openai", "name": "OpenAI", "type": "llm", "caps": ["STT", "LLM", "TRANSLATION", "IMAGE_GENERATION"], "free": False},
+            {"id": "gemini", "name": "Google Gemini", "type": "llm", "caps": ["STT", "LLM", "TRANSLATION", "VISUAL_GENDER"], "free": False},
+            {"id": "openai", "name": "OpenAI", "type": "llm", "caps": ["STT", "LLM", "TRANSLATION", "IMAGE_GENERATION", "VISUAL_GENDER"], "free": False},
             {"id": "edge_tts", "name": "Edge TTS", "type": "audio", "caps": ["TTS"], "free": True},
             {"id": "google_cloud_tts", "name": "Google Cloud TTS", "type": "audio", "caps": ["TTS"], "free": False},
             {"id": "elevenlabs", "name": "ElevenLabs", "type": "audio", "caps": ["TTS"], "free": False},

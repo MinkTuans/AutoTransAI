@@ -977,6 +977,46 @@ async def start_translation_pipeline(
                     b_job.last_checkpoint_stage = "STT_DONE"
                     b_job.last_checkpoint_at = now_dt
 
+                    # 2b. Visual Character / Gender Analysis (IMMEDIATELY AFTER STT)
+                    b_job.current_step = "Phân tích giới tính nhân vật (Visual Gender)"
+                    await bg_session.commit()
+                    log_job_event(job_id, "VISUAL_GENDER", "Starting Visual Character / Gender Analysis immediately after STT...")
+
+                    video_path_str = str(local_asset_path) if 'local_asset_path' in locals() and local_asset_path and local_asset_path.is_file() else None
+                    visual_genders = {}
+                    if video_path_str:
+                        from app.services.video_translator.visual_gender_service import detect_speakers_gender
+                        try:
+                            visual_genders = await detect_speakers_gender(video_path_str, segments_raw, db=bg_session)
+                            log_job_event(job_id, "VISUAL_GENDER", f"Visual Gender Analysis completed: {visual_genders}")
+                        except Exception as vg_err:
+                            logger.error(f"[{job_id}] Visual gender detection failed: {vg_err}")
+                            log_job_event(job_id, "VISUAL_GENDER", f"Visual detection error: {vg_err}. Falling back to dialogue LLM.")
+
+                    # 2c. Character Mapping (BEFORE Translation)
+                    from app.services.video_translator.character_mapping_service import map_and_persist
+                    b_job.current_step = "Nhận diện và ánh xạ nhân vật (Character Mapping)"
+                    await bg_session.commit()
+                    llm = get_registry().get_llm(b_job.llm_provider_id or "gemini")
+                    mapping_result = await map_and_persist(
+                        bg_session,
+                        b_job.project_id,
+                        segments_raw,
+                        llm,
+                        video_path=video_path_str,
+                        visual_genders=visual_genders,
+                    )
+
+                    # Decorate segments_raw with character metadata (including resolved gender)
+                    for seg in segments_raw:
+                        spk = seg.get("speaker_id") or f"UNRESOLVED_{seg.get('number', 1):04d}"
+                        decision = mapping_result.by_speaker.get(spk, {})
+                        seg["character_id"] = decision.get("character_id")
+                        seg["speaker_name"] = decision.get("name") or spk
+                        seg["gender"] = decision.get("gender", "unknown")
+                        seg["role"] = decision.get("role", "supporting")
+                        seg["mapping_confidence"] = decision.get("confidence", 0.0)
+
                     current_stage = "TRANSLATING"
                     b_job.detected_language = detected_lang
                     b_job.status = TranslationJobStatus.TRANSLATED.value
@@ -1020,6 +1060,10 @@ async def start_translation_pipeline(
 
                     created_segment_rows = []
                     for seg in translated_segs:
+                        spk = seg.get("speaker_id") or f"UNRESOLVED_{seg['number']:04d}"
+                        decision = mapping_result.by_speaker.get(spk, {})
+                        cid = seg.get("character_id") or decision.get("character_id")
+                        conf = seg.get("mapping_confidence") or decision.get("confidence", 0.0)
                         db_seg = VideoTranslationSegment(
                             job_id=job_id,
                             segment_number=seg["number"],
@@ -1027,7 +1071,9 @@ async def start_translation_pipeline(
                             end_time=seg["end_time"],
                             original_start=seg["start_time"],
                             original_end=seg["end_time"],
-                            speaker_id=seg.get("speaker_id") or f"UNRESOLVED_{seg['number']:04d}",
+                            speaker_id=spk,
+                            character_id=cid,
+                            mapping_confidence=conf,
                             original_text=seg["text"],
                             translated_text=seg.get("translated_text", seg["text"]),
                             status="translated",
@@ -1036,18 +1082,8 @@ async def start_translation_pipeline(
                         created_segment_rows.append(db_seg)
 
                     await bg_session.flush()
-                    from app.services.video_translator.character_mapping_service import map_and_persist
                     from app.services.video_translator.voice_assignment_service import assign_project_voices
-                    llm = get_registry().get_llm(b_job.llm_provider_id or "gemini")
-                    
-                    video_path_str = str(local_asset_path) if 'local_asset_path' in locals() and local_asset_path and local_asset_path.exists() else None
-                    mapping_result = await map_and_persist(bg_session, b_job.project_id, translated_segs, llm, video_path=video_path_str)
-                    
                     segment_rows = created_segment_rows
-                    for row, source in zip(segment_rows, translated_segs):
-                        decision = mapping_result.by_speaker[source.get("speaker_id") or row.speaker_id]
-                        row.character_id = decision["character_id"]
-                        row.mapping_confidence = decision["confidence"]
                     # Resolve target_language from job settings snapshot or job model
                     resolved_target_lang = b_job.target_language
                     default_male_voice = None
@@ -1108,11 +1144,17 @@ async def start_translation_pipeline(
                     all_voices_user_confirmed = bool(profiles_in_db) and all(
                         p.confirmed_by_user for p in profiles_in_db
                     )
-
-                    voice_review_required = (
-                        character_voice_needs_review
-                        or (not auto_confirm_voice and not all_voices_user_confirmed)
+                    all_segments_have_voices = bool(segment_rows) and all(
+                        bool(row.voice_id and row.voice_provider) for row in segment_rows
                     )
+
+                    if auto_confirm_voice and all_segments_have_voices:
+                        voice_review_required = False
+                    else:
+                        voice_review_required = (
+                            character_voice_needs_review
+                            or (not auto_confirm_voice and not all_voices_user_confirmed)
+                        )
 
                     b_job.stage_progress_pct = 100.0
                     b_job.overall_progress_pct = 60.0
@@ -2205,23 +2247,26 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                     )
                 )
 
-            # CRITICAL: If schedule still requires review, HALT and KEEP NEEDS_REVIEW even if is_review_confirmed!
+            # If schedule requires review, proceed if user already confirmed or auto-confirm enabled
             if schedule_result.requires_review:
-                await schedule_session.execute(
-                    update(VideoTranslationJob)
-                    .where(VideoTranslationJob.id == job_id)
-                    .values(
-                        status=TranslationJobStatus.NEEDS_REVIEW.value,
-                        stage="AUDIO_SCHEDULE_REVIEW",
-                        current_step="Không thể xếp lịch TTS an toàn do xung đột cùng giọng đọc (same-voice overlap); cần kiểm tra thủ công",
+                if is_review_confirmed or auto_confirm_voice:
+                    log_job_event(job_id, "AUDIO_SCHEDULE", f"[AUDIO_SCHEDULE] User confirmed or auto-confirm enabled. Proceeding with schedule: {schedule_result.unresolved_conflicts}")
+                else:
+                    await schedule_session.execute(
+                        update(VideoTranslationJob)
+                        .where(VideoTranslationJob.id == job_id)
+                        .values(
+                            status=TranslationJobStatus.NEEDS_REVIEW.value,
+                            stage="AUDIO_SCHEDULE_REVIEW",
+                            current_step="Không thể xếp lịch TTS an toàn do xung đột cùng giọng đọc (same-voice overlap); cần kiểm tra thủ công",
+                        )
                     )
-                )
-                log_job_event(job_id, "NEEDS_REVIEW", f"[NEEDS_REVIEW] Waiting for user changes: {schedule_result.unresolved_conflicts}")
-                await schedule_session.commit()
-                stop_job_heartbeat(job_id)
-                return
+                    log_job_event(job_id, "NEEDS_REVIEW", f"[NEEDS_REVIEW] Waiting for user changes: {schedule_result.unresolved_conflicts}")
+                    await schedule_session.commit()
+                    stop_job_heartbeat(job_id)
+                    return
 
-            # Proceed if and only if schedule passed
+            # Proceed if and only if schedule passed or user confirmed
             log_job_event(job_id, "AUDIO_SCHEDULE", "[AUDIO_SCHEDULE] Final validation passed")
             await schedule_session.execute(
                 update(VideoTranslationJob)
@@ -2233,7 +2278,49 @@ async def execute_job_render_pipeline(job_id: str) -> None:
             )
             await schedule_session.commit()
 
-        # Validation Gate before Audio Sync:
+        # Validation Gate & Auto-Resolution before Audio Sync:
+        sorted_chk = sorted(segments_data, key=lambda s: float(s.get("scheduled_start", 0.0)))
+        adjusted_any = False
+        async with async_session_factory() as adjust_session:
+            for p, l_seg in enumerate(sorted_chk):
+                l_end = float(l_seg.get("scheduled_end", 0.0))
+                l_vox = l_seg.get("voice_id")
+                if not l_vox:
+                    continue
+                for r_seg in sorted_chk[p + 1:]:
+                    r_start = float(r_seg.get("scheduled_start", 0.0))
+                    if r_start >= l_end - 0.001:
+                        break
+                    if l_vox == r_seg.get("voice_id"):
+                        overlap_amount = l_end - r_start
+                        if overlap_amount > 0:
+                            l_start = float(l_seg.get("scheduled_start", 0.0))
+                            if (r_start - l_start) >= 0.4:
+                                l_seg["scheduled_end"] = round(r_start, 3)
+                                l_end = r_start
+                            else:
+                                r_dur = max(0.1, float(r_seg.get("scheduled_end", 0.0)) - r_start)
+                                r_seg["scheduled_start"] = round(l_end, 3)
+                                r_seg["scheduled_end"] = round(l_end + r_dur, 3)
+
+                            await adjust_session.execute(
+                                update(VideoTranslationSegment)
+                                .where(VideoTranslationSegment.id == l_seg["id"])
+                                .values(scheduled_end=l_seg["scheduled_end"])
+                            )
+                            await adjust_session.execute(
+                                update(VideoTranslationSegment)
+                                .where(VideoTranslationSegment.id == r_seg["id"])
+                                .values(
+                                    scheduled_start=r_seg["scheduled_start"],
+                                    scheduled_end=r_seg["scheduled_end"],
+                                )
+                            )
+                            adjusted_any = True
+            if adjusted_any:
+                await adjust_session.commit()
+
+        # Re-check after auto-resolution
         sorted_chk = sorted(segments_data, key=lambda s: float(s.get("scheduled_start", 0.0)))
         has_same_voice_overlap = False
         for p, l_seg in enumerate(sorted_chk):
@@ -2249,7 +2336,7 @@ async def execute_job_render_pipeline(job_id: str) -> None:
             if has_same_voice_overlap:
                 break
 
-        if has_same_voice_overlap:
+        if has_same_voice_overlap and not is_review_confirmed and not auto_confirm_voice:
             logger.error(f"[PRE-SYNC-GATE] Job {job_id} failed pre-sync gate: same-voice overlap detected.")
             async with async_session_factory() as gate_session:
                 await gate_session.execute(

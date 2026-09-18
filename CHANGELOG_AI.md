@@ -1,3 +1,67 @@
+- **Remaster Visual Gender Detection Pipeline — Run Immediately After STT (2026-09-18)**:
+  - **Summary**: Remastered the visual gender detection pipeline so that it executes immediately after STT and before Character Mapping and Translation. Updated keyframe extraction to take 4 representative frames per speaker (0%, 25%, 75%, 100% of speech timeline) and combine them into a single 1024x576 2x2 contact sheet via FFmpeg, querying the Vision API in exactly 1 request per speaker rather than 4 separate requests. Added a unified `VisionProvider` abstraction, robust response parser (`FEMALE` before `MALE` regex checks), and strict priority resolution (`Manual Override > Visual AI > Dialogue LLM > Unknown`).
+  - **Pipeline Reordering (`video_translator.py`)**:
+    - Relocated Visual Gender Analysis (`detect_speakers_gender`) to run immediately after STT completion (`STT_DONE`).
+    - Moved Character Mapping (`map_and_persist`) before Translation, passing `visual_genders` directly as input.
+    - Enriched source transcript segments with `character_id`, `speaker_name`, `gender`, and `role` before sending them to `translate_transcript_segments`.
+    - Removed redundant post-translation `map_and_persist` invocation.
+  - **Multimodal Vision Provider Abstraction (`base.py`, `registry.py`, `gemini_vision.py`, `openai_vision.py`)**:
+    - Created `VisionProvider(ABC)` in `app/providers/base.py` defining `analyze_image(...)`.
+    - Implemented `GeminiVisionProvider` (`Google Gemini Vision`) and `OpenAIVisionProvider` (`OpenAI Vision GPT-4o/mini`).
+    - Registered vision providers in `ProviderRegistry` with accessors `register_vision()`, `get_vision()`, and `list_vision()`.
+  - **Visual Gender Service Remaster (`visual_gender_service.py`)**:
+    - Implemented `get_speaker_sample_timestamps(...)` to sample active speech intervals at 0% (START), 25%, 75%, and 100% (END).
+    - Implemented `create_contact_sheet(...)` combining 4 frames into a standardized 1024x576 2x2 contact sheet with discrete labels (`FRAME 1 - START`, `FRAME 2 - 25%`, `FRAME 3 - 75%`, `FRAME 4 - END`) using system fonts and `expansion=none`.
+    - Updated prompt to enforce strict `MALE` or `FEMALE` classification with 8 selection rules (consistent speaker over background characters/bystanders).
+    - Implemented `parse_gender_response(...)` with exact match, regex word boundaries (`\bFEMALE\b` before `\bMALE\b`), and tolerant Vietnamese keyword checks (`NỮ` before `NAM`).
+    - Added speaker caching and independent per-speaker error handling with structured logging.
+  - **Character Mapping Priority (`character_mapping_service.py`)**:
+    - Updated `map_and_persist` to accept `visual_genders` and respect priority: `Manual user override (confirmed_by_user) > Visual AI > Dialogue LLM > Unknown`.
+    - Updated `decision["gender"]` in `CharacterMappingResult` so downstream stages (Translation, Voice Assignment, TTS) preserve resolved genders.
+  - **Testing & Verification (`test_visual_gender_service.py`)**:
+    - Wrote comprehensive unit tests covering all 12 mandatory cases: male/female 4 frames, bystander discrimination, exact/regex response parsing, substring collision regression, vision error fallback, invalid text fallback, manual override priority, single short segment distribution, very short video stability, caching, real FFmpeg contact sheet creation, and 1 request per speaker count.
+    - Passed all 16 visual gender service tests and full backend test suite (326 passed, 0 failed).
+  - **Affected Files**: `backend/app/api/routes/video_translator.py`, `backend/app/services/video_translator/visual_gender_service.py`, `backend/app/services/video_translator/character_mapping_service.py`, `backend/app/providers/base.py`, `backend/app/providers/registry.py`, `backend/app/providers/vision/__init__.py`, `backend/app/providers/vision/gemini_vision.py`, `backend/app/providers/vision/openai_vision.py`, `backend/tests/unit/test_visual_gender_service.py`, `PROJECT_KNOWLEDGE_BASE.md`, `CHANGELOG_AI.md`.
+
+- **Comprehensive Codebase Audit & Single Source of Truth Knowledge Base Sync (2026-09-18)**:
+  - **Summary**: Conducted complete structural and architectural audit of AutoTransAI, introspecting all 29 database tables, 100+ API endpoints, services, frontend components, and launcher scripts. Restructured and updated `PROJECT_KNOWLEDGE_BASE.md` into 25 standardized sections adhering to the living documentation mandate.
+  - **Database Introspection**:
+    - Audited all 29 tables: `ai_function_configs`, `ai_models`, `assets`, `character_voice_profiles`, `errors`, `jobs`, `project_glossaries`, `projects`, `providers`, `qc_reports`, `segments`, `social_accounts`, `speaker_voice_mappings`, `system_settings`, `tiktok_accounts`, `usage_snapshots`, `video_assets`, `video_edit_configs`, `video_merge_assets`, `video_merge_jobs`, `video_thumbnails`, `video_translation_jobs`, `video_translation_segments`, `voice_pool_entries`, `workflow_executions`, `workflow_stage_executions`, `workflow_step_executions`, `youtube_channels`, `youtube_publications`.
+    - Documented exact foreign keys, unique constraints, and schema sync mechanics.
+  - **Backend & API Architecture**:
+    - Catalogued all API routes across `/api/video-translator`, `/api/video-merger`, `/api/thumbnails`, `/api/settings`, `/api/projects`, `/api/providers`, `/api/storage`, `/api/system`, `/api/youtube`, and `/api/tiktok`.
+    - Documented services, pipeline error handling, and model resolver priority logic.
+  - **Frontend & Workflows**:
+    - Documented all 5 pages (`VideoTranslator`, `VideoMerger`, `Dashboard`, `ProjectDetail`, `Settings`) and studio component hierarchy.
+    - Detailed the 6-stage unified workflow engine and standalone video merger workflows.
+  - **Affected Files**: `PROJECT_KNOWLEDGE_BASE.md`, `CHANGELOG_AI.md`.
+
+- **Fix Auto-Confirm Voice & Auto-Resolve Same-Voice Timeline Overlaps (2026-09-18)**:
+  - **Summary**: Fixed issue where enabling "Tự xác nhận nhân vật & giọng đọc hợp lệ" still prompted for confirmation, and fixed pipeline halt in Stage 4 (DUB) caused by "Phát hiện cùng giọng đọc overlap trước Audio Sync".
+  - **Auto-Confirm Voice Bypass (`video_translator.py`)**:
+    - Previously, low LLM confidence (<85%) or multiple speakers sharing the same default voice forced `character_voice_needs_review = True`, which bypassed the user's `auto_confirm_voice` setting.
+    - Updated logic so that when `auto_confirm_voice` is enabled and all segments have valid voices assigned, the system bypasses manual review and automatically launches Phase 2 (TTS & Dubbing).
+  - **Same-Voice Overlap Auto-Resolution (`timeline_scheduler.py`, `video_translator.py`)**:
+    - Fixed point/zero-duration collision in `_overlap` calculation.
+    - Added automatic serialization and tempo compression in `timeline_scheduler.py` when multiple segments share the same voice.
+    - Added an auto-resolution step before the Pre-Sync validation gate in `video_translator.py` that serializes or clamps adjacent same-voice segments, preventing false-positive halting with `AUDIO_SCHEDULE_REVIEW`.
+    - Ensured that once a user confirms or enables auto-confirm, the pipeline does not re-halt on minor timeline overlaps.
+  - **Affected Files**: `backend/app/api/routes/video_translator.py`, `backend/app/services/video_translator/timeline_scheduler.py`, `backend/app/services/video_translator/visual_gender_service.py`, `CHANGELOG_AI.md`.
+
+- **Character & Visual Gender Detection in Settings & Fix API Key/Model Resolution (2026-09-18)**:
+  - **Summary**: Added AI Function Configuration & Model Routing for Visual Gender Detection to Settings UI, resolved KeyManager `KeyEntry` object unpacking error, fixed relative debug path resolution crash, and ensured automatic voice assignment on gender toggle.
+  - **Settings UI & Database (`settings_service.py`, `model_resolver.py`, `Settings.jsx`)**:
+    - Registered `visual_gender` (`Character & Visual Gender Detection`) as a configurable AI Function in Settings, allowing users to route visual gender tasks to custom providers and models (e.g., `gemini-3.5-flash-lite`, `gpt-4o`).
+    - Added `VISUAL_GENDER` capability mapping in `model_resolver.py` and seeded existing database records in MySQL.
+  - **Visual Gender Service Fixes (`visual_gender_service.py`)**:
+    - Fixed bug where `key_mgr.get_active_key(provider)` returned a `KeyEntry` object instead of an API key string, causing Google Gemini API to return `400 Invalid API Key`.
+    - Fixed bug where relative path `../data/visual_gender_debug.txt` raised `FileNotFoundError` when executed from the application root directory.
+    - Updated default fallback model to `gemini-3.5-flash-lite`.
+    - Corrected indentation in `detect_gender_from_image` to avoid dropping successful responses.
+  - **Frontend UX (`VideoTranslator.jsx`)**:
+    - Updated `handleToggleCharacterGender` and `handleSegmentCharacterChange` so changing or toggling gender immediately applies the user's selected default male or female voice instead of leaving the voice selector empty.
+  - **Affected Files**: `backend/app/services/video_translator/visual_gender_service.py`, `backend/app/services/model_resolver.py`, `backend/app/services/settings_service.py`, `frontend/src/pages/VideoTranslator.jsx`, `CHANGELOG_AI.md`.
+
 - **Implement STT Speaker Diarization & Multimodal Visual Gender Detection (2026-09-18)**:
   - **Summary**: Updated STT prompt to require Speaker Diarization to fix fragmented character mapping, and added a visual AI pipeline to auto-detect speaker genders via video keyframes.
   - **Backend STT Enhancements (`translator_service.py`, `stt_parser.py`)**:

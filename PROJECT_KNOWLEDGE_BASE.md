@@ -1,168 +1,695 @@
-# AutoTransAI - Project Knowledge Base
+# AutoTransAI (WorkflowVdAi) — Project Knowledge Base
 
-## System Architecture
+> **Single Source of Truth (SSOT)**: This document represents the authoritative, empirically verified ground truth of the AutoTransAI codebase as of September 2026. All agents and developers must consult this document before modifying the project and update it whenever architectural, database, API, or workflow changes occur.
 
-AutoTransAI (WorkflowVdAi) is a local-first AI Video Translation & Dubbing Production system built with a FastAPI backend and a React (Vite) frontend.
+---
 
-### Unified 6-Stage Workflow Pipeline Engine
-The central engine (`app.workflow.workflow_engine.WorkflowEngine`) orchestrates six sequential stages:
-1. **INGEST**: Import video, validate file/URL, probe media specs via FFprobe, store asset, extract WAV audio. Optional `copyright_check` (Studio checkbox `copyright_check_enabled`, default on) runs after trim and before STT: platform metadata (YouTube licensedContent, Bilibili `copyright`/tname, film/TV title+duration heuristics) plus Chromaprint/AcoustID if `fpcalc` and `ACOUSTID_API_KEY` exist. Red pauses the Auto job as `copyright_hold` until `POST /jobs/{id}/copyright-continue`; yellow warns and continues. No LLM. SSRF (`security_url`) blocks private/loopback/link-local/metadata; NAT64 `64:ff9b::/96`, IPv4-mapped, and 6to4 are checked via the embedded IPv4 so DNS64 of public CDNs (Bilibili) is not treated as an internal address. Optional `trim_filler` (Studio checkbox `trim_filler_enabled`, default on) scans silence + freeze on the full timeline, confirms head/tail with Gemini when available, then `ffmpeg` stream-copy trims intro/outro into `content_trimmed.mp4` before STT. Original file is kept. Safety: only head/tail, keep at least 40% and 60s, require a ~20s dead zone. URL downloads start via `POST /api/video-translator/transfers` (poll `GET /transfers/{id}` for percent/bytes/speed) then create the translation job. File uploads report browser `onUploadProgress`. Page URLs use `PageURLAdapter`. Bilibili downloads the official `playurl` MP4 (`fnval=1`) with HTTP Range resume; yt-dlp is fallback (Popen, `-c --retries 30 -N 1 --newline`). `VIDEO_DOWNLOAD_TIMEOUT=0` means no wall-clock abort while bytes are still flowing. Reject cached files smaller than 100KB. `asyncio.create_subprocess_exec` is avoided because it raises NotImplementedError on Windows uvicorn. Supported hosts include YouTube, Vimeo, TikTok, Facebook, Instagram, Google Drive, Dropbox, and Bilibili. Bilibili check-url reads `https://api.bilibili.com/x/player/pagelist?bvid=` (`?t=` timestamp, `?p=` part). Download uses browser UA/Referer and `bv*+ba` DASH merge.
-2. **ANALYZE**: Speech-to-Text (STT via Gemini / Whisper fallback), language detection, speaker diarization, timeline validation & cleanup, transcript QC.
-3. **TRANSLATE**: Detect and normalize terminology, atomically write non-conflicting mappings into the project Glossary, load its canonical 1:1 mappings, translate with those rules in every retry path. Language-aware glossary enforcement: `find_glossary_violations` accepts `source_language` and `target_language`, automatically skips invalid self-mapped CJK entries (e.g. `安妮→安妮` when target is Vietnamese/English) via centralized `is_self_mapped_cjk()` and `is_valid_glossary_mapping()` utilities while preserving legitimate same-term mappings (`AI→AI`, `Netflix→Netflix`). Terminology extractors (`heuristic_extract_terms`, `normalize_extracted_terms`, `llm_extract_terms`) strictly prevent untranslated CJK mappings when target language is non-Chinese. The translation prompt instructs that proper names must be translated/transliterated into target language. Valid glossary violations trigger a targeted 1-step LLM retry with violation feedback; if violations persist after retry, `RuntimeError("GLOSSARY_ENFORCEMENT_FAILED")` is raised. Invalid glossary mappings are skipped with warnings and do not trigger retry loops or crashes. Only valid glossary violations block DUB stage.
-4. **DUB**: Speaker-voice mapping, TTS synthesis (Edge-TTS, Google Cloud TTS, ElevenLabs), duration analysis, atempo time stretching, sample-accurate 44.1kHz stereo PCM timeline assembly, audio normalization, dubbing QC.
-5. **PRODUCE**: Subtitle generation (ASS/SRT/VTT), reframing, watermark/logo embedding, final FFmpeg video rendering & multiplexing, technical QC, then AI thumbnail generation when `thumbnail_enabled` is on.
-6. **PUBLISH**: YouTube SEO metadata generation (Gemini API), thumbnail selection, user review gate. Supports true Google OAuth 2.0 connection, encrypted token storage (via `cryptography.fernet`), and async background resumable uploads via `YouTubePublishingService` tracking progress dynamically directly into `youtube_publications` database table (supporting both `job_id` and `project_id` relationship tracking). TikTok Login Kit OAuth (desktop PKCE, hex SHA256 `code_challenge`) is at `GET /api/tiktok/auth-url`, callback `GET /api/tiktok/oauth-callback`, accounts `GET/DELETE /api/tiktok/accounts`. Tokens are encrypted into `tiktok_accounts`. Settings Social buttons **never** navigate the pywebview / Edge `--app=` window; `POST /api/system/open-browser` allowlists Google/TikTok authorize URLs and launches a new Google Chrome tab (`chrome --new-tab`). Callback returns a close-this-tab HTML page; the app window polls until the account appears. Env: `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REDIRECT_URI=http://127.0.0.1:8000/api/tiktok/oauth-callback`, `TIKTOK_SCOPES=user.info.basic,video.upload,video.publish`.
+## 1. Project Overview
 
-### Database & File Storage Architecture (100% Local & Self-Contained)
-- **Database Layer (Laragon MySQL)**:
-  - Primary connection: `mysql+aiomysql://root:210606@127.0.0.1:3306/autotransai` (configured via `DATABASE_URL` in `.env`).
-  - Automatic dialect handling with `pool_pre_ping=True`, `pool_recycle=3600`, and MySQL backtick DDL migrations.
-  - Automatic graceful fallback to local SQLite (`sqlite+aiosqlite:///data/workflow.db`) if MySQL service is stopped.
-  - **Zero Supabase Dependency**: Completely eliminated `supabase-js`, `supabase-py`, PostgreSQL Supabase connection URLs, and cloud database dependencies.
-- **File Storage System (Local Disk Storage)**:
-  - Root directory: `storage/` (`STORAGE_ROOT`).
-  - Standardized project subdirectories under `storage/projects/{project_id}/`:
-    - `videos/source/` & `videos/processed/`
-    - `audio/original/`, `audio/extracted/`, & `audio/dubbed/`
-    - `subtitles/`
-    - `thumbnails/`
-    - `outputs/`
-    - `temporary/`
-  - Local streaming API: `GET /api/storage/files/{file_path:path}` serves media files via FastAPI `FileResponse`.
+**AutoTransAI** (internal package identifier: `WorkflowVdAi`) is a production-grade, local-first AI Video Translation, Dubbing, Editing, and Social Publishing platform. It provides an automated end-to-end pipeline that transforms foreign-language videos (YouTube, Bilibili, TikTok, direct video files, or raw video URLs) into fully localized, studio-quality videos with synchronized natural AI dubbing, burned-in subtitles, watermarks, AI-generated thumbnails, and automated multi-platform publishing (YouTube and TikTok).
 
-### Database Persistence Model
-- `Project` (`projects`): Top-level project entity supporting `title`, `description`, `workflow_mode`, `workflow_status`, `settings_json` for reusable configuration, and timestamps.
-- `ProjectGlossary` (`project_glossaries`): The only project terminology store. Display values are preserved while NFKC/invisible/whitespace/case-normalized SHA-256 keys enforce `UNIQUE(project_id, source_key)` and `UNIQUE(project_id, translation_key)`. Manual edits and AI detection use the same service; identical retries are idempotent and either-direction collisions return conflict without overwrite. Every video job sharing `project_id` loads these canonical mappings before translation.
-- `WorkflowExecution` (`workflow_executions`): Top-level record tracking `project_id`, `status` (`not_started`, `running`, `paused`, `needs_review`, `failed`, `completed`, `cancelled`), `current_stage`, `current_step`, `context_data`, `error_message`, and timestamps.
-- `VideoTranslationJob` (`video_translation_jobs`): Per-video execution job tracking `project_id`, `asset_id`, `status`, `stage`, `settings_snapshot_json` (isolated configuration snapshot taken at job creation), `studio_state_json` (persisted UI step, active tab, selected segment ID), `last_checkpoint_stage` (`CREATED`, `EXTRACTING_AUDIO_DONE`, `STT_DONE`, `TRANSLATION_DONE`, `SEGMENT_EDITING_DONE`, `TTS_DONE`, `AUDIO_SYNC_DONE`, `RENDER_DONE`), `last_checkpoint_at`, watermark options, and timestamps.
-- `WorkflowStageExecution` (`workflow_stage_executions`): Tracks individual stage status (`pending`, `running`, `passed`, `failed`, `needs_review`, `skipped`), QC reports, and retry counts.
-- `WorkflowStepExecution` (`workflow_step_executions`): Fine-grained step execution tracking with status (`pending`, `running`, `success`, `failed`, `retrying`, `skipped`), input/output data payloads, and step retry counts.
-- `VideoMergeJob` (`video_merge_jobs`): Standalone video merge job tracking `id`, `title`, `status` (`pending`, `preparing`, `processing`, `completed`, `failed`, `cancelled`), `progress` (0-100%), `input_files_json` (ordered array of source video items), `output_video_path`, `output_relative_url`, `total_duration`, `processed_duration`, `error_message`, and timestamps.
-- `VideoMergeAsset` (`video_merge_assets`): Storage asset model for video merger uploads tracking `id`, `original_filename`, `file_path`, `file_size`, `duration`, `width`, `height`, `fps`, `has_audio`, `thumbnail_url`, and timestamps.
+### Key Product Capabilities
+1. **Multi-Source Video Ingestion**: Secure URL downloads (YouTube, Bilibili with DASH/Range resume, TikTok, Google Drive, Vimeo, direct MP4/MKV) and direct browser file uploads with SSRF validation, automatic dead-zone filler trimming, and automated copyright heuristics.
+2. **Speech-to-Text & Diarization**: Gemini API STT with resilient multi-stage fallback parsing, language detection, and speaker diarization to separate multi-character dialogue.
+3. **Glossary-Enforced Translation**: 1:1 bi-directional terminology glossary with SHA-256 canonical hashing, self-mapped CJK sanitization, and automated targeted LLM retry on glossary violations.
+4. **Multimodal Visual Gender Detection**: 4-frame representative sampling (0%, 25%, 75%, 100% of speech timeline) combined into an optimized 1024x576 2x2 contact sheet via FFmpeg, queried via VisionProvider abstraction in a single API call immediately after STT and before Character Mapping and Translation.
+5. **Dynamic Character Voice Dubbing**: Character-centric voice allocation across Edge-TTS, Google Cloud TTS, and ElevenLabs with bounded timeline scheduling, atempo time-stretching, same-voice overlap serialization, and ducking.
+6. **Post-Production & Branding**: Subtitle generation (ASS/SRT/VTT), watermark logo/text overlay, background music ducking, and FFmpeg video multiplexing.
+7. **AI Thumbnail Generation**: Keyless visual asset creation via Pollinations AI (with Fal.ai / OpenAI DALL-E candidate options) analyzed from video transcription themes.
+8. **Social Publishing**: Resumable Google YouTube API v3 OAuth 2.0 uploads and TikTok Content Posting API OAuth 2.0 with desktop PKCE.
+9. **Standalone Video Merger**: Decoupled, dedicated FFmpeg video concatenation suite supporting stream-copy and complex-filter aspect ratio/resolution normalization.
 
-### Standalone Video Merger Architecture
-- **Complete Decoupling**: Completely standalone workflow, page (`VideoMerger.jsx`), and routing (`?page=merger` / `/video-merger`) accessed directly via top-level `Navbar.jsx` menu item `Ghép Video`. Zero dependency on Video Translator workflow state.
-- **Resilient FFmpeg Concat & Normalization Engine (`VideoMergerService`)**:
-  - Preflight Inspection: Probe each input file via `probe_media_info_async` for file existence, readability, resolution, duration, FPS, codecs, and audio presence.
-  - Fast Concat (`-c copy`): Automatically used if all video inputs share identical resolution, frame rate, aspect ratio, codecs, and audio presence.
-  - Complex Filter Normalization (`-filter_complex`): If video parameters differ or any video is silent (missing audio), rescales while maintaining aspect ratio with black letterboxing, normalizes FPS to 30, generates synchronized silent audio tracks via `anullsrc=r=44100:cl=stereo:d={duration}`, and concatenates into a unified H.264/AAC output MP4.
-  - Real-time Progress: Tracks FFmpeg stdout `out_time_us` via `run_ffmpeg_with_progress_async` streaming progress updates to DB for real-time frontend status polling.
-- **Video Merger APIs (`/api/video-merger/*`)**:
-  - `POST /api/video-merger/upload`: Upload video file for merging with FFprobe probing and thumbnail frame extraction.
-  - `GET /api/video-merger/assets`: List existing system video assets for selection.
-  - `POST /api/video-merger/jobs`: Create merge job with ordered video sequence.
-  - `POST /api/video-merger/jobs/{job_id}/start`: Start background merge task with double-click submission guard.
-  - `GET /api/video-merger/jobs/{job_id}`: Real-time job status polling endpoint.
-  - `POST /api/video-merger/jobs/{job_id}/retry`: Retry failed merge job.
-- Pre-flight Endpoint: `POST /api/video-translator/projects/{project_id}/workflow/preflight` (Evaluates CRITICAL vs OPTIONAL check prerequisites).
-- Status Endpoint: `GET /api/video-translator/projects/{project_id}/workflow-status`
-- Start Endpoint: `POST /api/video-translator/projects/{project_id}/workflow/start` (accepts `StartWorkflowRequest` configuration)
-- Pause Endpoint: `POST /api/video-translator/projects/{project_id}/workflow/pause`
-- Resume Endpoint: `POST /api/video-translator/projects/{project_id}/workflow/resume`
-- Cancel Endpoint: `POST /api/video-translator/projects/{project_id}/workflow/cancel`
-- Retry Stage Endpoint: `POST /api/video-translator/projects/{project_id}/workflow/stage/{stage_name}/retry`
-- Project Settings Endpoints: `GET /api/projects/{project_id}/settings`, `POST /api/projects/{project_id}/settings`, `PUT /api/projects/{project_id}/settings` (enforces single source of truth, `DEFAULT_PROJECT_SETTINGS` fallback, strict `_parse_bool` boolean string normalization for `watermark_enabled` / `thumbnail_enabled` / `auto_confirm_translation` / `youtube_enabled` / `youtube_ai_seo_enabled`, YouTube Channel Name, Title Template with zero-padded `{episode}` order calculation, Description default, Tags merge engine `merge_youtube_tags` case-insensitive deduplication, numeric boundary validation, and emits structured debug logs `[PROJECT SETTINGS LOAD]` and `[PROJECT SETTINGS SAVE]`).
-- Automated Translation Text Confirmation (`auto_confirm_translation`): Enabled by default (`True`). Strictly one-shot via `auto_confirm_executed` snapshot flag to prevent duplicate confirmation loops or multiple concurrent render tasks across polling/heartbeats. When Phase 1 (Speech-to-Text & Translation) finishes, backend automatically confirms translated text segments, persists `confirmed` status in DB, and releases job lock before launching Phase 2 (`execute_job_render_pipeline`: TTS dubbing synthesis, time-stretch audio sync, and FFmpeg video rendering). Standalone idempotent helper `auto_confirm_and_start_render_if_needed(job_id)` checks `auto_confirm_executed` and `COMPLETED` terminal guards, guaranteeing seamless transition to `DUB` (`GENERATING_TTS`) without redundant execution.
-- Single Source of Truth 6-Stage Workflow Synchronization: `GET /api/video-translator/projects/{project_id}/workflow-status` dynamically resolves lifecycle stages (`INGEST` → `ANALYZE` → `TRANSLATE` → `DUB` → `PRODUCE` → `PUBLISH`) from active `VideoTranslationJob` status (`SEGMENT_EDITING`, `GENERATING_TTS`, `AUDIO_SCHEDULE_REVIEW`, `SYNCING_AUDIO`, `RENDERING`, `COMPLETED`), ensuring stage cards in `WorkflowTimeline.jsx` never freeze at `INGEST` once ingestion sub-steps pass. `AUDIO_SCHEDULE_REVIEW`, `TTS_DONE`, `SYNCING_AUDIO`, and `AUDIO_SYNC_DONE` are correctly mapped to Stage 4 (`DUB`).
-- Smart Retry & Phase 2 Resume: `smart_retry_job_api` and `retry_stage_api` inspect `last_checkpoint_stage` and existing segments. If segments are already translated (`TRANSLATION_DONE`, `DUB`, `AUDIO_SCHEDULE_REVIEW`, `SYNCING_AUDIO`), retries resume directly into Phase 2 without deleting segments or re-running Phase 1 STT/translation. Terminal status guards prevent re-execution on already `COMPLETED` jobs.
-- Verbatim Echo Safeguards & Targeted Recovery: `is_verbatim_echo()` performs linguistic analysis to detect untranslated source echoes (e.g. CJK outputs when translating Chinese to Vietnamese). When echoes occur (e.g. 22/42 segments echo source text), the pipeline logs `[Translation Audit]`, retries strictly the 22 invalid segments while keeping the 20 valid translations intact, merges the corrected segments, logs `[Translation Retry]`, and completes the job (`[TRANSLATION COMPLETED]`). If echoes persist after max retries, the provider fails cleanly (`Translation validation failed on {provider}: {count}/{total} segments were verbatim echoes.`) and triggers provider failover without resetting job progress or segment indices.
+---
 
+## 2. Architecture
 
-- Watermark Asset Storage & Path Resolution: `POST /api/video-translator/upload-watermark-logo` stores files under `storage/projects/{project_id}/assets/watermarks/`, creates `Asset` DB records (`asset_type="watermark_logo"`), and links `watermark_image_asset_id` directly in project `settings_json`. `WatermarkService.resolve_watermark_image_path` safely resolves relative paths against `STORAGE_ROOT` and `DATA_DIR`.
-- Workflow Context & Stage Execution Order: `WorkflowContext` serializes and preserves `watermark_enabled`, `watermark_type`, `watermark_image_path`, etc., across all stages. In `ProduceStage`, `final_render` (dubbed video multiplexing) executes before `add_watermark_logo` so the watermark overlay pass is burned directly onto the final dubbed video.
-- Project Detail & Management API: `GET /api/projects/{project_id}` returns project metadata, normalized settings, list of associated videos (`videos`), segments array, and glossary stats (`glossary_count`, `terminology_count`). `PATCH /api/projects/{project_id}` and `PUT /api/projects/{project_id}` update `Project.title`, `Project.description`, and synchronize `VideoAsset.title` in SQLite DB.
-- Projects List Endpoint: `GET /api/projects` (Supports optional server-side pagination params: `page: int`, `page_size: int` defaulting to 8 items per page, returning `total`, `page`, `page_size`, `total_pages`).
+AutoTransAI uses a **Local-First Client-Server Architecture** designed for standalone desktop operation with zero external cloud database dependencies.
 
-### AI Model Routing & Single Source of Truth Architecture
-- **Configuration Priority Hierarchy**:
-  `GLOBAL DB ROUTING (ai_function_configs / ai_models)` -> `AIModelResolver` -> `PipelineError` (Structured `AI_MODEL_NOT_FOUND` exception if model is not configured in DB).
-- **Single Source of Truth Enforcement**:
-  - Model selection is managed 100% globally via **AI Function Configuration & Routing** (`Settings Studio & AI Management` -> `AI Function Config` tab).
-  - Individual project settings cards exclusively manage per-project asset preferences (Target Language, Voice ID, Original Audio Mode, Watermarks, Thumbnails). Per-project AI model overrides were completely removed to prevent configuration drift and guarantee strict adherence to the global AI Function Config database routing.
-  - `AIModelResolver` (`app.services.model_resolver`) is the sole authoritative single-source-of-truth for resolving AI Models (STT, LLM, TTS, Image, Video) strictly from Database tables (`ai_function_configs` -> `ai_models`).
-  - Automatically acquires an async database session if `db` parameter is omitted, querying active DB configuration directly.
-  - Zero hardcoded fallback model strings (e.g. `gemini-2.5-flash`) or candidate loops (`GEMINI_MODEL_CANDIDATES` removed) exist in resolution routines.
-  - `strip_gemini_model_prefix(model_name)` only strips `models/` prefix without modifying or inventing model identifiers.
-  - Providers (STT, LLM) accept explicit `model` parameters resolved by `AIModelResolver` and execute API calls against the user's exact database-configured model.
-- **Automatic Translation Model Resolution & Double Safety Nets**:
-  - `translate_transcript_segments` accepts an optional `db` parameter and automatically invokes `AIModelResolver.resolve_model(db, capability="TRANSLATION")` if `translation_model_id` is omitted.
-  - `GeminiLLMProvider.generate_text` features a secondary safety net invoking `AIModelResolver` if `model` is `None` at runtime, preventing `AI_CONFIGURATION_ERROR` pipeline crashes.
-- **AI Image Generation & Pollinations AI Integration**:
-  - `PollinationsImageProvider` (`app.providers.image.pollinations_provider`) is registered as a free, keyless AI Image Generation provider (`IMAGE_GENERATION` capability) in the global provider registry.
-  - `SettingsService.get_eligible_providers_for_function` lists `pollinations` alongside `fal` and `openai` as compatible candidates for `image_generation`.
-  - Default image generation routing (`DEFAULT_AI_FUNCTIONS`) sets `pollinations` (`pollinations-default`) as the primary zero-config image provider for thumbnails and visual assets.
-- **Runtime Request Trace Logging**:
-  - All AI Model resolutions log diagnostic details: capability, selected provider, selected model ID, model name, resolution source, and fallback status.
+```text
+┌────────────────────────────────────────────────────────────────────────┐
+│                        Native Desktop Wrapper                          │
+│        (AutoTransAi.lnk -> AutoTransAi.vbs -> app_launcher.py)         │
+│                 pywebview Window (AppUserModelID)                      │
+└──────────────────┬──────────────────────────────────┬──────────────────┘
+                   │                                  │
+                   ▼ (HTTP / SSE :5173)               ▼ (REST / SSE :8000)
+┌───────────────────────────────────────┐  ┌─────────────────────────────┐
+│          React 18 Frontend            │  │      FastAPI Backend        │
+│          (Vite Dev Server)            │  │      (Python 3.12)          │
+│  - Studio (VideoTranslator.jsx)       │  │  - Lifespan & Providers Reg │
+│  - Ghép Video (VideoMerger.jsx)       │  │  - 6-Stage Workflow Engine  │
+│  - Dự án (Dashboard.jsx)              │  │  - AIModelResolver (SSOT)   │
+│  - Chi tiết (ProjectDetail.jsx)       │  │  - KeyManager (api_keys)    │
+│  - Cài đặt (Settings.jsx)             │  │  - FFmpeg / FFprobe Media   │
+└───────────────────────────────────────┘  └──────────────┬──────────────┘
+                                                          │
+                   ┌──────────────────────────────────────┴──────────────┐
+                   ▼                                                     ▼
+┌───────────────────────────────────────┐  ┌─────────────────────────────┐
+│            Database Layer             │  │     Local Disk Storage      │
+│  Primary: Laragon MySQL (3306)        │  │  Root: ./storage/projects/  │
+│    (mysql+aiomysql://root:...@3306)   │  │  - videos/ (source/dubbed)  │
+│  Fallback: Local SQLite               │  │  - audio/ (extracted/tts)   │
+│    (sqlite+aiosqlite:///workflow.db)  │  │  - subtitles/ & thumbnails/ │
+│  0% Supabase / Cloud DB dependency    │  │  Static Media: /media/      │
+└───────────────────────────────────────┘  └─────────────────────────────┘
+```
 
-### Gemini STT Robust Parsing & Resilient Pipeline Architecture
+### Architectural Pillars
+- **Single Source of Truth AI Model Routing (`AIModelResolver`)**: Pipeline stages never hardcode model identifiers. Models are resolved dynamically from database tables (`ai_function_configs` -> `ai_models`).
+- **Two-Phase Translation Pipeline**:
+  - **Phase 1 (STT & Translation)**: Ingest, Audio Extraction, STT, Diarization, Terminology & Glossary, LLM Translation, Verbatim Echo Detection & Targeted Recovery.
+  - **Phase 2 (TTS & Production)**: Voice assignment & Character Review, Post-TTS Scheduling, Audio Normalization, FFmpeg Video Muxing, Subtitle/Watermark burning, AI Thumbnail.
+- **Failover & Resiliency**: Automatic database failover from MySQL to SQLite; API key rotation and cooldown management via `KeyManager`; dual confirmation gates (`auto_confirm_translation`, `auto_confirm_voice`).
+- **Clean Subprocess Handling**: Windows ProactorEventLoopPolicy initialized on startup; explicit process tree termination on window close.
 
-### Character Voice Profiles & Post-TTS Scheduling
-- Production integration remains in `app/api/routes/video_translator.py`; no parallel pipeline was introduced.
-- STT prompts strictly require `Speaker Diarization` (e.g., `Speaker 1`, `Speaker 2`) to eliminate extreme fragmentation (where every dialogue previously resulted in `UNRESOLVED_####`). Missing diarization still safely falls back to `UNRESOLVED_####` to avoid unintended merging.
-- **Multimodal Visual Gender Detection**: `map_and_persist` integrates `visual_gender_service.py` to automatically extract mid-segment FFmpeg keyframes and query Gemini 2.0 Flash Vision for speaker gender (Male/Female). Visual confirmation overrides text-based LLM guesses, guaranteeing the correct default male/female voice is assigned.
-- `SpeakerVoiceMapping` remains backward-compatible and links project speakers to `CharacterVoiceProfile`, the authoritative project-scoped provider/voice assignment reused across episodes. `map_and_persist` in `character_mapping_service.py` prioritizes stable `speaker_id` persistent mappings in `SpeakerVoiceMapping` to reuse `character_id` and protect user-confirmed profile data against LLM naming churn.
-- `VoicePoolEntry` inventories voices independently of Character Mapping. Voice allocation (`assign_voices`) strictly filters candidate voices by target language (`target_language`, e.g., `vi-VN`, `en-US`, `zh-CN`) resolved dynamically from `b_job.settings_snapshot_json` / job configuration without silent fallbacks.
-- Dual Independent Confirmation Gates: Phase 2 (`GENERATING_TTS` / `DUB`) requires two independent gates: `auto_confirm_translation` (text segments) and `auto_confirm_voice` (character profiles & voice assignments). `auto_confirm_translation=True` does NOT bypass unconfirmed voice review. If any required profile has `confirmed_by_user=False` and `auto_confirm_voice=False`, the pipeline halts at `NEEDS_REVIEW` / `CHARACTER_VOICE_REVIEW`.
-- Media Storage & Rendering Performance: Storage download endpoint (`/api/storage/download`) uses Starlette native `FileResponse(path, filename)` RFC 5987 headers for Unicode download safety (supporting Chinese, Vietnamese, spaces, and special characters). File copy in `VideoSourceService` uses `await asyncio.to_thread(shutil.copy2)` to eliminate event-loop blocking. Video multiplexing (`VideoAudioSyncService.render_and_mux_video`) preserves fast stream copy (`-c:v copy`) for standard H.264 streams while automatically fallback transcoding non-H.264 streams (HEVC/VP9/AV1/ProRes) to `libx264` (`yuv420p`) for universal browser playback compatibility.
-- Segment source timestamps are copied to `original_start/original_end` and never replaced by TTS timing. Measured `tts_duration` feeds `timeline_scheduler.py`, which writes `scheduled_start/scheduled_end`, overlap metadata, and a stable schedule action.
-- Unified Workflow Engine Repair: `DubStage` and `ProduceStage` connect directly to provider registry (`get_registry()`) and `VideoAudioSyncService` (`build_dubbed_audio_timeline`, `render_and_mux_video`), eliminating legacy references to non-existent service classes.
-- Small different-voice overlaps may remain; same-voice overlaps are serialized. Bounded scheduling returns `cannot_fit` and `needs_review` if same-voice overlaps cannot fit safely. Confirming via `/character-voice-review/confirm-resume` re-validates the schedule and strictly rejects with HTTP 409 if unresolved conflicts remain. In `execute_job_render_pipeline`, automatic deterministic resolution uses `VoicePoolEntry` for unconfirmed conflicts when alternative voices are available, invalidates TTS cache specifically for changed segments (`[TTS_CACHE] Invalidating segments: [...]`), and regenerates only those clips (`[TTS] Regenerating segments: [...]`). Strict Pre-Sync and Pre-Render validation gates halt the pipeline and revert to `needs_review` if any same-voice overlap persists, while `build_dubbed_audio_timeline` in `sync_service.py` preserves `ValueError: SAME_VOICE_OVERLAP` as the ultimate defensive safety net.
-- Review APIs under `/api/video-translator/jobs/{job_id}/character-voice-review` allow edit, validate, and confirm/resume. Mappings support `segment_id` for per-segment voice adjustments. Duplicate Confirm requests are idempotent and ignore terminal/active states without creating new render jobs. Polling preserves active form edits in UI during `needs_review` and `segment_editing`. `/projects/{project_id}/character-profiles` and `/voice-pool` expose persistent profiles and available voices. Existing `/voice-map` keys and payloads remain supported.
+---
 
-### Character Voice Management & Authoritative Selection Validation
-- **Dual Default Male & Female Voice Controls**: Replaced single default voice select with separate controlled dropdowns for **Mặc định Nam (Default Male Voice)** and **Mặc định Nữ (Default Female Voice)** in the main Studio configuration panel (`VideoTranslator.jsx`). Automatically filters available voices by language and gender, updating when target language or provider changes, and saving `default_male_voice_id` and `default_female_voice_id` in project settings and job snapshot.
-- **Dynamic Character Voice Allocation**: `assign_voices` and `assign_project_voices` in `voice_assignment_service.py` prioritize the user-configured `default_male_voice_id` for male characters and `default_female_voice_id` for female characters, while resolving conflicts dynamically.
-- **Real Controlled Dropdowns**: Replaced raw text inputs for Character, Provider, and Voice with controlled HTML/React `<select>` dropdowns across Studio Configuration and Segment Review editors (`VideoTranslator.jsx`).
-- **Dynamic Provider Registry**: Provider options dynamically query registered audio providers (`edge_tts`, `google_cloud_tts`, `elevenlabs`) with human-readable labels and configuration status (`(Chưa cấu hình API Key)`), eliminating invalid IDs.
-- **Voice Filtering & Label Formatting**: Voices are strictly filtered by target language (`target_language`) and character gender (`gender: male/female`). Genders marked as `unknown` display `[ Chưa xác định giới tính ]` alongside quick assignment toggles (`♂ Nam` / `♀ Nữ`). Voice options display `{Name} — {Gender} — {Language}` while preserving internal stable voice IDs.
-- **Provider Switching Integrity**: Switching TTS Provider immediately clears previous voice assignments and loads provider-specific voices, preventing cross-provider voice pollution.
-- **Authoritative Backend Validation**: `validate_voice_assignment` authoritatively enforces provider registration, voice existence, target language compatibility, and character gender matching. `PUT /jobs/{id}/character-voice-review` rejects invalid assignments with HTTP 400, `POST /jobs/{id}/character-voice-review/validate` flags issues, and `confirm-resume` blocks execution with HTTP 409 if validation fails.
+## 3. Directory Structure
 
-- **Multi-Stage Response Parsing (`app.services.video_translator.stt_parser`)**:
-  - `parse_gemini_stt_response` processes raw Gemini API responses through 6 sequential fallback stages:
-    1. Strict JSON parsing (`json.loads`).
-    2. Markdown code block stripping (` ```json ... ``` `).
-    3. Regex object/array extraction (`{...}` / `[...]`) ignoring outer conversational filler text.
-    4. Malformed JSON sanitization (removing trailing commas, repairing unescaped newlines/control characters in string literals, fixing Python boolean literals).
-    5. Plain-text / timestamped dialogue fallback parser (`[00:00 - 00:05] Text` or plain text block).
-    6. Schema normalization (mapping `items`, `transcript`, `dialogue`, `sentences` -> `segments`; mapping `lang`, `language_code` -> `language`).
-- **Gemini API JSON Enforcement**:
-  - `transcribe_audio_with_gemini` includes `generationConfig: {"response_mime_type": "application/json", "temperature": 0.1}` in API request payloads.
-- **Enhanced Debug & Log Traceability**:
-  - Raw Gemini response snippets (first 1000 characters) are logged to `logger.error` and `log_job_event` when parsing exceptions occur.
+```text
+C:\Hack\AutoTransAI\
+├── AGENTS.md                          # Mandatory agent operational rules & protocol
+├── CHANGELOG_AI.md                    # Machine-maintained engineering activity log
+├── PROJECT_KNOWLEDGE_BASE.md          # Single Source of Truth architecture document
+├── app_launcher.py                    # Windows native desktop window & process orchestrator
+├── app_launcher.ps1                   # PowerShell desktop launch helper
+├── AutoTransAi.bat                    # Batch bootstrap launcher
+├── AutoTransAi.vbs                    # Silent VBS wrapper (no console window)
+├── AutoTransAI Studio.lnk             # Windows desktop shortcut
+├── UpdateAppIcon.bat                  # Icon refresh utility script
+├── .env                               # Active environment variables (git-ignored)
+├── .env.example                       # Environment variable template
+│
+├── shared/                            # Cross-subsystem shared utilities
+│   └── config.py                      # Root directory resolver and .env parser
+│
+├── backend/                           # FastAPI backend server
+│   ├── pyproject.toml                 # Backend project metadata
+│   ├── requirements.txt               # Pinned Python package dependencies
+│   ├── alembic/                       # Alembic database migrations
+│   │   ├── env.py
+│   │   ├── script.py.mako
+│   │   └── versions/                  # Revision scripts (e.g. glossary single-source)
+│   ├── app/
+│   │   ├── config.py                  # Pydantic Settings configuration
+│   │   ├── database.py                # Async engine, sessionmaker, schema auto-migration
+│   │   ├── main.py                    # FastAPI entrypoint, middleware, router mounts
+│   │   ├── api/
+│   │   │   ├── deps.py                # FastAPI dependency injection (AsyncSession)
+│   │   │   ├── routers/               # Specialized sub-routers (youtube.py, tiktok.py)
+│   │   │   └── routes/                # Core HTTP routes (projects, video_translator, ...)
+│   │   ├── core/                      # Encryption, logging, URL security (SSRF), errors
+│   │   ├── media/                     # FFmpeg, FFprobe wrappers & progress parsing
+│   │   ├── models/                    # SQLAlchemy 2.0 ORM models (29 tables)
+│   │   ├── providers/                 # Audio (TTS), LLM, Video, Image AI provider drivers
+│   │   ├── schemas/                   # Pydantic validation schemas & request models
+│   │   ├── services/                  # Business logic services (translator, merger, ...)
+│   │   ├── usage/                     # Local quota tracking and snapshots
+│   │   └── workflow/                  # Unified 6-stage engine, orchestrator, stages
+│   └── tests/                         # Unit and integration test suite
+│
+├── frontend/                          # Vite + React frontend application
+│   ├── index.html                     # HTML root template
+│   ├── package.json                   # Frontend npm packages
+│   ├── vite.config.js                 # Vite dev server and build configuration
+│   └── src/
+│       ├── main.jsx                   # React root mount with ErrorBoundary
+│       ├── App.jsx                    # App shell, URL state synchronization, routing
+│       ├── App.css                    # Complete Dark Studio design system
+│       ├── api.js                     # Unified Axios REST client and SSE wrapper
+│       ├── pages/                     # VideoTranslator, VideoMerger, Dashboard, ...
+│       └── components/                # WorkflowTimeline, ProjectGlossaryManager, ...
+│
+├── data/                              # Persistent local application data
+│   ├── api_keys.json                  # Encrypted/masked provider API key pool
+│   ├── workflow.db                    # Fallback SQLite database
+│   └── launcher_logs/                 # backend.log, frontend.log from desktop launcher
+│
+└── storage/                           # Local file storage root (STORAGE_ROOT)
+    └── projects/{project_id}/         # Project asset tree (videos, audio, subtitles, ...)
+```
 
-### Frontend Visual System
-- Dark studio theme in `frontend/src/App.css`: Plus Jakarta Sans, indigo/cyan accent, glass navbar pills, cards, tabs, forms, modals.
-- Top nav (`Navbar.jsx`): Studio, Ghép Video, Dự án, Cài đặt. Active item is a filled pill.
-- Dashboard lists projects as cards (not a dense table). Settings and Project Detail use a shared pill tab bar.
+---
 
-### Windows Desktop Launcher Reliability
-- The Shortcut path remains `AutoTransAI Studio.lnk` → `AutoTransAi.vbs` → `app_launcher.py`.
-- The launcher starts FastAPI without the development reloader and writes startup output to `data/launcher_logs/backend.log`; Vite output goes to `data/launcher_logs/frontend.log` (spawned with `--host 127.0.0.1 --port 5173` to guarantee IPv4 binding).
-- Backend `/api/system/health` must return HTTP 200 from the launcher-owned live process before Vite starts, and Vite must return HTTP 200 from its launcher-owned process before pywebview opens. Pre-existing listeners are refused, cleanup targets only child process trees created by this launcher, and startup/log/spawn failures show a Windows error dialog instead of opening a frontend that cannot reach its backend.
+## 4. Technology Stack
 
-### Frontend Workflow UI Controls & Smart Retry Flow
-- **Button State Machine**:
-  - `not_started`, `completed`, `cancelled`, `failed`: Displays only `Start` button.
-  - `running`: Displays `Pause` and `Cancel` buttons.
-  - `paused`: Replaces `Pause` with `Resume` button while retaining `Cancel`.
-  - **Optimistic State Transition**: Clicking `Start` immediately triggers optimistic frontend status set (`status: 'running'`), ensuring instant visual action response without lag.
-- **Unified Workflow Layout Hierarchy (2-Column Responsive Studio Layout)**:
-  1. `Studio Header Bar`: Compact project selector dropdown and settings dirty warning banner.
-  2. `Main Studio Grid` (`.translator-studio-grid`):
-     - **Left Primary Column**: Integrated `Unified 6-Stage Workflow Pipeline` (`WorkflowTimeline.jsx`) incorporating stage cards, overall progress, stage progress, heartbeat status, FFmpeg process stats, STT/Translation/TTS status, debug telemetry, and compact inline error alert -> Compact Video Input & Translation/Dubbing Config Panel.
-     - **Right Auxiliary Column**: Advanced Branding & AI Controls Card containing Watermark (Logo/Text toggle, preview, position/scale sliders) and AI Auto Thumbnail (Style, Provider, Custom Instructions) built with progressive disclosure.
-  3. `Below Viewport Area`: Project Glossary Manager accordion (`ProjectGlossaryManager.jsx`, default collapsed to maintain single-viewport fit) -> Segment Editor (when Phase 1 completes) -> Final Dubbed Video Player & Export Studio.
-- **Stage Execution Animations & Passed States**:
-  - **Running Stage**: Highlighted with an animated glowing pulse border (`stagePulseGlow`), animated spinning gear badge (`spinner-icon`), and bright cyan accent.
-  - **Passed/Completed Stage**: Rendered with solid emerald green border (`#10B981`), green checkmark badge (`✓ Passed`), and emerald highlight.
-- **Smart Retry Error Handling & Global React ErrorBoundary**:
-  - Global `ErrorBoundary` class in `main.jsx` catches any uncaught React component render errors, rendering a dark fallback card with error details and a reload button instead of a blank screen.
-  - `handleRetryJob` and `handleRetryStage` in `VideoTranslator.jsx` execute `retryJob` or `retryStage` mutually exclusively to prevent concurrent pipeline double-invocations.
-  - Backend `retry_stage_api` safeguards job lookup with try-except, gracefully restarting associated jobs without throwing 500 errors.
+### Backend
+- **Runtime**: Python 3.12
+- **Web Framework**: FastAPI 0.115+, Starlette, Uvicorn (standard)
+- **Data Validation & Settings**: Pydantic v2, Pydantic-Settings
+- **ORM & Database**: SQLAlchemy 2.0 (Asyncio), Alembic 1.13+, PyMySQL 1.1+, aiomysql 0.2+, aiosqlite 0.20+
+- **HTTP Client**: HTTPX 0.27+
+- **Security & Cryptography**: Cryptography 41.0+ (Fernet symmetric token encryption)
+- **OAuth & Cloud APIs**: Google API Python Client, google-auth-oauthlib, google-auth-httplib2
+- **Audio & Media**: edge-tts 6.1+, FFmpeg (system binary), FFprobe (system binary)
+- **Streaming**: sse-starlette 2.0+
+- **Logging**: Structlog 24.1+, Standard Python logging
 
-### Codebase Audit & Unused Component Cleanup
-- **Stale Import & Build Fix**: Removed broken `AIThumbnailPanel` imports in `VideoTranslator.jsx` and `ProjectDetail.jsx`, fixing production Vite builds (`npm run build` 100% clean).
-- **Unused Directory & Model Cleanup**: Removed obsolete directories `PIPER_MODELS/` (offline TTS experiment), `mdx_models/` (245MB legacy UVR/MDX ONNX models), `scratch/` (temporary test scripts), `docs/` & `PROJECT_KNOWLEDGE_BASE.docx`, and `data/r2_storage/`.
-- **Frontend Asset Optimization**: Removed unused starter assets (`hero.png`, `typescript.svg`, `favicon.svg`, `icons.svg`).
-- **Backend Dependency & Code Hygiene**: Removed `asyncpg` dependency from `requirements.txt`, removed legacy Postgres string replacement in `database.py`, removed duplicate imports in `main.py`, removed unused imports in `projects.py` and `video_translator.py`, and deleted obsolete scripts (`apply_db_schema.py`, `init_mysql_db.py`).
+### Frontend
+- **Framework**: React 18.3+ (JSX)
+- **Build Tool**: Vite 5.4+
+- **HTTP Client**: Axios 1.19+
+- **Styling**: Vanilla CSS (Custom Design System, Plus Jakarta Sans, CSS Grid/Flexbox)
+- **Routing**: URLSearchParams browser-history state synchronization with local storage backup
+
+### Native Desktop Wrapper
+- **GUI Host**: pywebview (MSHTML / Edge Chromium WebView2 engine)
+- **Windows Integration**: `ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID`
+
+---
+
+## 5. Environment & Configuration
+
+Configuration is loaded centrally via `shared.config.load_root_env()` and parsed using Pydantic Settings in `app/config.py`.
+
+| Environment Variable | Type | Default | Description |
+|---|---|---|---|
+| `DATABASE_URL` | str | `mysql+aiomysql://root:210606@127.0.0.1:3306/autotransai` | Primary DB connection string (Laragon MySQL) |
+| `STORAGE_DRIVER` | str | `local` | Storage driver (`local`) |
+| `STORAGE_ROOT` | Path | `./storage` | Base path for project media files |
+| `DEFAULT_LLM_PROVIDER` | str | `gemini` | Default text processing provider |
+| `ENABLE_OPENAI_FALLBACK` | bool | `false` | Enable automatic OpenAI fallback |
+| `OPENAI_API_KEY` | str | `""` | OpenAI API key |
+| `GEMINI_API_KEY` | str | `""` | Google Gemini API key |
+| `GOOGLE_CLOUD_TTS_API_KEY` | str | `""` | Google Cloud Neural TTS API key |
+| `ELEVENLABS_API_KEY` | str | `""` | ElevenLabs API key |
+| `KLING_API_KEY` | str | `""` | Kling AI video generation key |
+| `KLING_API_SECRET` | str | `""` | Kling AI video generation secret |
+| `FAL_API_KEY` | str | `""` | Fal.ai generation key |
+| `ACOUSTID_API_KEY` | str | `""` | AcoustID fingerprinting API key |
+| `YOUTUBE_CLIENT_ID` | str | `""` | Google Cloud Console OAuth 2.0 Client ID |
+| `YOUTUBE_CLIENT_SECRET` | str | `""` | Google Cloud Console OAuth 2.0 Client Secret |
+| `YOUTUBE_REDIRECT_URI` | str | `http://127.0.0.1:8000/api/youtube/oauth-callback` | Google OAuth callback URL |
+| `TIKTOK_CLIENT_KEY` | str | `""` | TikTok Developer Client Key |
+| `TIKTOK_CLIENT_SECRET` | str | `""` | TikTok Developer Client Secret |
+| `TIKTOK_REDIRECT_URI` | str | `http://127.0.0.1:8000/api/tiktok/oauth-callback` | TikTok OAuth callback URL |
+| `TIKTOK_SCOPES` | str | `user.info.basic,video.upload,video.publish` | TikTok OAuth requested permissions |
+| `ENCRYPTION_KEY` | str | `""` | Secret key used for Fernet token encryption |
+| `HOST` | str | `127.0.0.1` | Backend bind address |
+| `PORT` | int | `8000` | Backend bind port |
+| `DEBUG` | bool | `False` | Debug mode flag |
+| `VIDEO_DOWNLOAD_TIMEOUT` | int | `0` | 0 = unlimited wall clock; download handled per byte-flow |
+
+---
+
+## 6. Database
+
+The database layer manages **29 distinct tables** mapped through SQLAlchemy 2.0 Async declarative models.
+
+```mermaid
+erDiagram
+    PROJECTS ||--o{ VIDEO_TRANSLATION_JOBS : "contains"
+    PROJECTS ||--o{ PROJECT_GLOSSARIES : "defines"
+    PROJECTS ||--o{ CHARACTER_VOICE_PROFILES : "configures"
+    PROJECTS ||--o{ SPEAKER_VOICE_MAPPINGS : "maps"
+    PROJECTS ||--o{ WORKFLOW_EXECUTIONS : "tracks"
+    PROJECTS ||--o{ VIDEO_THUMBNAILS : "has"
+    VIDEO_ASSETS ||--o{ VIDEO_TRANSLATION_JOBS : "serves"
+    VIDEO_TRANSLATION_JOBS ||--o{ VIDEO_TRANSLATION_SEGMENTS : "contains"
+    VIDEO_TRANSLATION_JOBS ||--o{ VIDEO_THUMBNAILS : "produces"
+    WORKFLOW_EXECUTIONS ||--o{ WORKFLOW_STAGE_EXECUTIONS : "contains"
+    WORKFLOW_STAGE_EXECUTIONS ||--o{ WORKFLOW_STEP_EXECUTIONS : "contains"
+    YOUTUBE_CHANNELS ||--o{ YOUTUBE_PUBLICATIONS : "publishes_through"
+```
+
+### Table Definitions & Primary Columns
+
+#### 1. Core Workflow & Video Translator
+- **`projects`**: Top-level project entity.
+  - Columns: `id` (PK, UUID), `title`, `description`, `script_raw`, `workflow_mode` (`audio_only`, `audio_video`), `workflow_status`, `audio_provider_id`, `video_provider_id`, `voice_id`, `voice_name`, `sync_strategy`, `settings_json` (JSON), `r2_key`, `media_url`, `thumbnail_r2_key`, `thumbnail_url`, `error_message`, `created_at`, `updated_at`.
+- **`video_assets`**: Ingested and probed video media asset.
+  - Columns: `id` (PK, UUID), `source_type` (`upload`, `url`), `source_url`, `source_domain`, `title`, `original_filename`, `file_path`, `mime_type`, `file_size`, `duration`, `width`, `height`, `audio_available`, `status`, `r2_key`, `url`, `thumbnail_r2_key`, `thumbnail_url`, `error_message`, `created_at`, `updated_at`.
+- **`video_translation_jobs`**: Execution job for translating a specific video asset.
+  - Columns: `id` (PK, UUID), `project_id` (FK -> `projects.id`), `asset_id` (FK -> `video_assets.id`), `source_language`, `detected_language`, `target_language`, `audio_provider_id`, `llm_provider_id`, `voice_id`, `voice_name`, `original_audio_mode` (`mute`, `duck`, `keep`), `auto_confirm_translation`, `auto_confirm_voice`, `status`, `stage`, `stage_progress_pct`, `overall_progress_pct`, `progress_pct`, `current_step`, `pid`, `last_heartbeat`, `ffmpeg_stats_json`, `completed_segments_count`, `total_segments_count`, `output_video_path`, `output_url`, `thumbnail_url`, `error_message`, `watermark_enabled`, `watermark_type`, `watermark_image_path`, `watermark_text`, `watermark_position`, `watermark_scale`, `watermark_opacity`, `watermark_margin`, `watermark_font_size`, `settings_snapshot_json`, `studio_state_json`, `last_checkpoint_stage`, `last_checkpoint_at`, `created_at`, `updated_at`.
+- **`video_translation_segments`**: Transcript timeline segment with source, translation, and audio timestamps.
+  - Columns: `id` (PK, Int Auto), `job_id` (FK -> `video_translation_jobs.id`), `segment_number`, `start_time`, `end_time`, `original_text`, `translated_text`, `tts_audio_path`, `tts_audio_duration`, `synced_audio_path`, `speaker_id`, `character_id`, `voice_provider`, `voice_id`, `original_start`, `original_end`, `scheduled_start`, `scheduled_end`, `tts_duration`, `overlap_with` (JSON), `schedule_action`, `mapping_confidence`, `status`.
+
+#### 2. Terminology, Character Voices & Scheduling
+- **`project_glossaries`**: Single-source canonical terminology dictionary.
+  - Columns: `id` (PK, UUID), `project_id` (FK -> `projects.id`), `source_term`, `translated_term`, `source_key` (SHA256), `translation_key` (SHA256), `term_type`, `confidence`, `source_context`, `approved`, `created_at`, `updated_at`.
+  - Unique Constraints: `UNIQUE(project_id, source_key)`, `UNIQUE(project_id, translation_key)`.
+- **`character_voice_profiles`**: Project-scoped persistent character profile.
+  - Columns: `id` (PK, UUID), `character_id`, `project_id` (FK -> `projects.id`), `name`, `gender` (`male`, `female`, `unknown`), `role`, `voice_provider`, `voice_id`, `mapping_confidence`, `confirmed_by_user`, `created_at`, `updated_at`.
+  - Unique Constraint: `UNIQUE(project_id, character_id)`.
+- **`speaker_voice_mappings`**: Maps raw transcript speaker identifiers (`Speaker 1`) to character profiles.
+  - Columns: `id` (PK, UUID), `project_id` (FK -> `projects.id`), `speaker_id`, `speaker_name`, `voice_provider`, `voice_id`, `voice_settings` (JSON), `character_id`, `confidence`, `needs_review`, `created_at`, `updated_at`.
+- **`voice_pool_entries`**: Provider-neutral inventory of voices eligible for character assignment.
+  - Columns: `id` (PK, UUID), `provider`, `language`, `gender`, `voice_id`, `display_name`, `enabled`, `provider_metadata` (JSON), `created_at`, `updated_at`.
+  - Unique Constraint: `UNIQUE(provider, voice_id)`.
+
+#### 3. Unified Engine Execution Hierarchy
+- **`workflow_executions`**: Top-level workflow run tracking.
+  - Columns: `id` (PK, UUID), `project_id` (FK -> `projects.id`), `workflow_type`, `status`, `current_stage`, `current_step`, `overall_progress_pct`, `context_data` (JSON), `error_message`, `started_at`, `updated_at`, `completed_at`.
+- **`workflow_stage_executions`**: Individual stage execution (`INGEST`, `ANALYZE`, `TRANSLATE`, `DUB`, `PRODUCE`, `PUBLISH`).
+  - Columns: `id` (PK, UUID), `workflow_execution_id` (FK -> `workflow_executions.id`), `stage_name`, `status`, `progress_percentage`, `current_item`, `total_items`, `message`, `error`, `qc_report` (JSON), `retry_count`, `started_at`, `completed_at`, `created_at`.
+- **`workflow_step_executions`**: Granular sub-step tracking within a stage.
+  - Columns: `id` (PK, UUID), `stage_execution_id` (FK -> `workflow_stage_executions.id`), `step_name`, `status`, `input_data` (JSON), `output_data` (JSON), `error`, `retry_count`, `started_at`, `completed_at`, `created_at`.
+
+#### 4. Post-Production, Quality Control & Publishing
+- **`video_edit_configs`**: Editing parameters (aspect ratio, watermark, BGM, burned subtitles).
+- **`qc_reports`**: Technical QC audit (audio LUFS, sync drift, black frames, silence anomalies, safety score).
+- **`video_thumbnails`**: AI thumbnail generation states, prompts, and access paths.
+- **`youtube_channels`**: Connected YouTube channels with encrypted OAuth 2.0 credentials.
+- **`youtube_publications`**: YouTube upload records with resumable progress tracking.
+- **`tiktok_accounts`**: Connected TikTok accounts with encrypted PKCE OAuth credentials.
+- **`social_accounts`**: Generic social media account connections with priority weights.
+
+#### 5. Standalone Video Merger
+- **`video_merge_jobs`**: Video concatenation jobs with real-time FFmpeg progress.
+- **`video_merge_assets`**: Uploaded video assets dedicated to merging with probed stream metadata.
+
+#### 6. System & AI Configuration
+- **`ai_function_configs`**: Maps capability (`stt`, `translation`, `tts`, `video_generation`, `visual_gender`, `image_generation`) to primary provider, model ID, and fallback provider.
+- **`ai_models`**: Global catalog of registered AI models with capability tags and default flags.
+- **`system_settings`**: Global key-value system preferences.
+- **`providers`**: Legacy provider metadata and local quota usage counters.
+- **`usage_snapshots`**: Periodic quota snapshots per provider.
+
+---
+
+## 7. Backend
+
+### API Route Modules (`backend/app/api/`)
+- **`routes/video_translator.py`**: Primary video translation studio API endpoints:
+  - Import, check URL, transfer monitoring (`/transfers`).
+  - Job execution, pause, cancel, smart retry, checkpoint resume.
+  - Glossary CRUD with 1:1 conflict validation.
+  - Character Voice Review (get, update, validate, confirm-resume).
+  - Workflow status polling and SSE streaming (`/workflow-stream`).
+  - Watermark upload and studio UI state persistence.
+- **`routes/video_merger.py`**: Standalone video merger endpoints:
+  - Video upload with thumbnail generation (`/upload`).
+  - Asset listing (`/assets`).
+  - Merge job creation, start, status polling, retry, and deletion (`/jobs`).
+- **`routes/thumbnail.py`**: AI thumbnail studio endpoints:
+  - Project thumbnail library upload and listing.
+  - AI thumbnail prompt generation and image rendering.
+  - Active thumbnail selection and regeneration.
+- **`routes/settings.py`**: System settings and AI configuration endpoints:
+  - Global system settings (`GET / PUT /api/settings`).
+  - AI Function Routing (`GET / PUT /api/settings/functions/{function_id}`).
+  - AI Models Catalog CRUD (`GET / POST / PUT / DELETE /api/settings/models`).
+  - Social accounts management and local storage test.
+- **`routes/projects.py`**: Project management, batch deletion, settings synchronization, and pre-flight estimation.
+- **`routes/providers.py`**: Provider listing, custom provider creation, API key pool CRUD, key validation, and voice listing.
+- **`routes/storage.py`**: Local file streaming (`/api/storage/files/{path}`) and Unicode-safe download (`/api/storage/download`).
+- **`routes/system.py`**: Health check (`/api/system/health`), list interrupted jobs, and allowlisted browser launcher (`/api/system/open-browser`).
+- **`routers/youtube.py`**: Google OAuth 2.0 flow, channel listing, disconnect, and background video publishing.
+- **`routers/tiktok.py`**: TikTok PKCE OAuth flow, account listing, and account disconnection.
+
+### Core Services (`backend/app/services/`)
+- **`model_resolver.py` (`AIModelResolver`)**: The sole authority resolving active AI models for any capability (`STT`, `TRANSLATION`, `TTS`, `IMAGE_GENERATION`, `VISUAL_GENDER`). Resolves strictly from DB with zero hardcoded fallbacks.
+- **`key_manager.py` (`KeyManager`)**: Manages multi-key pools per provider with automatic round-robin, priority weighting, rate-limit cooldowns, failure tracking, and persistence to `data/api_keys.json`.
+- **`glossary_service.py`**: Handles NFKC normalization, invisible character stripping, canonical SHA-256 keying, and bidirectional conflict prevention for project glossaries.
+- **`video_translator/translator_service.py`**: Drives Phase 1 translation (FFprobe audio extraction, STT, diarization, terminology extraction, LLM translation, verbatim echo detection/recovery) and Phase 2 rendering.
+- **`video_translator/timeline_scheduler.py`**: Implements bounded post-TTS scheduling, tempo compression (atempo), ducking for supporting roles, same-voice overlap serialization, and `SAME_VOICE_OVERLAP` conflict flagging.
+- **`video_translator/visual_gender_service.py`**: Executes immediately after STT and before Character Mapping/Translation. Extracts 4 representative frames (0%, 25%, 75%, 100% of speech), builds a 1024x576 2x2 contact sheet via FFmpeg, queries VisionProvider (`GeminiVisionProvider` / `OpenAIVisionProvider`) in 1 request per speaker, robustly parses gender (`FEMALE` before `MALE`), and falls back to dialogue LLM on error.
+- **`video_translator/voice_assignment_service.py`**: Maps character profiles to TTS voices filtered strictly by target language and gender, prioritizing user-defined default male and female voices.
+- **`video_merger/merger_service.py`**: Concatenates video files using fast stream copy (`-c copy`) when streams match, or complex filter re-encoding with letterboxing and silent audio generation when parameters diverge.
+- **`thumbnail_service.py`**: Orchestrates transcription analysis, visual prompt generation, and AI image rendering across Pollinations, Fal.ai, and OpenAI.
+- **`video_editor/youtube_service.py`**: Implements Google YouTube API v3 resumable chunked video uploads with real-time percentage tracking into `youtube_publications`.
+
+---
+
+## 8. Frontend
+
+The frontend is a single-page React 18 application built with Vite and designed around a dark studio production interface (`frontend/src/App.css`).
+
+### Pages (`frontend/src/pages/`)
+1. **`VideoTranslator.jsx` (Studio)**:
+   - Left Column: Video input (URL/Upload), language selection, default male/female voice selection, unified 6-stage workflow timeline card, progress telemetry, heartbeats, and error alerts.
+   - Right Column: Branding (Watermark image/text, positioning, opacity, scale) and AI Auto Thumbnail generation controls.
+   - Lower Viewport: Collapsible Project Glossary Manager, Interactive Segment Translation & Character Review Editor, and final dubbed video player.
+2. **`VideoMerger.jsx` (Ghép Video)**:
+   - Standalone video upload zone with video duration and resolution badges.
+   - Ordered merge queue with drag-and-drop / reordering controls.
+   - Output file configuration, live FFmpeg concatenation progress, and built-in player.
+3. **`Dashboard.jsx` (Dự án)**:
+   - Project cards displaying video thumbnails, translation progress, language pairs, and quick navigation actions.
+4. **`ProjectDetail.jsx` (Chi tiết Dự án)**:
+   - Detailed project overview, associated source videos, project-level settings overrides, and deep links to the Studio.
+5. **`Settings.jsx` (Cài đặt)**:
+   - 5 Configuration Tabs:
+     - **Providers**: Multi-API key manager with priority, cooldown status, and key testing.
+     - **AI Functions**: Global mapping of capabilities (STT, Translation, TTS, Video Gen, Visual Gender, Image Gen) to primary and fallback models.
+     - **AI Models**: Full catalog of registered models with custom model registration modal.
+     - **Social Accounts**: YouTube and TikTok OAuth connect buttons and active account list.
+     - **System**: Storage configuration, processing concurrency, sync strategies, and default languages.
+
+### Shared Components (`frontend/src/components/`)
+- **`WorkflowTimeline.jsx`**: Visual stage progression card with glowing pulse animations for running stages and green badges for passed stages.
+- **`ProjectGlossaryManager.jsx`**: Interactive table for viewing, approving, adding, editing, and deleting 1:1 glossary term mappings.
+- **`YouTubePublisherModal.jsx`**: Metadata modal for editing title, description, tags, privacy status, and triggering background YouTube uploads.
+- **`Navbar.jsx`**: Top navigation pill bar (Studio, Ghép Video, Dự án, Cài đặt).
+- **`LoadingSpinner.jsx`**: Consistent loading indicators and skeleton screens.
+
+---
+
+## 9. API Specifications
+
+All endpoints use standard JSON request/response bodies, with exceptions for media streaming and file uploads.
+
+### Core Endpoint Summary
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/system/health` | System health check (probed by desktop launcher) |
+| `POST` | `/api/system/open-browser` | Safely opens external URL in default browser |
+| `GET` | `/api/projects` | List projects (supports server-side pagination: `page`, `page_size`) |
+| `POST` | `/api/projects` | Create a new project |
+| `GET` | `/api/projects/{id}` | Get project details, associated videos, and glossary counts |
+| `GET` | `/api/projects/{id}/settings` | Get normalized project settings |
+| `PUT` | `/api/projects/{id}/settings` | Save project settings |
+| `POST` | `/api/video-translator/check-url` | Probe remote video URL without downloading |
+| `POST` | `/api/video-translator/transfers` | Start background video download from URL |
+| `GET` | `/api/video-translator/transfers/{id}` | Poll URL download progress and speed |
+| `POST` | `/api/video-translator/import` | Import downloaded or uploaded file as `VideoAsset` |
+| `POST` | `/api/video-translator/jobs` | Create video translation job |
+| `POST` | `/api/video-translator/jobs/{id}/start` | Launch Phase 1 translation pipeline |
+| `GET` | `/api/video-translator/jobs/{id}` | Poll translation job state, progress, and segment counts |
+| `POST` | `/api/video-translator/jobs/{id}/cancel` | Cancel active translation job |
+| `POST` | `/api/video-translator/jobs/{id}/retry` | Smart retry resuming from last valid checkpoint |
+| `GET` | `/api/video-translator/jobs/{id}/character-voice-review` | Get character voice profiles and segment voice assignments |
+| `PUT` | `/api/video-translator/jobs/{id}/character-voice-review` | Update character voice assignments |
+| `POST` | `/api/video-translator/jobs/{id}/character-voice-review/confirm-resume` | Validate schedule and launch Phase 2 rendering |
+| `POST` | `/api/video-translator/jobs/{id}/render` | Trigger Phase 2 render manually |
+| `GET` | `/api/video-translator/projects/{id}/workflow-status` | Get unified 6-stage lifecycle status |
+| `GET` | `/api/video-translator/projects/{id}/workflow-stream` | SSE real-time event stream for workflow updates |
+| `GET` | `/api/video-translator/projects/{id}/glossary` | List project glossary entries |
+| `POST` | `/api/video-translator/projects/{id}/glossary` | Add canonical glossary entry (enforces 1:1 uniqueness) |
+| `DELETE` | `/api/video-translator/projects/{id}/glossary/{term_id}` | Delete glossary entry |
+| `POST` | `/api/video-merger/upload` | Upload video for concatenation |
+| `POST` | `/api/video-merger/jobs` | Create video merge job |
+| `POST` | `/api/video-merger/jobs/{id}/start` | Start background video merge |
+| `GET` | `/api/video-merger/jobs/{id}` | Poll merge progress |
+| `GET` | `/api/settings/functions` | Get global AI function mappings |
+| `PUT` | `/api/settings/functions/{id}` | Update AI function model routing |
+| `GET` | `/api/settings/models` | Get global AI models catalog |
+| `POST` | `/api/settings/models` | Register custom AI model |
+| `GET` | `/api/youtube/auth-url` | Generate Google OAuth 2.0 authorization URL |
+| `GET` | `/api/tiktok/auth-url` | Generate TikTok PKCE authorization URL |
+| `POST` | `/api/youtube/upload` | Start background YouTube upload |
+| `GET` | `/api/storage/files/{path:path}` | Stream local media file |
+| `GET` | `/api/storage/download` | Download local media file with Unicode filename |
+
+---
+
+## 10. Core Workflows
+
+### Workflow 1: Unified 6-Stage Video Translation & Dubbing Pipeline
+
+```text
+[1. INGEST] ──▶ [2. ANALYZE] ──▶ [3. TRANSLATE] ──▶ [Gate 1] ──▶ [Gate 2] ──▶ [4. DUB] ──▶ [5. PRODUCE] ──▶ [6. PUBLISH]
+ - Download       - Gemini STT    - Glossary Sync    (Text Confirm) (Voice Review) - Edge/Google    - Subtitles       - YouTube SEO
+ - SSRF Check     - Diarization   - LLM Translate                                  - Time Stretch    - Watermark       - OAuth Upload
+ - Deadzone Trim  - Timeline QC   - Echo Recovery                                  - Mix & Mux       - AI Thumbnail    - TikTok Post
+```
+
+1. **Stage 1: INGEST**:
+   - Downloads source video via `VideoSourceService` (or processes direct upload). Bilibili uses native `playurl` Range streaming; YouTube/Vimeo use `yt-dlp`.
+   - Validates URLs against SSRF (blocking loopback, private ranges, metadata IPs while allowing public CDN DNS64).
+   - Optional `trim_filler`: Scans timeline for intro/outro silence and static freeze frames, trims non-destructively using FFmpeg stream copy (`content_trimmed.mp4`).
+   - Optional `copyright_check`: Scans metadata and audio fingerprints via AcoustID. Red status pauses the job as `copyright_hold` until user confirms.
+   - Extracts 16kHz mono WAV audio for speech analysis.
+2. **Stage 2: ANALYZE**:
+   - Queries configured STT model (Gemini 1.5/2.0 Flash) with enforced JSON schema.
+   - Parses response through 6-stage resilient parser in `stt_parser.py`.
+   - Identifies distinct speakers (`Speaker 1`, `Speaker 2`) and timestamps.
+3. **Stage 3: TRANSLATE**:
+   - Extracts domain terminology and merges into `project_glossaries` without overwriting existing terms.
+   - Translates dialogue segments with LLM, injecting canonical glossary rules into every prompt.
+   - Enforces language-aware glossary validation, automatically skipping self-mapped CJK entries for non-Chinese targets.
+   - Verbatim Echo Guard: Evaluates translated output against source text; retries only offending segments if source text is echoed untranslated.
+4. **Gating & Transition**:
+   - Gate 1 (`auto_confirm_translation`): If enabled (default: True), automatically approves text translations.
+   - Gate 2 (`auto_confirm_voice`): Multimodal visual gender detection extracts keyframes at speaker timestamps to infer gender. If character voices are unconfirmed and `auto_confirm_voice` is False, the job pauses at `NEEDS_REVIEW` (`CHARACTER_VOICE_REVIEW`).
+5. **Stage 4: DUB**:
+   - Synthesizes speech for each segment via selected TTS provider (Edge-TTS, Google Cloud TTS, ElevenLabs).
+   - Runs `timeline_scheduler.py`: Calculates required atempo time-stretching, serializes same-voice overlaps, ducks supporting voices.
+   - Assembles sample-accurate 44.1kHz stereo audio track and applies EBU R128 normalization.
+6. **Stage 5: PRODUCE**:
+   - Generates subtitles (ASS, SRT, VTT).
+   - Multiplexes new audio with source video using FFmpeg stream copy for H.264, or transcodes non-H.264 streams to `libx264`.
+   - Burns watermark logo/text and subtitles according to project configuration.
+   - Triggers AI thumbnail generation.
+7. **Stage 6: PUBLISH**:
+   - Generates YouTube SEO metadata (Title, Description, Tags) using Gemini LLM.
+   - Uploads dubbed video directly to YouTube or TikTok via encrypted background OAuth tasks.
+
+### Workflow 2: Standalone Video Merger
+1. User uploads two or more video files via `POST /api/video-merger/upload`.
+2. FFprobe inspects video codecs, frame rate, aspect ratio, resolution, and audio tracks.
+3. User specifies video sequence in `VideoMerger.jsx` and clicks Start.
+4. If all clips share identical streams: Executes instant FFmpeg concat demuxer (`-c copy`).
+5. If clips differ in resolution, FPS, or audio: Builds dynamic `-filter_complex` filtergraph, rescales with black letterboxing, generates silent audio tracks (`anullsrc`) for silent clips, normalizes to 30 FPS, and renders unified H.264/AAC MP4.
+6. Real-time progress is parsed from FFmpeg `out_time_us` and polled by frontend.
+
+### Workflow 3: AI Video Thumbnail Generation
+1. Analyzes video transcript, project title, and description to extract visual themes.
+2. Formats a structured text prompt optimized for visual composition.
+3. Submits prompt to configured image provider (`pollinations`, `fal`, or `openai`).
+4. Downloads generated image, stores in `storage/projects/{id}/thumbnails/`, and updates database records.
+
+### Workflow 4: Social Media Publishing
+1. User clicks Connect YouTube or Connect TikTok in Settings.
+2. Backend generates OAuth URL with PKCE / state token and launches user's default browser via `POST /api/system/open-browser`.
+3. Callback route handles token exchange, encrypts refresh/access tokens with Fernet (`ENCRYPTION_KEY`), and saves to database.
+4. Publication job executes resumable chunked upload in background tasks without blocking the main server loop.
+
+---
+
+## 11. AI System
+
+### Provider Registry & Architecture
+All AI providers inherit from unified base classes in `app/providers/base.py` and register at application startup in `app/providers/registry.py`.
+
+```text
+┌────────────────────────────────────────────────────────┐
+│                   AIModelResolver                      │
+│        (Sole authority resolving model & provider)     │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+         ┌─────────────────┼─────────────────┐
+         ▼                 ▼                 ▼
+  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+  │ Audio (TTS)  │  │  LLM / STT   │  │ Image/Video  │
+  ├──────────────┤  ├──────────────┤  ├──────────────┤
+  │ Edge-TTS     │  │ Gemini       │  │ Pollinations │
+  │ Google Cloud │  │ OpenAI       │  │ Fal.ai       │
+  │ ElevenLabs   │  │              │  │ Kling AI     │
+  └──────────────┘  └──────────────┘  └──────────────┘
+```
+
+### Registered Capabilities & Default Models
+1. **`STT` (Speech-to-Text)**: Primary: `gemini-1.5-flash` via Gemini Developer API (Fallback: OpenAI `whisper-1`).
+2. **`TRANSLATION` (LLM)**: Primary: `gemini-1.5-flash` via Gemini Developer API (Options: `gemini-1.5-pro`, `gpt-4o`, `gpt-4o-mini`).
+3. **`TTS` (Text-to-Speech)**: Primary: `edge-tts` (zero-cost, keyless high-quality Microsoft Neural voices, e.g. `vi-VN-HoaiMyNeural`, `vi-VN-NamMinhNeural`). Options: `google-cloud-tts`, `elevenlabs`.
+4. **`VISUAL_GENDER` (Multimodal Vision)**: Primary: `gemini-1.5-flash` / `gemini-2.0-flash` (keyframe inspection).
+5. **`IMAGE_GENERATION`**: Primary: `pollinations` (`pollinations-default`, free, zero-config). Options: `fal-ai/flux`, `dall-e-3`.
+6. **`VIDEO_GENERATION`**: Primary: `kling-v1`. Options: `fal-ai/hunyuan-video`.
+
+### Prompt Engineering Guidelines
+- **STT Prompt**: Instructs model to produce strict JSON containing timestamped segments with explicit speaker diarization (`Speaker 1`, `Speaker 2`).
+- **Translation Prompt**: Injects canonical glossary terms as absolute rules. Explicitly enforces that character proper names must be transliterated/translated into the target language.
+- **Visual Gender Prompt**: Strictly requests a single-word output (`MALE` or `FEMALE`) based on visual inspection of the speaker in the extracted frame.
+
+---
+
+## 12. Storage & File Management
+
+### Storage Layout (`STORAGE_ROOT = ./storage`)
+All media assets are stored locally in isolated project directories:
+```text
+storage/
+└── projects/
+    └── {project_id}/
+        ├── videos/
+        │   ├── source/               # Original uploaded/downloaded video files
+        │   └── processed/            # Intermediary trimmed or resized videos
+        ├── audio/
+        │   ├── original/             # Extracted 16kHz mono WAV audio
+        │   ├── extracted/            # Auxiliary extracted audio clips
+        │   └── dubbed/               # Synthesized TTS clips & assembled audio tracks
+        ├── subtitles/                # Generated .srt, .vtt, .ass files
+        ├── thumbnails/               # AI-generated and default thumbnail images
+        ├── outputs/                  # Final multiplexed dubbed videos
+        ├── temporary/                # Scratch files, keyframes, concat lists
+        └── assets/
+            └── watermarks/           # Uploaded watermark logo images
+```
+
+### Media Access
+- Media files are served to the frontend via FastAPI `FileResponse` at `GET /api/storage/files/{file_path:path}`.
+- Download endpoint `GET /api/storage/download?path=...&filename=...` implements RFC 5987 content-disposition headers for Unicode filename support (Vietnamese, Chinese, spaces).
+
+---
+
+## 13. Authentication & Authorization
+
+- **Application Access**: Local-first standalone deployment. No user authentication is required for internal studio tools.
+- **External OAuth 2.0**:
+  - **YouTube**: Google OAuth 2.0 with offline access (`access_type=offline`, `prompt=consent`). Tokens are encrypted at rest in `youtube_channels.credentials_json` using Fernet symmetric encryption.
+  - **TikTok**: TikTok Login Kit with desktop PKCE (Proof Key for Code Exchange) using SHA-256 code challenges. Tokens encrypted in `tiktok_accounts.credentials_json`.
+- **Browser Security**: External authentication flows never navigate the pywebview app window. They are launched in the user's external browser via `POST /api/system/open-browser`.
+
+---
+
+## 14. Background Jobs, Concurrency & Schedulers
+
+- **Task Execution**: Long-running pipelines (video download, STT, LLM translation, TTS synthesis, FFmpeg rendering, video merging, YouTube upload) execute in `asyncio.create_task` or FastAPI `BackgroundTasks`.
+- **Concurrency Control**: `MAX_CONCURRENCY` defaults to `2` concurrent segment render tasks to prevent CPU/GPU exhaustion during FFmpeg rendering.
+- **Heartbeat Monitor**: Active jobs maintain a `last_heartbeat` timestamp in `video_translation_jobs`. If a worker terminates abnormally, jobs are identified via `/api/system/interrupted` and can be resumed.
+- **Process Cancellation**: Cancellation tokens and explicit process termination (`psutil` process tree killing) ensure cancelled jobs do not leave orphan FFmpeg processes.
+
+---
+
+## 15. Logging & Error Handling
+
+- **Structured Job Logs**: Each job writes real-time event logs to database and files via `log_job_event(job_id, stage, message)`. Frontend polls logs via `GET /api/video-translator/jobs/{id}/logs`.
+- **Launcher Logs**: Native desktop launcher logs standard output and error to:
+  - `data/launcher_logs/backend.log`
+  - `data/launcher_logs/frontend.log`
+- **Global FastAPI Error Handling**: Unhandled server exceptions are intercepted by `global_exception_handler` in `app/main.py`, returning formatted JSON (`success: False`, `detail: ❌ Server Error...`) to prevent opaque 500 errors.
+- **Frontend Error Boundary**: React root in `main.jsx` is wrapped in `ErrorBoundary` to catch rendering crashes and provide a safe reload button.
+
+---
+
+## 16. Important Business Rules
+
+1. **Glossary Canonical Invariant**: A source term can map to only one target translation, and a target translation can belong to only one source term within a project (`1:1 Bi-directional Uniqueness`).
+2. **CJK Self-Mapping Rule**: Untranslated CJK characters (e.g. `安妮 -> 安妮`) must never be enforced as valid glossary entries when translating to non-Chinese languages (Vietnamese/English). They must be automatically skipped.
+3. **Dual Gate Confirmation**: Phase 2 rendering requires both translation text confirmation (`auto_confirm_translation`) and character voice profile confirmation (`auto_confirm_voice`).
+4. **SSRF URL Filter**: Remote video URLs must resolve to public IP addresses. Requests targeting loopback (127.0.0.0/8), private LANs (10.0.0.0/8, 192.168.0.0/16, 172.16.0.0/12), or cloud metadata services (169.254.169.254) are rejected immediately.
+5. **No Wall-Clock Download Abort**: Remote video downloads with `VIDEO_DOWNLOAD_TIMEOUT=0` must not be aborted as long as bytes are actively flowing.
+6. **Same-Voice Overlap Elimination**: Two segments sharing the same voice profile cannot overlap on the audio timeline. They must be serialized or compressed.
+
+---
+
+## 17. Current Features Status
+
+### Completed
+- [x] Unified 6-stage workflow engine (`INGEST`, `ANALYZE`, `TRANSLATE`, `DUB`, `PRODUCE`, `PUBLISH`).
+- [x] Multi-source video ingest (Bilibili Range download, YouTube, TikTok, direct upload).
+- [x] Deadzone filler silence and freeze detection/trimming.
+- [x] AcoustID / Chromaprint copyright pre-check.
+- [x] Gemini STT with 6-stage resilient response parser.
+- [x] 1:1 bi-directional SHA-256 canonical project glossary.
+- [x] Verbatim echo linguistic analysis and targeted segment recovery.
+- [x] Multimodal visual gender detection via FFmpeg keyframe extraction & Vision LLM.
+- [x] Controlled character voice allocation (Separate Default Male and Female voice dropdowns).
+- [x] Post-TTS timeline scheduler with bounded atempo time-stretching and same-voice serialization.
+- [x] Multi-provider TTS synthesis (Edge-TTS, Google Cloud TTS, ElevenLabs).
+- [x] FFmpeg video muxing with automatic fallback transcoding for non-H.264 streams.
+- [x] Watermark image/text burning and ASS/SRT subtitle integration.
+- [x] AI video thumbnail generator via Pollinations AI.
+- [x] YouTube OAuth 2.0 integration & resumable chunked upload.
+- [x] TikTok Login Kit OAuth 2.0 integration with desktop PKCE.
+- [x] Standalone Video Merger suite with aspect-ratio letterboxing normalization.
+- [x] Multi-key provider API management with rotation, failure counters, and cooldowns.
+- [x] Centralized AI Model Resolver strictly querying database tables.
+- [x] Windows native pywebview desktop launcher with custom AppUserModelID.
+
+### In Progress
+- [ ] TikTok direct video publishing API integration (Content Posting API server-side upload step).
+- [ ] Batch video translation queue processing.
+
+### Planned
+- [ ] Automatic face-tracking reframe (16:9 to 9:16 Shorts/Reels converter).
+- [ ] Voice cloning integration with local open-source models (XTTS-v2 / Kokoro).
+
+---
+
+## 18. Known Issues & Limitations
+
+1. **Async MySQL Pytest Event Loop Lifecycle**: When running `pytest` against `aiomysql` with connection pooling enabled on Windows, closing individual test event loops can trigger `AttributeError: 'NoneType' object has no attribute 'send'` or unraisable warnings during pool cleanup.
+2. **TikTok Publishing Sandbox**: TikTok Developer apps in development mode only allow publishing to developer accounts explicitly registered in the app sandbox.
+3. **Subprocess Execution on Windows**: `asyncio.create_subprocess_exec` can raise `NotImplementedError` under certain Windows Uvicorn event loop policies if `WindowsProactorEventLoopPolicy` is not initialized early.
+
+---
+
+## 19. TODO / FIXME
+
+- **`backend/app/services/video_editor/tiktok_oauth.py`**: Complete direct video upload endpoint implementation once TikTok Content Posting API direct-share approval is granted.
+- **`backend/app/workflow/orchestrator.py`**: Further consolidate legacy stage execution paths into unified `WorkflowEngine`.
+
+---
+
+## 20. Dependencies
+
+### System Prerequisites
+- **Python**: 3.12+ (64-bit)
+- **Node.js**: 18+ & npm
+- **FFmpeg & FFprobe**: Must be installed and available in system `PATH`
+- **Database Engine**: Laragon MySQL 8.0 / MariaDB (recommended on port 3306) or local SQLite
+
+### Key Backend Libraries
+`fastapi`, `uvicorn`, `pydantic`, `pydantic-settings`, `sqlalchemy`, `aiomysql`, `aiosqlite`, `alembic`, `httpx`, `edge-tts`, `cryptography`, `google-api-python-client`, `google-auth-oauthlib`, `sse-starlette`, `structlog`.
+
+### Key Frontend Libraries
+`react`, `react-dom`, `vite`, `axios`.
+
+---
+
+## 21. Deployment & Distribution
+
+AutoTransAI is designed for local Windows desktop execution:
+- **Executable Shortcut**: `AutoTransAI Studio.lnk` invokes `AutoTransAi.vbs`.
+- **Silent Launcher**: `AutoTransAi.vbs` executes `app_launcher.py` with `wscript.exe` without popping up persistent command prompt windows.
+- **Process Orchestration**: `app_launcher.py` starts backend and frontend, waits for HTTP 200 health checks, launches pywebview, and terminates all child process trees when closed.
+
+---
+
+## 22. Development Commands
+
+### Running Backend (Development)
+```powershell
+cd backend
+.\venv\Scripts\activate
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+### Running Frontend (Development)
+```powershell
+cd frontend
+npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+### Running Tests
+```powershell
+cd backend
+.\venv\Scripts\pytest -v
+```
+
+### Building Frontend for Production
+```powershell
+cd frontend
+npm run build
+```
+
+---
+
+## 23. Important Conventions
+
+- **Paths**: Store paths relative to `STORAGE_ROOT` or `DATA_DIR` in the database; resolve dynamically at runtime using `storage_service.py` to prevent machine-specific path breaking.
+- **Case & Text Normalization**: Glossary terms and search keys must always be processed with `clean_glossary_text()` and `normalize_glossary_text()` (NFKC + casefold).
+- **No Hardcoded AI Models**: Never introduce hardcoded model strings (`gemini-1.5-flash`, `gpt-4o`) into business services. Always query `AIModelResolver.resolve_model(db, capability=...)`.
+- **Boolean Parsing**: User settings and API query booleans must use `_parse_bool()` to safely handle strings (`"true"`, `"false"`, `"1"`, `"0"`).
+
+---
+
+## 24. Change History
+
+### 2026-09-18
+- Performed exhaustive codebase audit across backend, frontend, database models, and API endpoints.
+- Synchronized Single Source of Truth Knowledge Base to 25 standard sections.
+- Verified 29 database tables, 100+ API endpoints, 6-stage unified workflow engine, and standalone video merger architecture.
+- Documented Multimodal Visual Gender Detection, Controlled Character Voice allocation, and YouTube/TikTok OAuth integrations.
+
+---
+
+## 25. AI Maintenance Rules
+
+1. **Mandatory Check on Task Completion**: Any task that modifies architecture, database schemas, API contracts, AI models, or workflows **must** update this file in the same commit/task.
+2. **Empirical Verification**: Never guess or assume model names, table columns, or endpoint paths. Introspect active source code directly.
+3. **Keep Ground Truth**: If documentation conflicts with active source code, inspect the source code, adhere to its implementation, and update this file immediately.
