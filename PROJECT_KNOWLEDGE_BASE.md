@@ -61,6 +61,7 @@ AutoTransAI uses a **Local-First Client-Server Architecture** designed for stand
   - **Phase 1 (STT & Translation)**: Ingest, Audio Extraction, STT, Diarization, Terminology & Glossary, LLM Translation, Verbatim Echo Detection & Targeted Recovery.
   - **Phase 2 (TTS & Production)**: Voice assignment & Character Review, Post-TTS Scheduling, Audio Normalization, FFmpeg Video Muxing, Subtitle/Watermark burning, AI Thumbnail.
 - **Failover & Resiliency**: Automatic database failover from MySQL to SQLite; API key rotation and cooldown management via `KeyManager`; dual confirmation gates (`auto_confirm_translation`, `auto_confirm_voice`).
+- **Memory Safety & Streaming**: Heavy binary ingest pipelines (like video generation and external downloads) rely strictly on chunked async byte streaming (`httpx.AsyncClient.stream`) instead of in-memory buffering to prevent Out-Of-Memory (OOM) crashes on large multi-gigabyte video files.
 - **Clean Subprocess Handling**: Windows ProactorEventLoopPolicy initialized on startup; explicit process tree termination on window close.
 
 ---
@@ -195,7 +196,7 @@ Configuration is loaded centrally via `shared.config.load_root_env()` and parsed
 
 ## 6. Database
 
-The database layer manages **29 distinct tables** mapped through SQLAlchemy 2.0 Async declarative models.
+The database layer manages **29 distinct tables** mapped through SQLAlchemy 2.0 Async declarative models. Strict relational integrity is maintained by explicit `ForeignKey` constraints on all models. In environments utilizing the SQLite fallback engine, `PRAGMA foreign_keys=ON` is dynamically injected on all new connections via SQLAlchemy event listeners to enforce database-level relational constraints.
 
 ```mermaid
 erDiagram
@@ -522,6 +523,7 @@ storage/
 ### Media Access
 - Media files are served to the frontend via FastAPI `FileResponse` at `GET /api/storage/files/{file_path:path}`.
 - Download endpoint `GET /api/storage/download?path=...&filename=...` implements RFC 5987 content-disposition headers for Unicode filename support (Vietnamese, Chinese, spaces).
+- **Security Boundary**: All file accesses undergo strict path traversal validation using robust `Path.is_relative_to()` resolution. Files outside the dedicated `storage` root are hard-blocked to prevent arbitrary file reading (`../` payload protection).
 
 ---
 
@@ -538,6 +540,7 @@ storage/
 ## 14. Background Jobs, Concurrency & Schedulers
 
 - **Task Execution**: Long-running pipelines (video download, STT, LLM translation, TTS synthesis, FFmpeg rendering, video merging, YouTube upload) execute in `asyncio.create_task` or FastAPI `BackgroundTasks`.
+- **Startup Reconciliation Engine**: To recover from ungraceful server terminations (crashes, reboots), a `reconciliation.py` routine triggers during the FastAPI lifespan startup in `main.py`. It sweeps all tracking tables (`video_translation_jobs`, `video_merge_jobs`) for leftover `RUNNING` or `PROCESSING` states, gracefully marking them as `INTERRUPTED` or `FAILED` so the UI does not lock up waiting for a dead process.
 - **Concurrency Control**: `MAX_CONCURRENCY` defaults to `2` concurrent segment render tasks to prevent CPU/GPU exhaustion during FFmpeg rendering.
 - **Heartbeat Monitor**: Active jobs maintain a `last_heartbeat` timestamp in `video_translation_jobs`. If a worker terminates abnormally, jobs are identified via `/api/system/interrupted` and can be resumed.
 - **Process Cancellation**: Cancellation tokens and explicit process termination (`psutil` process tree killing) ensure cancelled jobs do not leave orphan FFmpeg processes.
@@ -675,6 +678,7 @@ npm run build
 - **Case & Text Normalization**: Glossary terms and search keys must always be processed with `clean_glossary_text()` and `normalize_glossary_text()` (NFKC + casefold).
 - **No Hardcoded AI Models**: Never introduce hardcoded model strings (`gemini-1.5-flash`, `gpt-4o`) into business services. Always query `AIModelResolver.resolve_model(db, capability=...)`.
 - **Boolean Parsing**: User settings and API query booleans must use `_parse_bool()` to safely handle strings (`"true"`, `"false"`, `"1"`, `"0"`).
+- **Asynchronous Environment Safety**: Never mutate `os.environ` (e.g. `os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'`) inside asynchronous request handlers. Python's `os.environ` is process-global and cross-contaminates state across all concurrently executing asyncio connections. Context variables or dedicated API configurations must be used instead.
 
 ---
 

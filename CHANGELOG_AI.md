@@ -852,3 +852,26 @@
 - Added Character/Voice review, validation, confirm/resume, profile, and voice-pool APIs plus Studio review fields and controls.
 - Added Alembic revision `20260916_character_voice_timeline` and focused schema/STT/mapping/assignment/scheduler/backward-compatibility tests.
 - Verification: 30 focused backend tests passed; legacy `/voice-map` real-SQLite integration test passed; frontend production build passed. Full backend suite: 262 passed, 7 skipped, 1 pre-existing preflight seed failure (`AI_MODEL_NOT_FOUND`). The historical clean Alembic chain also fails before the new revision because the initial migration lacks `video_translation_jobs` expected by `20260822_sync_schema`. A real three-speaker video mux could not run in this Linux environment because the `ffmpeg` executable is absent; scheduler and PCM behavior remain covered by generated-WAV/unit tests.
+
+# Stability, Security & Consistency Overhaul (2026-09-18)
+- **Security & Database Foundation**:
+  - Removed hardcoded MySQL password from `config.py`.
+  - Fixed critical path traversal vulnerability in `security.py` and `storage.py` by implementing robust `Path.is_relative_to()` checks instead of raw string prefix matching.
+  - Enforced SQLite `PRAGMA foreign_keys=ON` fallback on startup via SQLAlchemy connection events in `database.py`.
+  - Added missing `ForeignKey` constraints to all SQLAlchemy models and applied manual Alembic migration (`20260918_add_foreign_keys.py`) to safely alter SQLite tables.
+- **Memory & Storage Optimizations**:
+  - Prevented Out-Of-Memory (OOM) crashes in `fal_provider.py` and `kling_provider.py` by implementing `httpx` chunked stream downloading (`aiter_bytes`) for large video files.
+  - Eliminated disk leaks by ensuring standalone video merge job outputs are deleted when their `VideoMergeJob` row is deleted, and excluded active outputs from premature sweep by `cleanup_service.py`.
+- **Backend Flow & API Stability**:
+  - Corrected `preflight.py` to accurately report false on exceptions rather than returning false-positive success.
+  - Removed dangerous `os.environ` mutation in `key_manager.py` and `youtube.py` request handlers to avoid cross-request contamination in the asynchronous FastAPI environment.
+  - Removed test-specific hardcodes (such as the 0-byte file check bypass in `visual_gender_service.py` and mock YouTube upload IDs in `youtube_service.py`).
+  - Implemented strict Pydantic payload validation (`ConfigureProjectRequest`) in `projects.py`.
+  - Implemented missing `GET /api/video-translator/assets/{asset_id}` endpoint required by the frontend API client.
+- **Startup Reconciliation Engine**:
+  - Created `reconciliation.py` service to detect and gracefully fail zombie jobs left in `RUNNING` or `PROCESSING` states during ungraceful server shutdowns. This routine is now wired into the `main.py` application lifespan, preventing locked UI states.
+- **Frontend & UX Improvements**:
+  - Replaced hardcoded `http://127.0.0.1:8000` Server-Sent Events (SSE) URLs in `VideoTranslator.jsx` with standard relative `/` paths, fixing connections in remote or reverse-proxy deployments.
+  - Updated `model_resolver.py` to dynamically query `AIModel` via database lookup instead of relying on rudimentary string matching.
+  - Extended the YouTube publish feature (`video_editor.py`) to properly utilize the `channel_id` parameter.
+  - Added `pywebview` to `requirements.txt` and ignored scratch analysis files in `.gitignore`.
