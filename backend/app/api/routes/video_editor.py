@@ -103,7 +103,7 @@ async def upload_logo_file(
     session: AsyncSession = Depends(get_session),
 ):
     """Upload logo / watermark PNG image file for a job."""
-    storage_dir = settings.DATA_DIR / "translator" / "jobs" / job_id / "branding"
+    storage_dir = settings.STORAGE_ROOT / "translator" / "jobs" / job_id / "branding"
     storage_dir.mkdir(parents=True, exist_ok=True)
     
     logo_dest = storage_dir / f"logo_{file.filename}"

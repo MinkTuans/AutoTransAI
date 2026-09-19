@@ -42,7 +42,7 @@ def log_job_event(job_id: str, stage: str, message: str) -> str:
     _JOB_LOG_BUFFERS[job_id].append(entry)
 
     # Append to disk log file
-    job_dir = settings.DATA_DIR / "translator" / "jobs" / job_id
+    job_dir = settings.STORAGE_ROOT / "translator" / "jobs" / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     log_file = job_dir / "job.log"
     try:
@@ -59,8 +59,14 @@ def get_job_logs(job_id: str) -> str:
     Fetch full log content for a given job ID.
     Reads from disk log file if available, falling back to memory buffer.
     """
-    job_dir = settings.DATA_DIR / "translator" / "jobs" / job_id
+    job_dir = settings.STORAGE_ROOT / "translator" / "jobs" / job_id
     log_file = job_dir / "job.log"
+    if not log_file.exists():
+        # Fallback to legacy DATA_DIR location
+        legacy_file = settings.DATA_DIR / "translator" / "jobs" / job_id / "job.log"
+        if legacy_file.exists():
+            log_file = legacy_file
+
     if log_file.exists():
         try:
             return log_file.read_text(encoding="utf-8")

@@ -38,6 +38,7 @@ class Settings(BaseSettings):
 
     # ── Database & Storage Paths ───────────────────────────────────────────────
     DATABASE_URL: Optional[str] = ""
+    ROOT_DIR: Path = ROOT_DIR
     DATA_DIR: Path = ROOT_DIR / "data"
     STORAGE_ROOT: Path = ROOT_DIR / "storage"
     STORAGE_DRIVER: str = "local"
@@ -53,6 +54,12 @@ class Settings(BaseSettings):
     @property
     def PROJECTS_DIR(self) -> Path:
         p = self.STORAGE_ROOT / "projects"
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    @property
+    def TRANSLATOR_DIR(self) -> Path:
+        p = self.STORAGE_ROOT / "translator"
         p.mkdir(parents=True, exist_ok=True)
         return p
 

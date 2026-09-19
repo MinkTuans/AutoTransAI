@@ -1,3 +1,25 @@
+- **Storage Consolidation & Unified File Management Overhaul (2026-09-18)**:
+  - **Summary**: Resolved dual storage directory divergence (`AutoTransAI/storage` vs `AutoTransAI/backend/storage`) and fragmented `data/translator` paths. Unified all media, project structures, and job assets into a Single Source of Truth under `AutoTransAI/storage/`. Implemented multi-directory CRUD cleanup contracts to eliminate orphan project directories, corrected security path validations, and added a safe, reversible migration script for legacy data.
+  - **Path Resolver Standardization (STOR-001)**:
+    - Fixed relative `Path("storage") / "projects" / ctx.project_id` in `backend/app/workflow/stages/ingest_stage.py` and `analysis/all_stages.py` to use `settings.PROJECTS_DIR / ctx.project_id`.
+    - Eliminated accidental creation of `backend/storage/projects` when running backend processes from `backend/`.
+  - **V2 Video Translation Job Storage Relocation (STOR-002)**:
+    - Added `TRANSLATOR_DIR` property helper in `backend/app/config.py` pointing to `STORAGE_ROOT / "translator"`.
+    - Relocated video translator assets (`/assets`), jobs (`/jobs`), and watermark uploads (`/watermarks`) from `DATA_DIR / "translator"` to `STORAGE_ROOT / "translator"` in `backend/app/api/routes/video_translator.py`, `backend/app/api/routes/video_editor.py`, and `backend/app/core/job_logger.py`.
+    - Added backward-compatible read fallback for legacy job logs stored in `DATA_DIR`.
+    - Fixed security path traversal validator in `backend/app/services/file_manager.py` to validate against `settings.PROJECTS_DIR` instead of mismatched `settings.DATA_DIR`.
+  - **Comprehensive CRUD Cleanup & Orphan Prevention Contract (STOR-003)**:
+    - Updated `FileCleanupService.cleanup_project()` to unconditionally purge both unified storage directories (`STORAGE_ROOT`) and legacy orphan directories (`backend/storage/projects/{item_id}` and `DATA_DIR/translator/jobs/{item_id}`).
+    - Enhanced `cleanup_job_workspace()` to clean temporary working files (`chunks`, `tts`, `synced`, `work`) across both unified and legacy locations.
+    - Enhanced `scan_orphan_files()` to scan unified and legacy directories for unreferenced assets and job folders.
+  - **Data Migration & Rollback CLI Tool (STOR-004)**:
+    - Created `backend/scripts/migrate_storage.py` supporting `--dry-run` and `--rollback`.
+    - Provides non-destructive directory merging, database path rewriting for stored media URLs, and rollback manifest logging (`storage/migration_manifest.json`).
+  - **Regression Testing & Schema Resilience**:
+    - Added `test_cleanup_project_removes_both_unified_and_legacy_directories` and `test_cleanup_job_removes_both_unified_and_legacy_directories` in `backend/tests/test_storage_and_projects.py`.
+    - Fixed invalid `ForeignKey("characters.id")` in `video_translator.py` and `workflow_engine.py` (preventing SQLite `NoReferencedTableError` when creating schema).
+  - **Affected Files**: `backend/app/config.py`, `backend/app/workflow/stages/ingest_stage.py`, `analysis/all_stages.py`, `backend/app/api/routes/video_translator.py`, `backend/app/api/routes/video_editor.py`, `backend/app/core/job_logger.py`, `backend/app/services/file_manager.py`, `backend/app/services/cleanup_service.py`, `backend/app/models/video_translator.py`, `backend/app/models/workflow_engine.py`, `backend/scripts/migrate_storage.py`, `backend/tests/test_storage_and_projects.py`, `PROJECT_KNOWLEDGE_BASE.md`, `CHANGELOG_AI.md`.
+
 - **Remaster Visual Gender Detection Pipeline — Run Immediately After STT (2026-09-18)**:
   - **Summary**: Remastered the visual gender detection pipeline so that it executes immediately after STT and before Character Mapping and Translation. Updated keyframe extraction to take 4 representative frames per speaker (0%, 25%, 75%, 100% of speech timeline) and combine them into a single 1024x576 2x2 contact sheet via FFmpeg, querying the Vision API in exactly 1 request per speaker rather than 4 separate requests. Added a unified `VisionProvider` abstraction, robust response parser (`FEMALE` before `MALE` regex checks), and strict priority resolution (`Manual Override > Visual AI > Dialogue LLM > Unknown`).
   - **Pipeline Reordering (`video_translator.py`)**:

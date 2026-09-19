@@ -227,7 +227,7 @@ async def import_video_asset(
     """Import video asset from Video URL or File Upload."""
     service = get_video_source_service()
     asset_id = str(uuid.uuid4())[:8]
-    storage_dir = settings.DATA_DIR / "translator" / "assets" / asset_id
+    storage_dir = settings.STORAGE_ROOT / "translator" / "assets" / asset_id
     storage_dir.mkdir(parents=True, exist_ok=True)
 
     if source_type == "upload":
@@ -331,7 +331,7 @@ async def _run_url_transfer(transfer_id: str, url: str) -> None:
     update_transfer(transfer_id, status="running", message="Đang tải xuống video...")
     service = get_video_source_service()
     asset_id = str(uuid.uuid4())[:8]
-    storage_dir = settings.DATA_DIR / "translator" / "assets" / asset_id
+    storage_dir = settings.STORAGE_ROOT / "translator" / "assets" / asset_id
     storage_dir.mkdir(parents=True, exist_ok=True)
 
     def _on_progress(info):
@@ -482,7 +482,7 @@ async def upload_watermark_logo(
     if project_id and project_id != "default_project":
         storage_dir = settings.STORAGE_ROOT / "projects" / project_id / "assets" / "watermarks"
     else:
-        storage_dir = settings.DATA_DIR / "translator" / "watermarks"
+        storage_dir = settings.STORAGE_ROOT / "translator" / "watermarks"
     
     storage_dir.mkdir(parents=True, exist_ok=True)
     
@@ -817,7 +817,7 @@ async def start_translation_pipeline(
                     if not b_asset:
                         return
 
-                    job_dir = settings.DATA_DIR / "translator" / "jobs" / job_id
+                    job_dir = settings.STORAGE_ROOT / "translator" / "jobs" / job_id
                     job_dir.mkdir(parents=True, exist_ok=True)
 
                     snap = {}
@@ -2009,7 +2009,7 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                 for s in raw_segments
             ]
 
-            job_dir = settings.DATA_DIR / "translator" / "jobs" / job_id
+            job_dir = settings.STORAGE_ROOT / "translator" / "jobs" / job_id
             tts_dir = job_dir / "tts"
             sync_dir = job_dir / "synced"
             tts_dir.mkdir(parents=True, exist_ok=True)
@@ -3613,7 +3613,7 @@ async def update_character_voice_review(job_id: str, body: CharacterVoiceReviewU
                 detail=f"Lỗi cấu hình giọng đọc: {err['message']} ({err['reason']})",
             )
 
-    job_dir = settings.DATA_DIR / "translator" / "jobs" / job_id
+    job_dir = settings.STORAGE_ROOT / "translator" / "jobs" / job_id
     tts_dir = job_dir / "tts"
     invalidated_segments = []
 

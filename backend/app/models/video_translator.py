@@ -182,7 +182,7 @@ class VideoTranslationSegment(Base):
     tts_audio_duration: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     synced_audio_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     speaker_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
-    character_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("characters.id", ondelete="CASCADE"), nullable=True, index=True)
+    character_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     voice_provider: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     voice_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     original_start: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

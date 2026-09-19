@@ -100,61 +100,66 @@ class FileCleanupService:
         - work/ (Combined PCM timeline WAV)
         - Any temporary .wav, .mp3, .aac, .m4a files in job root
         """
-        job_dir = settings.DATA_DIR / "translator" / "jobs" / job_id
-        if not job_dir.exists():
+        job_dirs = [
+            settings.STORAGE_ROOT / "translator" / "jobs" / job_id,
+            settings.DATA_DIR / "translator" / "jobs" / job_id,
+        ]
+        target_dirs = [d for d in job_dirs if d.exists()]
+        if not target_dirs:
             return {"deleted_files": 0, "failed_files": 0, "bytes_freed": 0, "status": "job_dir_not_found"}
 
         deleted_files = 0
         failed_files = 0
         bytes_freed = 0
 
-        # Purge temporary subdirectories
-        temp_subs = ["chunks", "tts", "synced", "work"]
-        for sub in temp_subs:
-            sub_path = job_dir / sub
-            if sub_path.exists():
-                for root, _, files in os.walk(sub_path):
-                    for f in files:
-                        fp = Path(root) / f
-                        try:
-                            bytes_freed += fp.stat().st_size
-                            deleted_files += 1
-                        except Exception:
-                            pass
-                if not cls.safe_remove_dir(sub_path):
-                    failed_files += 1
-
-        # Also purge legacy chunk directories inside job_dir if present
-        for item in list(job_dir.iterdir()):
-            if item.is_dir() and ("chunks" in item.name or "temp" in item.name or "work" in item.name):
-                for root, _, files in os.walk(item):
-                    for f in files:
-                        fp = Path(root) / f
-                        try:
-                            bytes_freed += fp.stat().st_size
-                            deleted_files += 1
-                        except Exception:
-                            pass
-                if not cls.safe_remove_dir(item):
-                    failed_files += 1
-            elif item.is_file():
-                filename = item.name.lower()
-                is_log = (filename == "job.log")
-                is_final = (filename == "final_dubbed_video.mp4")
-
-                if (is_log and keep_logs) or (is_final and keep_final_video):
-                    continue
-
-                if filename.endswith((".wav", ".mp3", ".aac", ".m4a", ".tmp")) or filename == "extracted_audio.wav":
-                    try:
-                        sz = item.stat().st_size
-                        if cls.safe_remove_file(item):
-                            bytes_freed += sz
-                            deleted_files += 1
-                        else:
-                            failed_files += 1
-                    except Exception:
+        for job_dir in target_dirs:
+            # Purge temporary subdirectories
+            temp_subs = ["chunks", "tts", "synced", "work"]
+            for sub in temp_subs:
+                sub_path = job_dir / sub
+                if sub_path.exists():
+                    for root, _, files in os.walk(sub_path):
+                        for f in files:
+                            fp = Path(root) / f
+                            try:
+                                bytes_freed += fp.stat().st_size
+                                deleted_files += 1
+                            except Exception:
+                                pass
+                    if not cls.safe_remove_dir(sub_path):
                         failed_files += 1
+
+            # Also purge legacy chunk directories inside job_dir if present
+            for item in list(job_dir.iterdir()):
+                if item.is_dir() and ("chunks" in item.name or "temp" in item.name or "work" in item.name):
+                    for root, _, files in os.walk(item):
+                        for f in files:
+                            fp = Path(root) / f
+                            try:
+                                bytes_freed += fp.stat().st_size
+                                deleted_files += 1
+                            except Exception:
+                                pass
+                    if not cls.safe_remove_dir(item):
+                        failed_files += 1
+                elif item.is_file():
+                    filename = item.name.lower()
+                    is_log = (filename == "job.log")
+                    is_final = (filename == "final_dubbed_video.mp4")
+
+                    if (is_log and keep_logs) or (is_final and keep_final_video):
+                        continue
+
+                    if filename.endswith((".wav", ".mp3", ".aac", ".m4a", ".tmp")) or filename == "extracted_audio.wav":
+                        try:
+                            sz = item.stat().st_size
+                            if cls.safe_remove_file(item):
+                                bytes_freed += sz
+                                deleted_files += 1
+                            else:
+                                failed_files += 1
+                        except Exception:
+                            failed_files += 1
 
         res = {
             "job_id": job_id,
@@ -202,6 +207,15 @@ class FileCleanupService:
                 cls.safe_remove_dir(proj_dir)
                 res_info["deleted_local_dirs"].append(str(proj_dir))
 
+            # Backward compatibility: Clean legacy directory in backend/storage/projects
+            legacy_proj_dir = Path(settings.ROOT_DIR) / "backend" / "storage" / "projects" / item_id
+            if legacy_proj_dir.exists():
+                cls.safe_remove_dir(legacy_proj_dir)
+                res_info["deleted_local_dirs"].append(str(legacy_proj_dir))
+
+            # Also delete from local storage service
+            await storage_service.delete_project_files(item_id)
+
             res_info["status"] = "success"
             return res_info
 
@@ -245,16 +259,37 @@ class FileCleanupService:
                     await session.delete(asset)
                     await session.commit()
 
-                    asset_disk = settings.DATA_DIR / "translator" / "assets" / asset_id
+                    # Check unified STORAGE_ROOT translator assets
+                    asset_disk = settings.STORAGE_ROOT / "translator" / "assets" / asset_id
                     if asset_disk.exists():
                         cls.safe_remove_dir(asset_disk)
                         res_info["deleted_local_dirs"].append(str(asset_disk))
 
-            # Delete job workspace local directory
-            job_disk = settings.DATA_DIR / "translator" / "jobs" / item_id
+                    # Check legacy DATA_DIR translator assets
+                    legacy_asset_disk = settings.DATA_DIR / "translator" / "assets" / asset_id
+                    if legacy_asset_disk.exists():
+                        cls.safe_remove_dir(legacy_asset_disk)
+                        res_info["deleted_local_dirs"].append(str(legacy_asset_disk))
+
+            # Delete job workspace local directory (check unified STORAGE_ROOT and legacy DATA_DIR)
+            job_disk = settings.STORAGE_ROOT / "translator" / "jobs" / item_id
             if job_disk.exists():
                 cls.safe_remove_dir(job_disk)
                 res_info["deleted_local_dirs"].append(str(job_disk))
+
+            legacy_job_disk = settings.DATA_DIR / "translator" / "jobs" / item_id
+            if legacy_job_disk.exists():
+                cls.safe_remove_dir(legacy_job_disk)
+                res_info["deleted_local_dirs"].append(str(legacy_job_disk))
+
+            # Backward compatibility check for legacy backend/storage/projects
+            legacy_proj_dir = Path(settings.ROOT_DIR) / "backend" / "storage" / "projects" / item_id
+            if legacy_proj_dir.exists():
+                cls.safe_remove_dir(legacy_proj_dir)
+                res_info["deleted_local_dirs"].append(str(legacy_proj_dir))
+
+            # Ensure all objects under translator/jobs/{item_id} or projects/{item_id} are deleted
+            await storage_service.delete_project_files(item_id)
 
             res_info["status"] = "success"
             return res_info
@@ -335,65 +370,68 @@ class FileCleanupService:
         orphan_r2_keys: List[str] = []
         reclaimable_bytes = 0
 
-        # 1. Scan Jobs Directory
-        jobs_dir = settings.DATA_DIR / "translator" / "jobs"
-        if jobs_dir.exists():
-            for folder in jobs_dir.iterdir():
-                if folder.is_dir():
-                    j_id = folder.name
-                    if j_id not in valid_job_ids:
-                        age = now - folder.stat().st_mtime
-                        if age >= max_age_sec:
-                            orphan_local_dirs.append(folder)
-                            for root, _, files in os.walk(folder):
-                                for f in files:
-                                    fp = Path(root) / f
-                                    try:
-                                        sz = fp.stat().st_size
-                                        reclaimable_bytes += sz
-                                        orphan_local_files.append({"path": str(fp), "size": sz, "reason": f"Orphan job folder: {j_id}"})
-                                    except Exception:
-                                        pass
+        # 1. Scan Jobs Directories (Unified and Legacy)
+        jobs_dirs = [settings.STORAGE_ROOT / "translator" / "jobs", settings.DATA_DIR / "translator" / "jobs"]
+        for jobs_dir in jobs_dirs:
+            if jobs_dir.exists():
+                for folder in jobs_dir.iterdir():
+                    if folder.is_dir():
+                        j_id = folder.name
+                        if j_id not in valid_job_ids:
+                            age = now - folder.stat().st_mtime
+                            if age >= max_age_sec:
+                                orphan_local_dirs.append(folder)
+                                for root, _, files in os.walk(folder):
+                                    for f in files:
+                                        fp = Path(root) / f
+                                        try:
+                                            sz = fp.stat().st_size
+                                            reclaimable_bytes += sz
+                                            orphan_local_files.append({"path": str(fp), "size": sz, "reason": f"Orphan job folder: {j_id}"})
+                                        except Exception:
+                                            pass
 
-        # 2. Scan Assets Directory
-        assets_dir = settings.DATA_DIR / "translator" / "assets"
-        if assets_dir.exists():
-            for folder in assets_dir.iterdir():
-                if folder.is_dir():
-                    a_id = folder.name
-                    if a_id not in valid_asset_ids:
-                        age = now - folder.stat().st_mtime
-                        if age >= max_age_sec:
-                            orphan_local_dirs.append(folder)
-                            for root, _, files in os.walk(folder):
-                                for f in files:
-                                    fp = Path(root) / f
-                                    try:
-                                        sz = fp.stat().st_size
-                                        reclaimable_bytes += sz
-                                        orphan_local_files.append({"path": str(fp), "size": sz, "reason": f"Orphan asset folder: {a_id}"})
-                                    except Exception:
-                                        pass
+        # 2. Scan Assets Directories (Unified and Legacy)
+        assets_dirs = [settings.STORAGE_ROOT / "translator" / "assets", settings.DATA_DIR / "translator" / "assets"]
+        for assets_dir in assets_dirs:
+            if assets_dir.exists():
+                for folder in assets_dir.iterdir():
+                    if folder.is_dir():
+                        a_id = folder.name
+                        if a_id not in valid_asset_ids:
+                            age = now - folder.stat().st_mtime
+                            if age >= max_age_sec:
+                                orphan_local_dirs.append(folder)
+                                for root, _, files in os.walk(folder):
+                                    for f in files:
+                                        fp = Path(root) / f
+                                        try:
+                                            sz = fp.stat().st_size
+                                            reclaimable_bytes += sz
+                                            orphan_local_files.append({"path": str(fp), "size": sz, "reason": f"Orphan asset folder: {a_id}"})
+                                        except Exception:
+                                            pass
 
-        # 3. Scan Standard Projects Directory
-        projects_dir = settings.PROJECTS_DIR
-        if projects_dir.exists():
-            for folder in projects_dir.iterdir():
-                if folder.is_dir():
-                    p_id = folder.name
-                    if p_id not in valid_proj_ids:
-                        age = now - folder.stat().st_mtime
-                        if age >= max_age_sec:
-                            orphan_local_dirs.append(folder)
-                            for root, _, files in os.walk(folder):
-                                for f in files:
-                                    fp = Path(root) / f
-                                    try:
-                                        sz = fp.stat().st_size
-                                        reclaimable_bytes += sz
-                                        orphan_local_files.append({"path": str(fp), "size": sz, "reason": f"Orphan project folder: {p_id}"})
-                                    except Exception:
-                                        pass
+        # 3. Scan Standard Projects Directories (Unified and Legacy)
+        projects_dirs = [settings.PROJECTS_DIR, Path(settings.ROOT_DIR) / "backend" / "storage" / "projects"]
+        for projects_dir in projects_dirs:
+            if projects_dir.exists():
+                for folder in projects_dir.iterdir():
+                    if folder.is_dir():
+                        p_id = folder.name
+                        if p_id not in valid_proj_ids:
+                            age = now - folder.stat().st_mtime
+                            if age >= max_age_sec:
+                                orphan_local_dirs.append(folder)
+                                for root, _, files in os.walk(folder):
+                                    for f in files:
+                                        fp = Path(root) / f
+                                        try:
+                                            sz = fp.stat().st_size
+                                            reclaimable_bytes += sz
+                                            orphan_local_files.append({"path": str(fp), "size": sz, "reason": f"Orphan project folder: {p_id}"})
+                                        except Exception:
+                                            pass
 
         # 4. Scan Local Supabase Storage Fallback Emulator
         sub_local_dir = storage_service.get_local_storage_dir()

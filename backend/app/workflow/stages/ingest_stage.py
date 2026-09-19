@@ -77,9 +77,11 @@ class IngestStage:
 
         # 2. Reuse video_source service if video_url is present, or verify existing file
         if ctx.video_url and (not ctx.video_path or not Path(ctx.video_path).is_file()):
+            from app.config import get_settings
             from app.services.video_source import get_video_source_service
+            settings = get_settings()
             service = get_video_source_service()
-            storage_dir = Path("storage") / "projects" / ctx.project_id
+            storage_dir = settings.PROJECTS_DIR / ctx.project_id
             storage_dir.mkdir(parents=True, exist_ok=True)
             download_res = await service.download_video(ctx.video_url, storage_dir)
             ctx.video_path = download_res.get("file_path") or download_res.get("local_path")

@@ -86,7 +86,7 @@ class SpeakerVoiceMapping(Base):
     voice_provider: Mapped[str] = mapped_column(String(50), default="edge")  # edge, google, elevenlabs
     voice_id: Mapped[str] = mapped_column(String(100), nullable=False)
     voice_settings: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
-    character_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("characters.id", ondelete="CASCADE"), nullable=True, index=True)
+    character_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -105,7 +105,7 @@ class CharacterVoiceProfile(Base):
     __table_args__ = (UniqueConstraint("project_id", "character_id", name="uq_character_profile_project_character"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    character_id: Mapped[str] = mapped_column(String(36), ForeignKey("characters.id", ondelete="CASCADE"), nullable=False, index=True)
+    character_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     gender: Mapped[str] = mapped_column(String(20), default="unknown")

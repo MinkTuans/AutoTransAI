@@ -47,11 +47,11 @@ AutoTransAI uses a **Local-First Client-Server Architecture** designed for stand
                    ▼                                                     ▼
 ┌───────────────────────────────────────┐  ┌─────────────────────────────┐
 │            Database Layer             │  │     Local Disk Storage      │
-│  Primary: Laragon MySQL (3306)        │  │  Root: ./storage/projects/  │
-│    (mysql+aiomysql://root:...@3306)   │  │  - videos/ (source/dubbed)  │
-│  Fallback: Local SQLite               │  │  - audio/ (extracted/tts)   │
-│    (sqlite+aiosqlite:///workflow.db)  │  │  - subtitles/ & thumbnails/ │
-│  0% Supabase / Cloud DB dependency    │  │  Static Media: /media/      │
+│  Primary: Laragon MySQL (3306)        │  │  Root: ./storage/ (SSOT)    │
+│    (mysql+aiomysql://root:...@3306)   │  │  - projects/<id>/           │
+│  Fallback: Local SQLite               │  │  - translator/jobs/<id>/    │
+│    (sqlite+aiosqlite:///workflow.db)  │  │  - translator/assets/<id>/  │
+│  0% Supabase / Cloud DB dependency    │  │  - merger/jobs/<id>/        │
 └───────────────────────────────────────┘  └─────────────────────────────┘
 ```
 
@@ -499,31 +499,40 @@ All AI providers inherit from unified base classes in `app/providers/base.py` an
 
 ## 12. Storage & File Management
 
-### Storage Layout (`STORAGE_ROOT = ./storage`)
-All media assets are stored locally in isolated project directories:
+### Unified Storage Layout (`STORAGE_ROOT = ./storage`)
+All media assets and job work trees are consolidated locally under the root `storage/` directory (SSOT):
 ```text
 storage/
-└── projects/
-    └── {project_id}/
-        ├── videos/
-        │   ├── source/               # Original uploaded/downloaded video files
-        │   └── processed/            # Intermediary trimmed or resized videos
-        ├── audio/
-        │   ├── original/             # Extracted 16kHz mono WAV audio
-        │   ├── extracted/            # Auxiliary extracted audio clips
-        │   └── dubbed/               # Synthesized TTS clips & assembled audio tracks
-        ├── subtitles/                # Generated .srt, .vtt, .ass files
-        ├── thumbnails/               # AI-generated and default thumbnail images
-        ├── outputs/                  # Final multiplexed dubbed videos
-        ├── temporary/                # Scratch files, keyframes, concat lists
-        └── assets/
-            └── watermarks/           # Uploaded watermark logo images
+├── projects/                         # Standard Projects (V1 / Pipeline Engine)
+│   └── {project_id}/
+│       ├── manifest.json
+│       ├── tmp/
+│       ├── videos/ (source/dubbed)
+│       ├── audio/ (extracted/tts)
+│       ├── subtitles/
+│       └── thumbnails/
+├── translator/                       # Video Translation Jobs (V2)
+│   ├── jobs/
+│   │   └── {job_id}/
+│   │       ├── job.log
+│   │       ├── tts/
+│   │       ├── synced/
+│   │       └── final_dubbed_video.mp4
+│   ├── assets/
+│   │   └── {asset_id}/
+│   └── watermarks/
+└── merger/                           # Video Merger Jobs
+    ├── jobs/
+    └── thumbnails/
 ```
 
-### Media Access
-- Media files are served to the frontend via FastAPI `FileResponse` at `GET /api/storage/files/{file_path:path}`.
-- Download endpoint `GET /api/storage/download?path=...&filename=...` implements RFC 5987 content-disposition headers for Unicode filename support (Vietnamese, Chinese, spaces).
-- **Security Boundary**: All file accesses undergo strict path traversal validation using robust `Path.is_relative_to()` resolution. Files outside the dedicated `storage` root are hard-blocked to prevent arbitrary file reading (`../` payload protection).
+### Path Resolution & Storage Contract
+- **Root Resolution**: `STORAGE_ROOT` is strictly resolved to `<PROJECT_ROOT>/storage`. Backend modules must use `settings.PROJECTS_DIR` and `settings.STORAGE_ROOT` instead of relative `Path("storage")` or `os.getcwd()` to prevent directory divergence.
+- **V2 Translation Migration**: All job workspaces, uploads, logs, and assets operate under `storage/translator/` rather than `data/translator/`.
+- **Media Access**: Served via `GET /api/storage/files/{file_path:path}` and `GET /api/storage/download?path=...`.
+- **Security Boundary**: All file accesses undergo strict path traversal validation using `Path.is_relative_to()`. File paths outside `storage` or `data` roots are hard-blocked.
+- **Multi-Directory Cleanup Contract**: When a project or translation job is deleted (`DELETE /api/projects/{id}`), `FileCleanupService` deletes the active directory in `storage/` AND proactively purges legacy orphan directories (`backend/storage/projects/{id}` and `data/translator/jobs/{id}`).
+- **Migration Tooling**: Administrative script `backend/scripts/migrate_storage.py` provides non-destructive consolidation with `--dry-run` safety and `--rollback` support via `storage/migration_manifest.json`.
 
 ---
 

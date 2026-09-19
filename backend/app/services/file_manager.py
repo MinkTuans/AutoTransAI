@@ -171,7 +171,7 @@ def delete_project_files(project_id: str) -> None:
     """Delete all files for a project. Use with caution."""
     project_dir = get_project_dir(project_id)
     if project_dir.exists():
-        # Validate path is within data directory to prevent traversal
-        validate_path_within(project_dir, settings.DATA_DIR)
+        # Validate path is within projects directory to prevent traversal
+        validate_path_within(project_dir, settings.PROJECTS_DIR)
         shutil.rmtree(project_dir)
         logger.info("Deleted project files", project_id=project_id)
