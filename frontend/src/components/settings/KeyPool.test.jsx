@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { aiApi } from '../../api';
 import KeyPool from './KeyPool';
 
@@ -137,4 +137,86 @@ it('uses a fixed safe message when explicit refresh fails', async () => {
   fireEvent.click(screen.getByRole('button', { name: /Cập nhật Models/ }));
   expect(await screen.findByRole('alert')).toBeTruthy();
   expect(document.body.textContent).not.toContain('synthetic-secret-private');
+});
+
+it('does not let an add for a previous provider replace the selected keys or clear its draft', async () => {
+  let finishAdd;
+  aiApi.listProviders.mockResolvedValue({ success: true, data: [providers[0], {
+    ...providers[0], id: 'beta', name: 'Beta Voice', enabled_key_count: 1,
+  }] });
+  aiApi.listKeys.mockImplementation(async id => ({ success: true, data: id === 'beta'
+    ? [{ ...key, id: 'beta-key', provider_id: 'beta', masked_key: '****BETA' }] : [key] }));
+  aiApi.addKey.mockReturnValue(new Promise(resolve => { finishAdd = resolve; }));
+  render(<KeyPool />);
+  await screen.findByText('****ABCD');
+  fireEvent.click(screen.getByRole('button', { name: /Thêm Key/ }));
+  fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'synthetic-A-secret' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Lưu Key' }));
+  fireEvent.click(screen.getByRole('button', { name: /Beta Voice/ }));
+  await screen.findByText('****BETA');
+  fireEvent.click(screen.getByRole('button', { name: /Thêm Key/ }));
+  fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'synthetic-B-draft' } });
+  await act(async () => finishAdd({ success: true, data: { key: { ...key, enabled: false },
+    discovery: { status: 'partial', access_scope: 'unknown', error_code: 'rate_limited', verified_for_generation: false } } }));
+  expect(screen.getByText('****BETA')).toBeTruthy();
+  expect(screen.queryByText('****ABCD')).toBeNull();
+  expect(screen.getByLabelText('API Key').value).toBe('synthetic-B-draft');
+  expect(screen.queryByText(/Đã thêm Key/)).toBeNull();
+});
+
+it('keeps an add result when the selected provider tile is clicked again', async () => {
+  let finishAdd;
+  aiApi.addKey.mockReturnValue(new Promise(resolve => { finishAdd = resolve; }));
+  aiApi.listKeys.mockResolvedValueOnce({ success: true, data: [key] }).mockResolvedValue({ success: true, data: [key, {
+    ...key, id: 'key-2', masked_key: '****NEW2', enabled: false,
+  }] });
+  render(<KeyPool />);
+  await screen.findByText('****ABCD');
+  fireEvent.click(screen.getByRole('button', { name: /Thêm Key/ }));
+  fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'synthetic-A-secret' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Lưu Key' }));
+  fireEvent.click(screen.getByRole('button', { name: /Acme Voice/ }));
+  await act(async () => finishAdd({ success: true, data: { key: { ...key, id: 'key-2', enabled: false },
+    discovery: { status: 'partial', access_scope: 'unknown', error_code: 'rate_limited', verified_for_generation: false } } }));
+  expect(await screen.findByText('****NEW2')).toBeTruthy();
+});
+
+it.each(['toggle', 'delete'])('does not let a previous provider %s completion change the selected view', async action => {
+  let finish;
+  aiApi.listProviders.mockResolvedValue({ success: true, data: [providers[0], {
+    ...providers[0], id: 'beta', name: 'Beta Voice', enabled_key_count: 1,
+  }] });
+  aiApi.listKeys.mockImplementation(async id => ({ success: true, data: id === 'beta'
+    ? [{ ...key, id: 'beta-key', provider_id: 'beta', masked_key: '****BETA' }] : [key] }));
+  const pending = new Promise(resolve => { finish = resolve; });
+  if (action === 'toggle') aiApi.setKeyEnabled.mockReturnValue(pending);
+  else {
+    aiApi.deleteKey.mockReturnValue(pending);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+  }
+  render(<KeyPool />);
+  await screen.findByText('****ABCD');
+  fireEvent.click(screen.getByRole('button', { name: action === 'toggle' ? 'Tắt Key' : 'Xóa Key' }));
+  fireEvent.click(screen.getByRole('button', { name: /Beta Voice/ }));
+  await screen.findByText('****BETA');
+  await act(async () => finish(action === 'toggle'
+    ? { success: true, data: { key: { ...key, enabled: false }, discovery: { status: 'disabled' } } }
+    : { success: true, data: { deleted: true } }));
+  expect(screen.getByText('****BETA')).toBeTruthy();
+  expect(screen.queryByText('****ABCD')).toBeNull();
+  expect(screen.queryByText(/Key đã tắt|Đã xóa Key/)).toBeNull();
+});
+
+it('does not let an old refresh completion replace a later provider view', async () => {
+  let finishRefresh;
+  aiApi.refreshModels.mockReturnValue(new Promise(resolve => { finishRefresh = resolve; }));
+  render(<KeyPool />);
+  await screen.findByText('****ABCD');
+  fireEvent.click(screen.getByRole('button', { name: /Cập nhật Models/ }));
+  fireEvent.click(screen.getByRole('button', { name: /Local Voice/ }));
+  await screen.findByText(/Không cần API key/);
+  await act(async () => finishRefresh({ success: true, data: { id: 'run-old', status: 'complete', providers: {
+    acme: { keys_scanned: 1, retired: 0, status: 'complete', reason: null, results: [] },
+  } } }));
+  expect(screen.queryByText(/Cập nhật Models: complete/)).toBeNull();
 });

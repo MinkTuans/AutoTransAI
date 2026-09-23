@@ -384,7 +384,7 @@ The frontend is a single-page React 18 application built with Vite and designed 
 - **`LoadingSpinner.jsx`**: Consistent loading indicators and skeleton screens.
 - **`settings/ModelCatalog.jsx`**: The focused AI Models tab view; details use an allowlist for provider metadata and never render credentials. Frontend DOM regressions use Vitest 2, React Testing Library, and jsdom with mocked canonical API responses.
 - **`settings/FunctionRouting.jsx`**: The focused AI Functions tab view and accessible Model Picker. Its Select control uses the backend's capability-specific `selectable === true` result, rather than deriving eligibility from provider-wide keyless scope; fully unknown capability remains selectable when actual access exists. Canonical PUT remains final authority. Failed writes retain the previous default and show a fixed safe error. The catalog detail dialog is shared with the Models tab.
-- **`settings/KeyPool.jsx`**: The focused AI & API tab. It uses canonical provider/key DTOs, fixed safe errors, per-provider refresh results, and a backend-derived `keyless` flag. The old custom-provider creation form is absent because a canonical generic creation API does not yet exist.
+- **`settings/KeyPool.jsx`**: The focused AI & API tab. It uses canonical provider/key DTOs, fixed safe errors, per-provider refresh results, and a backend-derived `keyless` flag. The provider-level keyless policy covers Edge TTS, Pollinations, and Local Image even before active catalog rows exist; model-level keyless eligibility remains separate. In-flight key and refresh results are ignored after a provider selection changes. The old custom-provider creation form is absent because a canonical generic creation API does not yet exist.
 
 ---
 

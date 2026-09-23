@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { aiApi } from '../../api';
 
 const safeStatus = value => ['complete', 'partial', 'failed', 'stale', 'unsupported', 'empty', 'disabled', 'already_enabled'].includes(value)
@@ -16,7 +16,11 @@ export default function KeyPool() {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [refresh, setRefresh] = useState(null);
+  const selectionGeneration = useRef(0);
   const selected = providers.find(provider => provider.id === selectedId);
+  const isCurrent = generation => generation === selectionGeneration.current;
+
+  useEffect(() => () => { selectionGeneration.current += 1; }, []);
 
   useEffect(() => {
     let active = true;
@@ -48,16 +52,18 @@ export default function KeyPool() {
     return () => { active = false; };
   }, [selectedId, selected?.keyless]);
 
-  async function reloadKeys() {
-    if (!selected) return;
+  async function reloadKeys(providerId, generation) {
     try {
-      const response = await aiApi.listKeys(selected.id);
+      const response = await aiApi.listKeys(providerId);
+      if (!isCurrent(generation)) return;
       if (!response?.success || !Array.isArray(response.data)) throw new Error('Invalid keys response');
       setKeys(response.data);
       setKeysLoad('ready');
     } catch {
-      setKeys([]);
-      setKeysLoad('error');
+      if (isCurrent(generation)) {
+        setKeys([]);
+        setKeysLoad('error');
+      }
     }
   }
 
@@ -65,31 +71,38 @@ export default function KeyPool() {
     event.preventDefault();
     const secret = input.trim();
     if (!secret || !selected) return;
+    const providerId = selected.id;
+    const generation = selectionGeneration.current;
     setBusy(true);
     setError('');
     setNotice('');
     try {
-      const response = await aiApi.addKey(selected.id, secret);
+      const response = await aiApi.addKey(providerId, secret);
+      if (!isCurrent(generation)) return;
       if (!response?.success || !response.data?.key) throw new Error('Invalid add response');
       const { key, discovery } = response.data;
       setNotice(key.enabled
         ? 'Đã thêm Key và bật sau khi xác minh discovery complete.'
         : `Đã thêm Key nhưng vẫn tắt: discovery ${safeStatus(discovery?.status)}. Hãy kiểm tra rồi bật lại.`);
-      await reloadKeys();
+      await reloadKeys(providerId, generation);
     } catch {
-      setError('Không thể thêm API Key. Vui lòng kiểm tra và thử lại.');
+      if (isCurrent(generation)) setError('Không thể thêm API Key. Vui lòng kiểm tra và thử lại.');
     } finally {
-      setInput('');
-      setBusy(false);
+      if (isCurrent(generation)) {
+        setInput('');
+        setBusy(false);
+      }
     }
   }
 
   async function toggleKey(key) {
+    const generation = selectionGeneration.current;
     setBusy(true);
     setError('');
     setNotice('');
     try {
       const response = await aiApi.setKeyEnabled(key.id, !key.enabled);
+      if (!isCurrent(generation)) return;
       if (!response?.success || !response.data?.key) throw new Error('Invalid key response');
       const result = response.data;
       setKeys(current => current.map(entry => entry.id === key.id ? result.key : entry));
@@ -97,42 +110,46 @@ export default function KeyPool() {
         ? `Key vẫn tắt: discovery ${safeStatus(result.discovery?.status)}.`
         : result.key.enabled ? 'Key đã bật.' : 'Key đã tắt.');
     } catch {
-      setError('Không thể cập nhật API Key. Vui lòng thử lại.');
+      if (isCurrent(generation)) setError('Không thể cập nhật API Key. Vui lòng thử lại.');
     } finally {
-      setBusy(false);
+      if (isCurrent(generation)) setBusy(false);
     }
   }
 
   async function removeKey(key) {
     if (!window.confirm('Xóa API Key này? Models trong catalog vẫn được giữ đến lần cập nhật Models complete tiếp theo.')) return;
+    const generation = selectionGeneration.current;
     setBusy(true);
     setError('');
     setNotice('');
     try {
       const response = await aiApi.deleteKey(key.id);
+      if (!isCurrent(generation)) return;
       if (!response?.success || !response.data?.deleted) throw new Error('Invalid delete response');
       setKeys(current => current.filter(entry => entry.id !== key.id));
       setNotice('Đã xóa Key. Catalog models chỉ được dọn trong lần cập nhật Models complete tiếp theo.');
     } catch {
-      setError('Không thể xóa API Key. Vui lòng thử lại.');
+      if (isCurrent(generation)) setError('Không thể xóa API Key. Vui lòng thử lại.');
     } finally {
-      setBusy(false);
+      if (isCurrent(generation)) setBusy(false);
     }
   }
 
   async function refreshModels() {
+    const generation = selectionGeneration.current;
     setBusy(true);
     setError('');
     setNotice('');
     setRefresh(null);
     try {
       const response = await aiApi.refreshModels();
+      if (!isCurrent(generation)) return;
       if (!response?.data?.status || !response.data.providers) throw new Error('Invalid refresh response');
       setRefresh(response.data);
     } catch {
-      setError('Không thể cập nhật Models. Không thể xác nhận việc dọn catalog.');
+      if (isCurrent(generation)) setError('Không thể cập nhật Models. Không thể xác nhận việc dọn catalog.');
     } finally {
-      setBusy(false);
+      if (isCurrent(generation)) setBusy(false);
     }
   }
 
@@ -147,7 +164,17 @@ export default function KeyPool() {
           {providers.map(provider => <button type="button" key={provider.id}
             className={`provider-tile ${selectedId === provider.id ? 'is-selected' : ''}`}
             aria-pressed={selectedId === provider.id}
-            onClick={() => { setSelectedId(provider.id); setAdding(false); setInput(''); setError(''); setNotice(''); }}
+            onClick={() => {
+              if (provider.id === selectedId) return;
+              selectionGeneration.current += 1;
+              setSelectedId(provider.id);
+              setAdding(false);
+              setInput('');
+              setBusy(false);
+              setError('');
+              setNotice('');
+              setRefresh(null);
+            }}
             style={{ textAlign: 'left', color: '#f8fafc' }}>
             <strong>{provider.name}</strong><br />
             <span className="badge badge-neutral">{provider.provider_type}</span>

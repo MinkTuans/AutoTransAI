@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db
 from app.models import APIKey, CatalogModel, KeyModelAccess, Provider
 from app.models.settings import AIFunctionConfig
-from app.services.ai_routing import _PUBLIC_CATALOG_PROVIDERS, _keyless_allowed
+from app.services.ai_routing import _PUBLIC_CATALOG_PROVIDERS, _keyless_allowed, _keyless_provider
 from app.services.capability_registry import CAPABILITIES, catalog_capability_summary
 
 
@@ -200,14 +200,14 @@ async def list_providers(db: AsyncSession = Depends(get_db)):
     for p in sorted(providers.values(), key=lambda item: item.id):
         owned = [m for m in models if m.provider_id == p.id]
         enabled_keys = sum(pid == p.id for pid in keys.values())
-        keyless = any(m.enabled and m.retired_at is None and any(
+        keyless_model = any(m.enabled and m.retired_at is None and any(
             _keyless_allowed(m, capability) for capability in CAPABILITIES) for m in owned)
         rows.append(ProviderView(id=p.id, name=p.name, provider_type=p.provider_type,
                                  enabled=p.enabled, supported=p.supported, model_count=len(owned),
                                  active_model_count=sum(m.enabled and m.retired_at is None for m in owned),
                                  enabled_key_count=enabled_keys,
-                                 keyless=keyless,
-                                 status="disabled" if not p.enabled else "ready" if enabled_keys or keyless else "no_key"))
+                                 keyless=_keyless_provider(p.id),
+                                 status="disabled" if not p.enabled else "ready" if enabled_keys or keyless_model else "no_key"))
     return Envelope(data=rows)
 
 

@@ -128,6 +128,30 @@ async def test_keyless_system_provider_is_ready_without_credentials(catalog_api)
     assert model["access_scope"] == "keyless"
 
 
+async def test_keyless_provider_identity_does_not_depend_on_active_models(catalog_api):
+    client, sessions = catalog_api
+    async with sessions.begin() as db:
+        db.add_all([Provider(id="edge_tts", name="Edge", provider_type="audio"),
+                    Provider(id="pollinations", name="Pollinations", provider_type="image"),
+                    Provider(id="local_image", name="Local Image", provider_type="image"),
+                    Provider(id="openai", name="Open AI", provider_type="llm")])
+        await db.flush()
+    empty_rows = {row["id"]: row for row in (await client.get("/api/ai/providers")).json()["data"]}
+    assert empty_rows["edge_tts"]["keyless"] is True
+    assert empty_rows["pollinations"]["keyless"] is True
+    assert empty_rows["local_image"]["keyless"] is True
+    assert empty_rows["openai"]["keyless"] is False
+    async with sessions.begin() as db:
+        db.add(CatalogModel(id="retired-edge", provider_id="edge_tts", remote_model_id="edge-tts",
+                            source="system", capability_status="KNOWN", capabilities=["TTS"],
+                            retired_at=datetime(2026, 1, 1)))
+    rows = {row["id"]: row for row in (await client.get("/api/ai/providers")).json()["data"]}
+    assert rows["edge_tts"]["keyless"] is True
+    assert rows["pollinations"]["keyless"] is True
+    assert rows["local_image"]["keyless"] is True
+    assert rows["openai"]["keyless"] is False
+
+
 async def test_capability_filtered_keyless_eligibility_matches_function_write(catalog_api):
     client, sessions = catalog_api
     async with sessions.begin() as db:

@@ -24,6 +24,11 @@ _PUBLIC_CATALOG_PROVIDERS = frozenset({"fal", "elevenlabs"})
 _KEYLESS_SYSTEM_IMAGE_PROVIDERS = frozenset({"pollinations", "local_image"})
 
 
+def _keyless_provider(provider_id: str) -> bool:
+    """Service credential policy, independent of catalog model lifecycle."""
+    return provider_id == "edge_tts" or provider_id in _KEYLESS_SYSTEM_IMAGE_PROVIDERS
+
+
 def _keyless_allowed(model: CatalogModel, capability: str) -> bool:
     return (model.provider_id == "edge_tts" and capability == "TTS"
             or (capability == "IMAGE_GENERATION" and model.source == "system"
