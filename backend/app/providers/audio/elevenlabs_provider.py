@@ -18,6 +18,8 @@ from app.providers.base import (
     UsageEstimate,
     VoiceInfo,
 )
+from app.providers.request_target import resolve_request_target
+from app.services.ai_routing import RouteTarget
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -52,8 +54,8 @@ class ElevenLabsAudioProvider(AudioProvider):
                     headers={"xi-api-key": settings.ELEVENLABS_API_KEY},
                 )
                 return res.status_code == 200
-        except Exception as e:
-            logger.warning("ElevenLabs validation failed", error=str(e))
+        except Exception:
+            logger.warning("ElevenLabs validation failed")
             return False
 
     async def get_voices(self, language: str | None = None) -> list[VoiceInfo]:
@@ -78,8 +80,8 @@ class ElevenLabsAudioProvider(AudioProvider):
                             )
                         if voices:
                             return voices
-            except Exception as e:
-                logger.warning("Failed to fetch live ElevenLabs voices", error=str(e))
+            except Exception:
+                logger.warning("Failed to fetch live ElevenLabs voices")
 
         # Fallback default voices
         fallbacks = [
@@ -102,8 +104,15 @@ class ElevenLabsAudioProvider(AudioProvider):
         text: str,
         voice_id: str,
         output_path: Path,
+        *,
+        route_target: RouteTarget | None = None,
+        api_key: str | None = None,
     ) -> GenerationResult:
-        if not settings.ELEVENLABS_API_KEY:
+        model_id, request_key = resolve_request_target(
+            route_target, api_key, provider_id=self.provider_id, capabilities=("TTS",),
+            legacy_model="eleven_multilingual_v2", legacy_key=settings.ELEVENLABS_API_KEY,
+        )
+        if not request_key:
             return GenerationResult(
                 success=False,
                 error_message="ELEVENLABS_API_KEY not set in .env",
@@ -114,13 +123,13 @@ class ElevenLabsAudioProvider(AudioProvider):
         v_id = voice_id or "21m00Tcm4TlvDq8ikWAM"
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{v_id}"
         headers = {
-            "xi-api-key": settings.ELEVENLABS_API_KEY,
+            "xi-api-key": request_key,
             "Content-Type": "application/json",
             "Accept": "audio/mpeg",
         }
         payload = {
             "text": text,
-            "model_id": "eleven_multilingual_v2",
+            "model_id": model_id,
             "voice_settings": {
                 "stability": 0.5,
                 "similarity_boost": 0.75,
@@ -133,7 +142,7 @@ class ElevenLabsAudioProvider(AudioProvider):
                 response = await client.post(url, json=payload, headers=headers)
 
                 if response.status_code != 200:
-                    err_msg = f"ElevenLabs API error HTTP {response.status_code}: {response.text[:200]}"
+                    err_msg = f"ElevenLabs API error HTTP {response.status_code}"
                     logger.error(err_msg)
                     return GenerationResult(
                         success=False,
@@ -174,11 +183,15 @@ class ElevenLabsAudioProvider(AudioProvider):
                     metadata={"voice_id": v_id, "char_count": len(text)},
                 )
 
-        except Exception as e:
-            logger.error("ElevenLabs generation failed", error=str(e))
+        except httpx.TimeoutException:
+            logger.error("ElevenLabs generation timed out")
+            return GenerationResult(success=False, error_message="ElevenLabs generation timed out",
+                                    error_code="TTS_TIMEOUT", provider_id=self.provider_id)
+        except Exception:
+            logger.error("ElevenLabs generation failed")
             return GenerationResult(
                 success=False,
-                error_message=str(e),
+                error_message="ElevenLabs generation failed",
                 error_code="GENERATION_EXCEPTION",
                 provider_id=self.provider_id,
             )
@@ -213,8 +226,8 @@ class ElevenLabsAudioProvider(AudioProvider):
                                 unit="characters",
                             )
                         ]
-            except Exception as e:
-                logger.warning("Failed to fetch ElevenLabs quota", error=str(e))
+            except Exception:
+                logger.warning("Failed to fetch ElevenLabs quota")
 
         return [
             QuotaInfo(

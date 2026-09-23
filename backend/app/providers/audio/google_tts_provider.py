@@ -19,6 +19,8 @@ from app.providers.base import (
     UsageEstimate,
     VoiceInfo,
 )
+from app.providers.request_target import resolve_request_target
+from app.services.ai_routing import RouteTarget, UnsupportedModalityError
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -49,11 +51,12 @@ class GoogleCloudTTSProvider(AudioProvider):
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 res = await client.get(
-                    f"https://texttospeech.googleapis.com/v1/voices?key={settings.GOOGLE_CLOUD_TTS_API_KEY}"
+                    "https://texttospeech.googleapis.com/v1/voices",
+                    headers={"x-goog-api-key": settings.GOOGLE_CLOUD_TTS_API_KEY},
                 )
                 return res.status_code == 200
-        except Exception as e:
-            logger.warning("Google Cloud TTS validation failed", error=str(e))
+        except Exception:
+            logger.warning("Google Cloud TTS validation failed")
             return False
 
     async def get_voices(self, language: str | None = None) -> list[VoiceInfo]:
@@ -61,7 +64,8 @@ class GoogleCloudTTSProvider(AudioProvider):
             try:
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     res = await client.get(
-                        f"https://texttospeech.googleapis.com/v1/voices?key={settings.GOOGLE_CLOUD_TTS_API_KEY}"
+                        "https://texttospeech.googleapis.com/v1/voices",
+                        headers={"x-goog-api-key": settings.GOOGLE_CLOUD_TTS_API_KEY},
                     )
                     if res.status_code == 200:
                         data = res.json()
@@ -82,8 +86,8 @@ class GoogleCloudTTSProvider(AudioProvider):
                             )
                         if voices:
                             return voices[:50]  # Limit list size for UI performance
-            except Exception as e:
-                logger.warning("Failed to fetch Google Cloud TTS voices", error=str(e))
+            except Exception:
+                logger.warning("Failed to fetch Google Cloud TTS voices")
 
         # Fallback default voices
         fallbacks = [
@@ -109,8 +113,17 @@ class GoogleCloudTTSProvider(AudioProvider):
         text: str,
         voice_id: str,
         output_path: Path,
+        *,
+        route_target: RouteTarget | None = None,
+        api_key: str | None = None,
     ) -> GenerationResult:
-        if not settings.GOOGLE_CLOUD_TTS_API_KEY:
+        remote_voice, request_key = resolve_request_target(
+            route_target, api_key, provider_id=self.provider_id, capabilities=("TTS",),
+            legacy_model=None, legacy_key=settings.GOOGLE_CLOUD_TTS_API_KEY,
+        )
+        if route_target is not None and (not voice_id or remote_voice != voice_id):
+            raise UnsupportedModalityError("Google Cloud TTS catalog identity must match the requested voice.")
+        if not request_key:
             return GenerationResult(
                 success=False,
                 error_message="GOOGLE_CLOUD_TTS_API_KEY not set in .env",
@@ -123,7 +136,7 @@ class GoogleCloudTTSProvider(AudioProvider):
         parts = v_id.split("-")
         lang_code = f"{parts[0]}-{parts[1]}" if len(parts) >= 2 else "vi-VN"
 
-        url = f"https://texttospeech.googleapis.com/v1/text:synthesize?key={settings.GOOGLE_CLOUD_TTS_API_KEY}"
+        url = "https://texttospeech.googleapis.com/v1/text:synthesize"
         payload = {
             "input": {"text": text},
             "voice": {
@@ -138,10 +151,10 @@ class GoogleCloudTTSProvider(AudioProvider):
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(url, json=payload)
+                response = await client.post(url, json=payload, headers={"x-goog-api-key": request_key})
 
                 if response.status_code != 200:
-                    err_msg = f"Google Cloud TTS API error HTTP {response.status_code}: {response.text[:200]}"
+                    err_msg = f"Google Cloud TTS API error HTTP {response.status_code}"
                     logger.error(err_msg)
                     return GenerationResult(
                         success=False,
@@ -192,11 +205,15 @@ class GoogleCloudTTSProvider(AudioProvider):
                     metadata={"voice_id": v_id, "char_count": len(text)},
                 )
 
-        except Exception as e:
-            logger.error("Google Cloud TTS generation failed", error=str(e))
+        except httpx.TimeoutException:
+            logger.error("Google Cloud TTS generation timed out")
+            return GenerationResult(success=False, error_message="Google Cloud TTS generation timed out",
+                                    error_code="TTS_TIMEOUT", provider_id=self.provider_id)
+        except Exception:
+            logger.error("Google Cloud TTS generation failed")
             return GenerationResult(
                 success=False,
-                error_message=str(e),
+                error_message="Google Cloud TTS generation failed",
                 error_code="GENERATION_EXCEPTION",
                 provider_id=self.provider_id,
             )

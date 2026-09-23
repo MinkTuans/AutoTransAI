@@ -20,6 +20,7 @@ from app.providers.base import (
     UsageEstimate,
     VoiceInfo,
 )
+from app.services.ai_routing import RouteTarget
 
 logger = get_logger(__name__)
 
@@ -109,6 +110,9 @@ class EdgeTTSProvider(AudioProvider):
         text: str,
         voice_id: str,
         output_path: Path,
+        *,
+        route_target: RouteTarget | None = None,
+        api_key: str | None = None,
     ) -> GenerationResult:
         """
         Generate audio using Edge TTS.
@@ -121,6 +125,11 @@ class EdgeTTSProvider(AudioProvider):
         Returns:
             GenerationResult with the saved audio file path.
         """
+        if api_key is not None or (route_target is not None and (
+            route_target.provider_id != self.provider_id or route_target.capability != "TTS"
+            or not route_target.remote_model_id or route_target.key_id is not None
+        )):
+            raise ValueError("Edge TTS requires a keyless TTS route target.")
         spoken = (text or "").strip()
         if not spoken:
             return GenerationResult(
