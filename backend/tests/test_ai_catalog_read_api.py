@@ -1,0 +1,204 @@
+"""Canonical catalog GET contracts against disposable SQLite and synthetic credentials."""
+from datetime import datetime
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import event, select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from app.api.deps import get_db
+from app.main import app
+from app.models import APIKey, CatalogModel, KeyModelAccess, Provider
+from app.models.settings import AIFunctionConfig
+
+
+@pytest.fixture
+async def catalog_api(tmp_path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'catalog.db'}")
+    event.listen(engine.sync_engine, "connect", lambda conn, _: conn.execute("PRAGMA foreign_keys=ON"))
+    async with engine.begin() as conn:
+        for table in (Provider, APIKey, CatalogModel, KeyModelAccess, AIFunctionConfig):
+            await conn.run_sync(table.__table__.create)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def isolated_db():
+        async with sessions() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = isolated_db
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            yield client, sessions
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        await engine.dispose()
+
+
+async def test_dynamic_provider_counts_and_distinct_enabled_key_access(catalog_api):
+    client, sessions = catalog_api
+    async with sessions.begin() as db:
+        db.add_all([Provider(id="openai", name="Open AI", provider_type="llm"),
+                    Provider(id="fal", name="Fal", provider_type="video"),
+                    Provider(id="empty", name="Empty", provider_type="llm")])
+        await db.flush()
+        model = CatalogModel(id="model-one", provider_id="openai", remote_model_id="remote-1",
+                             display_name="First", source="discovered")
+        public = CatalogModel(id="model-public", provider_id="fal", remote_model_id="fal/film",
+                              source="discovered")
+        keys = [APIKey(id=f"key-{n}", provider_id="openai", ciphertext=f"cipher-secret-{n}",
+                       fingerprint=f"finger-secret-{n}", masked_key="****", enabled=n != 3)
+                for n in (1, 2, 3)]
+        fal_key = APIKey(id="fal-key", provider_id="fal", ciphertext="fal-secret",
+                         fingerprint="fal-fingerprint", masked_key="****")
+        db.add_all([model, public, *keys, fal_key])
+        await db.flush()
+        db.add_all([KeyModelAccess(key_id=k.id, model_id=model.id, provider_id="openai") for k in keys])
+    providers = (await client.get("/api/ai/providers")).json()["data"]
+    assert {p["id"] for p in providers} == {"openai", "fal", "empty"}
+    assert next(p for p in providers if p["id"] == "empty")["enabled_key_count"] == 0
+    assert next(p for p in providers if p["id"] == "openai")["model_count"] == 1
+    models = (await client.get("/api/ai/models")).json()["data"]["items"]
+    assert len(models) == 2
+    assert next(m for m in models if m["id"] == "model-one")["available_key_count"] == 2
+    public_row = next(m for m in models if m["id"] == "model-public")
+    assert public_row["available_key_count"] == 1
+    assert public_row["access_scope"] == "catalog_unverified"
+    assert "secret" not in str(providers) + str(models)
+    assert "fingerprint" not in str(providers) + str(models)
+
+
+async def test_search_filter_pagination_status_defaults_and_read_only(catalog_api):
+    client, sessions = catalog_api
+    async with sessions.begin() as db:
+        db.add_all([Provider(id="acme", name="Acme Studio", provider_type="llm"),
+                    Provider(id="other", name="Other", provider_type="llm")])
+        await db.flush()
+        db.add_all([CatalogModel(id="one", provider_id="acme", remote_model_id="remote-alpha",
+                                 display_name="Vision Alpha", source="manual", capability_status="KNOWN",
+                                 capabilities=["VISUAL_GENDER"], discovery_metadata={"api_key": "secret-marker"}),
+                    CatalogModel(id="two", provider_id="acme", remote_model_id="remote-beta",
+                                 source="discovered", retired_at=datetime(2026, 1, 1)),
+                    CatalogModel(id="three", provider_id="other", remote_model_id="remote-gamma",
+                                 source="manual", capability_status="KNOWN", capabilities=["TTS"], enabled=False)])
+        db.add(AIFunctionConfig(function_id="visual_gender", function_name="Visual Gender",
+                                capability="VISUAL_GENDER", primary_provider_id="acme", model_id="one"))
+    for term in ("remote-alpha", "Vision Alpha", "VISUAL_GENDER"):
+        result = (await client.get("/api/ai/models", params={"q": term})).json()["data"]
+        assert [m["id"] for m in result["items"]] == ["one"]
+    assert {m["id"] for m in (await client.get("/api/ai/models", params={"q": "Acme Studio"})).json()["data"]["items"]} == {"one", "two"}
+    unknown = (await client.get("/api/ai/models", params={"capability": "STT"})).json()["data"]
+    assert {m["id"] for m in unknown["items"]} == {"two"}
+    assert (await client.get("/api/ai/models", params={"provider_id": "missing"})).status_code == 404
+    page = (await client.get("/api/ai/models", params={"page": 2, "limit": 1})).json()["data"]
+    assert page["total"] == 3 and len(page["items"]) == 1
+    assert (await client.get("/api/ai/models", params={"limit": 101})).status_code == 422
+    detail = (await client.get("/api/ai/models/one")).json()["data"]
+    assert detail["default_for"] == ["visual_gender"]
+    assert detail["metadata"] == {}
+    assert detail["status"] == "active"
+    assert (await client.get("/api/ai/models/two")).json()["data"]["status"] == "retired"
+    assert (await client.get("/api/ai/models/three")).json()["data"]["status"] == "disabled"
+    assert (await client.get("/api/ai/models/missing")).status_code == 404
+    functions = (await client.get("/api/ai/functions")).json()["data"]
+    assert functions[0]["model_id"] == "one" and functions[0]["configuration_error"] is None
+    assert "secret-marker" not in str(detail)
+    async with sessions() as db:
+        assert len((await db.scalars(select(CatalogModel))).all()) == 3
+        assert len((await db.scalars(select(AIFunctionConfig))).all()) == 1
+
+
+async def test_keyless_system_provider_is_ready_without_credentials(catalog_api):
+    client, sessions = catalog_api
+    async with sessions.begin() as db:
+        db.add(Provider(id="edge_tts", name="Edge", provider_type="audio"))
+        await db.flush()
+        db.add(CatalogModel(id="edge", provider_id="edge_tts", remote_model_id="edge-tts",
+                            source="system", capability_status="KNOWN", capabilities=["TTS"]))
+    provider = (await client.get("/api/ai/providers")).json()["data"][0]
+    model = (await client.get("/api/ai/models/edge")).json()["data"]
+    assert provider["status"] == "ready"
+    assert model["access_scope"] == "keyless"
+
+
+async def test_unexpected_read_error_does_not_expose_credential_text(catalog_api, caplog):
+    client, _ = catalog_api
+
+    async def broken_db():
+        raise RuntimeError("synthetic-ciphertext-and-fingerprint")
+        yield  # pragma: no cover
+
+    app.dependency_overrides[get_db] = broken_db
+    response = await client.get("/api/ai/providers")
+    assert response.status_code == 500
+    assert "synthetic-ciphertext-and-fingerprint" not in response.text
+    assert "synthetic-ciphertext-and-fingerprint" not in caplog.text
+
+
+async def test_function_defaults_report_retired_missing_and_legacy_state(catalog_api):
+    client, sessions = catalog_api
+    async with sessions.begin() as db:
+        db.add(Provider(id="openai", name="Open AI", provider_type="llm"))
+        await db.flush()
+        db.add(CatalogModel(id="retired-id", provider_id="openai", remote_model_id="remote-retired",
+                            retired_at=datetime(2026, 1, 1)))
+        db.add(CatalogModel(id="canonical-legacy", provider_id="openai", remote_model_id="old-model-name"))
+        db.add_all([
+            AIFunctionConfig(function_id="stt", function_name="STT", capability="STT",
+                             primary_provider_id="openai", model_id="retired-id"),
+            AIFunctionConfig(function_id="translation", function_name="Translation", capability="TRANSLATION",
+                             primary_provider_id="openai", model_id="deleted-id"),
+            AIFunctionConfig(function_id="visual_gender", function_name="Visual Gender", capability="VISUAL_GENDER",
+                             primary_provider_id="openai", model_id="old-model-name"),
+        ])
+    functions = {f["function_id"]: f for f in (await client.get("/api/ai/functions")).json()["data"]}
+    assert functions["stt"]["default_status"] == "retired"
+    assert functions["stt"]["selectable"] is False
+    assert functions["translation"]["default_status"] == "missing"
+    assert functions["translation"]["selectable"] is False
+    assert functions["visual_gender"]["default_status"] == "legacy_unmigrated"
+    assert functions["visual_gender"]["selectable"] is False
+
+
+async def test_catalog_gets_issue_no_database_writes(catalog_api):
+    client, sessions = catalog_api
+    engine = sessions.kw["bind"]
+    writes = []
+
+    def capture(_conn, _cursor, statement, _params, _context, _many):
+        if statement.lstrip().split(None, 1)[0].upper() in {"INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP"}:
+            writes.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", capture)
+    try:
+        for path in ("/api/ai/providers", "/api/ai/models", "/api/ai/models/absent", "/api/ai/functions"):
+            response = await client.get(path)
+            assert response.status_code in {200, 404}
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture)
+    assert writes == []
+
+
+async def test_malformed_persisted_metadata_cannot_break_or_expand_detail(catalog_api):
+    client, sessions = catalog_api
+    async with sessions.begin() as db:
+        db.add(Provider(id="fal", name="Fal", provider_type="video"))
+        await db.flush()
+        db.add(CatalogModel(id="malformed", provider_id="fal", remote_model_id="fal/model",
+                            discovery_metadata={"category": {"api_key": "synthetic-secret"},
+                                                "ciphertext": "synthetic-secret"}))
+    response = await client.get("/api/ai/models/malformed")
+    assert response.status_code == 200
+    assert response.json()["data"]["metadata"] == {}
+    assert "synthetic-secret" not in response.text
+
+
+async def test_function_error_text_is_restricted_to_known_codes(catalog_api):
+    client, sessions = catalog_api
+    async with sessions.begin() as db:
+        db.add(AIFunctionConfig(function_id="stt", function_name="STT", capability="STT",
+                                primary_provider_id="missing", model_id="missing",
+                                configuration_error="synthetic-secret"))
+    response = await client.get("/api/ai/functions")
+    assert response.status_code == 200
+    assert response.json()["data"][0]["configuration_error"] == "configuration_error"
+    assert "synthetic-secret" not in response.text
