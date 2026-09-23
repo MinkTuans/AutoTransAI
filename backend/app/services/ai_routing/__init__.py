@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,7 @@ _FUNCTION = {"STT": "stt", "TRANSLATION": "translation", "LLM": "translation", "
 # candidate to try at generation time, not verified model entitlement.
 _PUBLIC_CATALOG_PROVIDERS = frozenset({"fal", "elevenlabs"})
 _KEYLESS_SYSTEM_IMAGE_PROVIDERS = frozenset({"pollinations", "local_image"})
+_log = logging.getLogger(__name__)
 
 
 def _keyless_provider(provider_id: str) -> bool:
@@ -157,8 +159,10 @@ def classify_failure(error: BaseException) -> str:
         status = getattr(error, "http_status", None)
     if status is None:
         status = getattr(getattr(error, "response", None), "status_code", None)
-    if status in (401, 403):
+    if status == 401:
         return "auth"
+    if status == 403:
+        return "model_unavailable"
     if status == 429:
         return "rate_limit"
     if status == 404:
@@ -189,41 +193,67 @@ async def invoke_route(route: RoutePlan, transport: Callable[[RouteTarget, str |
     failures: list[str] = []
     for target in route.targets:
         try:
-            # Each lookup gets a fresh transaction. No connection, ORM object,
-            # or decrypted credential service survives into the provider call.
-            async with sessions() as db:
-                provider = await db.get(Provider, target.provider_id)
-                model = await db.get(CatalogModel, target.model_id)
-                if (provider is None or not provider.enabled or model is None or not model.enabled or model.retired_at is not None
-                        or model.provider_id != target.provider_id
-                        or model.remote_model_id != target.remote_model_id
-                        or not compatible(target.capability, model_evidence(model))):
-                    raise RouteConfigurationError("Catalog route target changed.")
-                if target.key_id:
-                    row = await db.get(APIKey, target.key_id)
-                    if (row is None or not _key_eligible(row, datetime.now(timezone.utc).replace(tzinfo=None))
-                            or row.provider_id != target.provider_id):
-                        raise RouteConfigurationError("Credential access changed.")
-                    if target.access_scope == "listing_unverified" and await db.get(
-                            KeyModelAccess, (target.key_id, target.model_id)) is None:
-                        raise RouteConfigurationError("Credential listing access changed.")
-                    credentials = await CredentialService.open(db, data_dir)
-                    secret = await credentials.reveal(target.key_id)
-                else:
-                    if not _keyless_allowed(model, target.capability) or target.access_scope != "keyless":
-                        raise RouteConfigurationError("Keyless target is not allowed.")
-                    secret = None
             for attempt in range(max_attempts):
+                # Recheck before every transport, including a retry after sleep.
+                async with sessions() as db:
+                    provider = await db.get(Provider, target.provider_id)
+                    model = await db.get(CatalogModel, target.model_id)
+                    if (provider is None or not provider.enabled or model is None or not model.enabled or model.retired_at is not None
+                            or model.provider_id != target.provider_id
+                            or model.remote_model_id != target.remote_model_id
+                            or not compatible(target.capability, model_evidence(model))):
+                        raise RouteConfigurationError("Catalog route target changed.")
+                    if target.key_id:
+                        row = await db.get(APIKey, target.key_id)
+                        if (row is None or not _key_eligible(row, datetime.now(timezone.utc).replace(tzinfo=None))
+                                or row.provider_id != target.provider_id):
+                            raise RouteConfigurationError("Credential access changed.")
+                        if target.access_scope == "listing_unverified" and await db.get(
+                                KeyModelAccess, (target.key_id, target.model_id)) is None:
+                            raise RouteConfigurationError("Credential listing access changed.")
+                        revision = row.revision
+                        secret = await (await CredentialService.open(db, data_dir)).reveal(target.key_id)
+                    else:
+                        if not _keyless_allowed(model, target.capability) or target.access_scope != "keyless":
+                            raise RouteConfigurationError("Keyless target is not allowed.")
+                        revision, secret = None, None
+
+                async def account(*, success: bool, code: str | None = None,
+                                  error: BaseException | None = None) -> None:
+                    if target.key_id is None or revision is None:
+                        return
+                    status = getattr(error, "status_code", None)
+                    if status is None:
+                        status = getattr(error, "http_status", None)
+                    if status is None:
+                        status = getattr(getattr(error, "response", None), "status_code", None)
+                    try:
+                        async with sessions.begin() as accounting_db:
+                            credentials = await CredentialService.open(accounting_db, data_dir)
+                            await credentials.record_result(
+                                target.key_id, revision, success=success, code=code,
+                                http_status=status if isinstance(status, int) else None,
+                                quota_exhausted=getattr(error, "code", None) == "insufficient_quota",
+                            )
+                    except Exception:
+                        # The provider may already have completed a side effect.
+                        # Never expose accounting/SQL exception details or resubmit it.
+                        _log.warning("AI route credential result accounting failed")
+
                 try:
-                    return await wait_for(transport(target, secret), timeout)
+                    result = await wait_for(transport(target, secret), timeout)
                 except RoutePending:
                     raise
                 except Exception as error:
                     code = classify_failure(error)
-                    if code not in ("timeout", "rate_limit", "provider_unavailable") or attempt + 1 == max_attempts:
+                    await account(success=False, code=code, error=error)
+                    if code not in ("timeout", "provider_unavailable") or attempt + 1 == max_attempts:
                         failures.append(code)
                         break
                     await sleep(min(0.25 * (2 ** attempt), 2.0))
+                else:
+                    await account(success=True)
+                    return result
         except RoutePending:
             raise
         except Exception as error:

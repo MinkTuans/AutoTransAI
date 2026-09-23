@@ -76,6 +76,24 @@ async def test_read_dto_never_exposes_unrecognized_error_text(credentials, db, t
     assert (await service.get(key.id)).last_error_code is None
 
 
+async def test_result_accounting_requires_original_revision_and_safe_code(credentials, db, tmp_path):
+    service = await credentials.CredentialService.open(db, tmp_path)
+    key = await service.create("one", "synthetic-accounting")
+    await db.commit()
+    assert await service.record_result(key.id, key.revision, success=False, code="timeout")
+    await db.commit()
+    observed = await service.get(key.id)
+    assert (observed.request_count, observed.failure_count, observed.last_error_code) == (1, 1, "timeout")
+    with pytest.raises(credentials.CredentialValidationError):
+        await service.record_result(key.id, key.revision, success=False, code="secret-sentinel")
+    assert await service.record_result(key.id, key.revision + 1, success=True) is False
+    assert (await service.get(key.id)).request_count == 1
+    assert await service.record_result(key.id, key.revision, success=True)
+    await db.commit()
+    observed = await service.get(key.id)
+    assert (observed.request_count, observed.success_count, observed.failure_count, observed.last_error_code) == (2, 1, 1, None)
+
+
 async def test_duplicate_detection_is_provider_scoped_and_keyed(credentials, db, tmp_path):
     service = await credentials.CredentialService.open(db, tmp_path)
     first = await service.create("one", "same-synthetic-secret")

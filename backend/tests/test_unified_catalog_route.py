@@ -668,8 +668,11 @@ async def test_unified_step_failure_persists_only_sanitized_route_error(tmp_path
     async with sessions() as db:
         saved = await db.get(WorkflowExecution, "safe-run")
         steps = (await db.execute(select(WorkflowStepExecution))).scalars().all()
+        key = (await db.scalars(select(APIKey))).one()
         assert saved.status == WorkflowEngineStatus.FAILED.value
-        assert "AI route failed: auth" in saved.error_message
+        assert saved.error_message == "Configured AI model is unavailable, incompatible, or has no credential access."
+        assert key.runtime_status == "invalid" and key.last_error_code == "auth"
+        assert "AI route failed: auth" in caplog.text
         assert "synthetic-upstream-secret" not in str(saved.context_data) + saved.error_message + steps[0].error
     assert "synthetic-upstream-secret" not in caplog.text + capsys.readouterr().out
     await engine.dispose()

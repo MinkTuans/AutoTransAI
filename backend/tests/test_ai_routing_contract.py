@@ -310,7 +310,7 @@ async def test_accepted_async_job_pending_does_not_retry_or_fallback(routing_db)
     async with sessions.begin() as db:
         first = await add_model(db, "fal", "fal-ai/one", caps=["IMAGE_GENERATION"], status="KNOWN")
         second = await add_model(db, "fal", "fal-ai/two", caps=["IMAGE_GENERATION"], status="KNOWN")
-        await add_key(db, path, "fal", [first, second], "synthetic-private")
+        key = await add_key(db, path, "fal", [first, second], "synthetic-private")
     async with sessions() as db:
         route = await build_route(db, "IMAGE_GENERATION")
     calls = []
@@ -322,6 +322,9 @@ async def test_accepted_async_job_pending_does_not_retry_or_fallback(routing_db)
     with pytest.raises(RoutePending):
         await invoke_route(route, transport, sessions, path, max_attempts=2)
     assert calls == ["fal-ai/one"]
+    async with sessions() as db:
+        row = await db.get(APIKey, key.id)
+        assert (row.request_count, row.success_count, row.failure_count) == (0, 0, 0)
 
 
 @pytest.mark.asyncio
@@ -472,7 +475,8 @@ async def test_rate_retry_is_bounded_then_moves_to_next_model(routing_db):
     async with sessions.begin() as db:
         first = await add_model(db, "openai", "one", caps=["STT"], status="KNOWN")
         second = await add_model(db, "openai", "two", caps=["STT"], status="KNOWN")
-        await add_key(db, path, "openai", [first, second], "synthetic-private")
+        await add_key(db, path, "openai", [first], "synthetic-private")
+        await add_key(db, path, "openai", [second], "synthetic-second")
     calls, waits = [], []
     async def transport(target, secret):
         calls.append(target.remote_model_id)
@@ -486,8 +490,160 @@ async def test_rate_retry_is_bounded_then_moves_to_next_model(routing_db):
     async with sessions() as db:
         route = await build_route(db, "STT")
     assert await invoke_route(route, transport, sessions, path, max_attempts=2, sleep=sleep) == "ok"
-    assert calls == ["one", "one", "two"]
-    assert waits == [0.25]
+    assert calls == ["one", "two"]
+    assert waits == []
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_cools_key_and_uses_next_key_on_same_model(routing_db):
+    from datetime import datetime, timedelta, timezone
+    from app.services.ai_routing import build_route, invoke_route
+    sessions, path = routing_db
+    async with sessions.begin() as db:
+        model = await add_model(db, "openai", "one", caps=["STT"], status="KNOWN")
+        first = await add_key(db, path, "openai", [model], "synthetic-first")
+        second = await add_key(db, path, "openai", [model], "synthetic-second")
+    async with sessions() as db:
+        route = await build_route(db, "STT", preferred_key_ids=(first.id,))
+    calls = []
+
+    async def transport(target, secret):
+        calls.append(target.key_id)
+        if target.key_id == first.id:
+            error = RuntimeError("synthetic-secret-must-not-persist")
+            error.status_code = 429
+            raise error
+        return "ok"
+
+    assert await invoke_route(route, transport, sessions, path, max_attempts=3) == "ok"
+    assert calls == [first.id, second.id]
+    async with sessions() as db:
+        a, b = await db.get(APIKey, first.id), await db.get(APIKey, second.id)
+        assert (a.request_count, a.success_count, a.failure_count, a.runtime_status, a.last_error_code) == (1, 0, 1, "rate_limited", "rate_limit")
+        assert datetime.now(timezone.utc).replace(tzinfo=None) < a.cooldown_until <= datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=5)
+        assert (b.request_count, b.success_count, b.failure_count, b.runtime_status) == (1, 1, 0, "ready")
+        assert "synthetic-secret-must-not-persist" not in str(a.last_error_code)
+        next_route = await build_route(db, "STT")
+        assert [target.key_id for target in next_route.targets] == [second.id]
+    async with sessions.begin() as db:
+        (await db.get(APIKey, first.id)).cooldown_until = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=1)
+    async with sessions() as db:
+        eligible = await build_route(db, "STT", preferred_key_ids=(first.id,))
+        assert eligible.targets[0].key_id == first.id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,code,expected_status", [
+    (401, None, "invalid"), (403, None, "ready"), (429, "insufficient_quota", "exhausted"),
+    (400, None, "ready"),
+])
+async def test_failure_state_persists_and_falls_back_cross_provider(routing_db, status, code, expected_status):
+    from app.services.ai_routing import build_route, invoke_route
+    sessions, path = routing_db
+    async with sessions.begin() as db:
+        first_model = await add_model(db, "openai", "one", caps=["STT"], status="KNOWN")
+        second_model = await add_model(db, "gemini", "two", caps=["STT"], status="KNOWN")
+        first = await add_key(db, path, "openai", [first_model], "synthetic-first")
+        second = await add_key(db, path, "gemini", [second_model], "synthetic-second")
+        db.add(AIFunctionConfig(function_id="stt", function_name="STT", capability="STT",
+                                primary_provider_id="openai", model_id=first_model.id))
+    async with sessions() as db:
+        route = await build_route(db, "STT")
+    calls = []
+
+    async def transport(target, secret):
+        calls.append(target.key_id)
+        if target.key_id == first.id:
+            error = RuntimeError("synthetic-secret-must-not-persist")
+            error.status_code = status
+            error.code = code
+            raise error
+        return "ok"
+
+    assert await invoke_route(route, transport, sessions, path, max_attempts=2) == "ok"
+    assert calls == [first.id, second.id]
+    async with sessions() as db:
+        row = await db.get(APIKey, first.id)
+        assert (row.request_count, row.failure_count, row.runtime_status) == (1, 1, expected_status)
+        assert row.last_error_code in {"auth", "quota", "model_unavailable", "capability_mismatch"}
+        assert "synthetic-secret-must-not-persist" not in row.last_error_code
+        await db.delete(await db.get(AIFunctionConfig, "stt"))
+        await db.flush()
+        next_route = await build_route(db, "STT")
+        assert (first.id in [t.key_id for t in next_route.targets]) is (expected_status == "ready")
+
+
+@pytest.mark.asyncio
+async def test_rotation_during_transport_does_not_attribute_result_to_replacement(routing_db):
+    from app.services.ai_routing import build_route, invoke_route
+    sessions, path = routing_db
+    async with sessions.begin() as db:
+        model = await add_model(db, "openai", "one", caps=["STT"], status="KNOWN")
+        key = await add_key(db, path, "openai", [model], "synthetic-original")
+    async with sessions() as db:
+        route = await build_route(db, "STT")
+
+    async def transport(target, secret):
+        async with sessions.begin() as db:
+            await (await CredentialService.open(db, path)).rotate(key.id, "synthetic-replacement")
+        return "accepted"
+
+    assert await invoke_route(route, transport, sessions, path) == "accepted"
+    async with sessions() as db:
+        row = await db.get(APIKey, key.id)
+        assert row.revision == key.revision + 1
+        assert (row.request_count, row.success_count, row.failure_count) == (0, 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_success_survives_result_accounting_failure(routing_db, monkeypatch, caplog):
+    from app.services.ai_routing import build_route, invoke_route
+    sessions, path = routing_db
+    async with sessions.begin() as db:
+        model = await add_model(db, "openai", "one", caps=["STT"], status="KNOWN")
+        await add_key(db, path, "openai", [model], "synthetic-first")
+    async with sessions() as db:
+        route = await build_route(db, "STT")
+    calls = []
+
+    async def transport(target, secret):
+        calls.append(target.key_id)
+        return "completed"
+
+    async def broken(*args, **kwargs):
+        raise RuntimeError("synthetic-accounting-secret")
+
+    monkeypatch.setattr(CredentialService, "record_result", broken, raising=False)
+    assert await invoke_route(route, transport, sessions, path) == "completed"
+    assert len(calls) == 1
+    assert "AI route credential result accounting failed" in caplog.text
+    assert "synthetic-accounting-secret" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_failed_attempt_with_accounting_failure_keeps_error_sanitized(routing_db, monkeypatch, caplog):
+    from app.services.ai_routing import RouteExhausted, build_route, invoke_route
+    sessions, path = routing_db
+    async with sessions.begin() as db:
+        model = await add_model(db, "openai", "one", caps=["STT"], status="KNOWN")
+        await add_key(db, path, "openai", [model], "synthetic-first")
+    async with sessions() as db:
+        route = await build_route(db, "STT")
+
+    async def transport(target, secret):
+        error = RuntimeError("synthetic-upstream-secret")
+        error.status_code = 401
+        raise error
+
+    async def broken(*args, **kwargs):
+        raise RuntimeError("synthetic-accounting-secret")
+
+    monkeypatch.setattr(CredentialService, "record_result", broken)
+    with pytest.raises(RouteExhausted, match="AI route failed: auth") as exc:
+        await invoke_route(route, transport, sessions, path)
+    assert "synthetic-upstream-secret" not in str(exc.value) + caplog.text
+    assert "synthetic-accounting-secret" not in str(exc.value) + caplog.text
+    assert "AI route credential result accounting failed" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -618,7 +774,8 @@ async def test_failure_budget_moves_to_next_model(routing_db, status, code, atte
     async with sessions.begin() as db:
         first = await add_model(db, "openai", "one", caps=["STT"], status="KNOWN")
         second = await add_model(db, "openai", "two", caps=["STT"], status="KNOWN")
-        await add_key(db, path, "openai", [first, second], "synthetic-private")
+        await add_key(db, path, "openai", [first], "synthetic-private")
+        await add_key(db, path, "openai", [second], "synthetic-second")
     async with sessions() as db:
         route = await build_route(db, "STT")
     calls = []

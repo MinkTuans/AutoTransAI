@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
@@ -195,6 +195,41 @@ class CredentialService:
         if row is None:
             raise CredentialNotFoundError("Credential does not exist.")
         return self._decrypt(row)
+
+    async def record_result(self, key_id: str, expected_revision: int, *, success: bool,
+                            code: str | None = None, http_status: int | None = None,
+                            quota_exhausted: bool = False) -> bool:
+        """Account for one provider attempt only on the credential that made it."""
+        if (success and code is not None) or (not success and code not in SAFE_KEY_ERROR_CODES):
+            raise CredentialValidationError("Credential result code is invalid.")
+        provider_id = await self._session.scalar(select(APIKey.provider_id).where(APIKey.id == key_id))
+        if provider_id is None:
+            return False
+        await lock_catalog_provider(self._session, provider_id)
+        row = await self._session.scalar(select(APIKey).where(APIKey.id == key_id)
+                                         .execution_options(populate_existing=True))
+        if row is None or not row.enabled or row.revision != expected_revision:
+            return False
+        row.request_count += 1
+        if success:
+            row.success_count += 1
+            if row.runtime_status == "ready":
+                row.last_error_code = None
+        else:
+            row.failure_count += 1
+            row.last_error_code = code
+            if row.runtime_status not in ("invalid", "exhausted"):
+                if http_status == 401:
+                    row.runtime_status = "invalid"
+                    row.cooldown_until = None
+                elif quota_exhausted and code == "quota":
+                    row.runtime_status = "exhausted"
+                    row.cooldown_until = None
+                elif code == "rate_limit":
+                    row.runtime_status = "rate_limited"
+                    row.cooldown_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=60)
+        await self._session.flush()
+        return True
 
     async def delete(self, key_id: str) -> bool:
         row = await self._session.get(APIKey, key_id)
