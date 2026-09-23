@@ -13,6 +13,7 @@ from app.database import Base
 from app.models import APIKey, CatalogModel, KeyModelAccess, Provider, Project
 from app.models.settings import AIFunctionConfig
 from app.models.video_thumbnail import VideoThumbnail
+from app.models.workflow_engine import SpeakerVoiceMapping
 from app.services.ai_routing import RouteConfigurationError, RouteExhausted
 from app.services.credential_service import CredentialService
 from app.services.video_translator.character_mapping_service import map_and_persist
@@ -39,6 +40,23 @@ async def catalog(tmp_path):
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with sessions.begin() as db:
         db.add_all(Provider(id=p, name=p, provider_type="llm") for p in ("openai", "gemini", "anthropic"))
+        db.add(Project(id="project", title="Synthetic project"))
+    yield sessions, tmp_path
+    await engine.dispose()
+
+
+@pytest.fixture
+async def constrained_catalog(tmp_path):
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'single-pool.db'}",
+        pool_size=1, max_overflow=0, pool_timeout=0.2,
+    )
+    event.listen(engine.sync_engine, "connect", lambda conn, _: conn.execute("PRAGMA foreign_keys=ON"))
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    async with sessions.begin() as db:
+        db.add(Provider(id="openai", name="openai", provider_type="llm"))
         db.add(Project(id="project", title="Synthetic project"))
     yield sessions, tmp_path
     await engine.dispose()
@@ -96,6 +114,52 @@ async def test_character_mapping_uses_catalog_default_then_backup_and_persists_s
     assert first_result.by_speaker["S1"]["name"] == "Alice"
     assert first_result.by_speaker["S1"]["character_id"] == second_result.by_speaker["S1"]["character_id"]
     assert calls == [("mapping-a", "synthetic-a"), ("mapping-b", "synthetic-b")] * 2
+
+
+@pytest.mark.asyncio
+async def test_unknown_only_character_candidate_advances_to_backup(catalog, monkeypatch):
+    sessions, path = catalog
+    async with sessions.begin() as db:
+        selected = await add_model(db, path, "openai", "unknown-speaker", "synthetic-a")
+        await add_model(db, path, "gemini", "known-speaker", "synthetic-b")
+        db.add(AIFunctionConfig(function_id="translation", function_name="Translation", capability="LLM",
+                                primary_provider_id="openai", model_id=selected.id))
+    calls = []
+
+    async def answer(prompt, target, key):
+        calls.append(target.remote_model_id)
+        member = "OTHER" if target.remote_model_id == "unknown-speaker" else "S1"
+        return json.dumps({"characters": [{"character_id": "alice", "name": "Alice", "gender": "female",
+                                           "role": "main", "speaker_ids": [member], "confidence": 0.95}]})
+
+    registry(monkeypatch, answer)
+    async with sessions() as db:
+        result = await map_and_persist(db, "project", [{"speaker_id": "S1", "text": "Hello"}], None,
+                                       visual_genders={}, sessions=sessions, data_dir=path)
+    assert result.by_speaker["S1"]["name"] == "Alice"
+    assert calls == ["unknown-speaker", "known-speaker"]
+
+
+@pytest.mark.asyncio
+async def test_voice_only_mapping_receives_generated_character_id(catalog):
+    sessions, _ = catalog
+    async with sessions.begin() as db:
+        db.add(SpeakerVoiceMapping(id="voice-only", project_id="project", speaker_id="S1",
+                                   speaker_name="S1", voice_provider="edge_tts",
+                                   voice_id="vi-VN-HoaiMyNeural", character_id=None))
+
+    class LegacyLLM:
+        async def generate_text(self, prompt):
+            return json.dumps({"characters": [{"character_id": "alice", "name": "Alice", "gender": "female",
+                                              "role": "main", "speaker_ids": ["S1"], "confidence": 0.95}]})
+
+    async with sessions() as db:
+        result = await map_and_persist(db, "project", [{"speaker_id": "S1", "text": "Hello"}],
+                                       LegacyLLM(), visual_genders={})
+        await db.commit()
+        mapping = await db.get(SpeakerVoiceMapping, "voice-only")
+    assert result.by_speaker["S1"]["character_id"]
+    assert mapping.character_id == result.by_speaker["S1"]["character_id"]
 
 
 @pytest.mark.asyncio
@@ -260,3 +324,48 @@ async def test_thumbnail_generate_endpoint_passes_catalog_factory(catalog, monke
     assert result["success"] is False
     assert seen["sessions"] is sessions
     assert seen["data_dir"] == path
+
+
+@pytest.mark.asyncio
+async def test_character_mapping_releases_outer_connection_before_catalog_route(constrained_catalog, monkeypatch):
+    sessions, path = constrained_catalog
+    async with sessions.begin() as db:
+        selected = await add_model(db, path, "openai", "single-pool-map", "synthetic")
+        db.add(AIFunctionConfig(function_id="translation", function_name="Translation", capability="LLM",
+                                primary_provider_id="openai", model_id=selected.id))
+    calls = []
+
+    async def answer(prompt, target, key):
+        calls.append(target.remote_model_id)
+        return json.dumps({"characters": [{"character_id": "alice", "name": "Alice", "gender": "female",
+                                           "role": "main", "speaker_ids": ["S1"], "confidence": 0.95}]})
+
+    registry(monkeypatch, answer)
+    async with sessions() as db:
+        result = await map_and_persist(db, "project", [{"speaker_id": "S1", "text": "Hello"}], None,
+                                       visual_genders={}, sessions=sessions, data_dir=path)
+    assert calls == ["single-pool-map"]
+    assert result.by_speaker["S1"]["name"] == "Alice"
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_releases_outer_connection_before_catalog_route(constrained_catalog, monkeypatch):
+    sessions, path = constrained_catalog
+    async with sessions.begin() as db:
+        selected = await add_model(db, path, "openai", "single-pool-thumb", "synthetic")
+        db.add(AIFunctionConfig(function_id="translation", function_name="Translation", capability="LLM",
+                                primary_provider_id="openai", model_id=selected.id))
+    calls = []
+
+    async def answer(prompt, target, key):
+        calls.append(target.remote_model_id)
+        return '{"title":""}'
+
+    registry(monkeypatch, answer)
+    async with sessions() as db:
+        record = await ThumbnailService.create_thumbnail(
+            db, project_id="project", sessions=sessions, data_dir=path,
+        )
+    assert calls == ["single-pool-thumb"]
+    assert record.status == "failed"
+    assert record.error_message == "AI route failed: invalid_output"

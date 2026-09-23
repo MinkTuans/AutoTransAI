@@ -69,39 +69,8 @@ async def map_and_persist(
     sessions: async_sessionmaker[AsyncSession] | None = None,
     data_dir: Path | None = None,
 ) -> CharacterMappingResult:
-    setting = (await db.execute(select(SystemSetting).where(SystemSetting.key == "character_mapping_confidence_threshold"))).scalar_one_or_none()
-    try:
-        threshold = float(setting.value) if setting else 0.85
-    except (TypeError, ValueError):
-        threshold = 0.85
     speakers = sorted({str(s["speaker_id"]) for s in segments})
     transcript = [{"speaker_id": s["speaker_id"], "text": s.get("translated_text") or s.get("text", "")} for s in segments]
-
-    if visual_genders is None:
-        visual_genders = {}
-        if video_path:
-            try:
-                from app.services.video_translator.visual_gender_service import detect_speakers_gender
-                visual_genders = await detect_speakers_gender(video_path, segments, db=db)
-            except Exception:
-                import logging
-                logging.getLogger(__name__).error("Failed to detect visual genders")
-
-    # Priority 1: Query existing persistent SpeakerVoiceMapping records for this project
-    existing_mappings = (
-        await db.execute(
-            select(SpeakerVoiceMapping).where(SpeakerVoiceMapping.project_id == project_id)
-        )
-    ).scalars().all()
-    mapping_by_speaker = {m.speaker_id: m for m in existing_mappings if m.character_id}
-
-    # Query existing CharacterVoiceProfile records for this project
-    existing_profiles = (
-        await db.execute(
-            select(CharacterVoiceProfile).where(CharacterVoiceProfile.project_id == project_id)
-        )
-    ).scalars().all()
-    profile_by_char_id = {p.character_id: p for p in existing_profiles}
 
     prompt_prefix = (
         "Analyze the complete dialogue and map speakers to characters conservatively. "
@@ -133,6 +102,10 @@ async def map_and_persist(
                     or role not in ("main", "supporting")
                     or cid is not None and (not isinstance(cid, str) or len(cid) > 200)):
                 raise InvalidEditorOutput() from None
+        if candidates and not any(
+            member in speakers for candidate in candidates for member in candidate["speaker_ids"]
+        ):
+            raise InvalidEditorOutput() from None
         return {"characters": candidates}
 
     parsed = await generate_catalog_json(
@@ -152,6 +125,33 @@ async def map_and_persist(
                           and _safe_confidence(candidate.get("confidence", 0.0))]
         except Exception:
             candidates = []
+
+    # Read persistent state only after the request-local route has closed its
+    # catalog sessions. This also keeps a one-connection pool usable.
+    setting = (await db.execute(select(SystemSetting).where(SystemSetting.key == "character_mapping_confidence_threshold"))).scalar_one_or_none()
+    try:
+        threshold = float(setting.value) if setting else 0.85
+    except (TypeError, ValueError):
+        threshold = 0.85
+
+    if visual_genders is None:
+        visual_genders = {}
+        if video_path:
+            try:
+                from app.services.video_translator.visual_gender_service import detect_speakers_gender
+                visual_genders = await detect_speakers_gender(video_path, segments, db=db)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).error("Failed to detect visual genders")
+
+    existing_mappings = (
+        await db.execute(select(SpeakerVoiceMapping).where(SpeakerVoiceMapping.project_id == project_id))
+    ).scalars().all()
+    mapping_by_speaker = {m.speaker_id: m for m in existing_mappings if m.character_id}
+    existing_profiles = (
+        await db.execute(select(CharacterVoiceProfile).where(CharacterVoiceProfile.project_id == project_id))
+    ).scalars().all()
+    profile_by_char_id = {p.character_id: p for p in existing_profiles}
 
     for candidate in candidates:
         cand_speakers = [str(spk) for spk in candidate.get("speaker_ids", [])]
@@ -199,7 +199,8 @@ async def map_and_persist(
             )
             db.add(mapping)
         else:
-            decision["character_id"] = mapping.character_id
+            if mapping.character_id:
+                decision["character_id"] = mapping.character_id
 
         mapping.character_id = decision["character_id"]
         mapping.confidence = decision["confidence"]
@@ -240,6 +241,8 @@ async def map_and_persist(
             decision["gender"] = profile.gender or norm_gender
         else:
             # Profile is confirmed by user: manual user override has highest priority!
+            decision["name"] = profile.name or speaker_id
+            decision["role"] = profile.role or "supporting"
             decision["gender"] = profile.gender or norm_gender
 
     await db.flush()

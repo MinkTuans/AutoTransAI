@@ -302,7 +302,6 @@ class ThumbnailService:
         )
         db.add(record)
         await db.commit()
-        await db.refresh(record)
 
         try:
             # 2. Intelligent transcript chunking & AI Content Analysis

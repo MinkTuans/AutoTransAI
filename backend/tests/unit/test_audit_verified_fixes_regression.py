@@ -200,7 +200,7 @@ async def test_confirmed_character_identity_persistence(async_db: AsyncSession):
     mock_llm2 = AsyncMock()
     mock_llm2.generate_text.return_value = json.dumps({
         "characters": [
-            {"character_id": "different-llm-id", "name": "Hero Variant V2", "gender": "male", "role": "main", "speaker_ids": [speaker_id], "confidence": 0.99}
+            {"character_id": "different-llm-id", "name": "Hero Variant V2", "gender": "male", "role": "supporting", "speaker_ids": [speaker_id], "confidence": 0.99}
         ]
     })
     res2 = await map_and_persist(async_db, project_id, segments1, mock_llm2)
@@ -208,6 +208,8 @@ async def test_confirmed_character_identity_persistence(async_db: AsyncSession):
     # Step 4: Assert same character_id is reused and confirmed profile data is preserved intact
     reused_cid = res2.by_speaker[speaker_id]["character_id"]
     assert reused_cid == assigned_cid
+    assert res2.by_speaker[speaker_id]["name"] == "User Confirmed Name"
+    assert res2.by_speaker[speaker_id]["role"] == "main"
 
     prof_after = (await async_db.execute(select(CharacterVoiceProfile).where(CharacterVoiceProfile.project_id == project_id, CharacterVoiceProfile.character_id == assigned_cid))).scalar_one()
     assert prof_after.confirmed_by_user is True
