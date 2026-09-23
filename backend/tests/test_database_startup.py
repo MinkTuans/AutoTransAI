@@ -123,3 +123,24 @@ async def test_failed_column_inspection_stops_startup(monkeypatch, tmp_path):
         assert "secret-path" not in str(error.value)
     finally:
         await disposable.dispose()
+
+
+@pytest.mark.asyncio
+async def test_partial_create_all_already_exists_error_stops_startup(monkeypatch, tmp_path):
+    disposable = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'partial.db'}")
+
+    def fail_after_partial_create(bind):
+        bind.exec_driver_sql("CREATE TABLE providers (id VARCHAR(50) PRIMARY KEY)")
+        raise RuntimeError("mysql://user:secret@example.invalid/private already exists")
+
+    monkeypatch.setattr(database.Base.metadata, "create_all", fail_after_partial_create)
+    monkeypatch.setattr(database, "engine", disposable)
+    monkeypatch.setattr(database, "is_sqlite", True)
+    monkeypatch.setattr(database, "is_mysql", False)
+    try:
+        with pytest.raises(RuntimeError, match="Database startup failed") as error:
+            await database.init_db()
+        assert "secret" not in str(error.value)
+        assert "private" not in str(error.value)
+    finally:
+        await disposable.dispose()

@@ -165,11 +165,7 @@ async def init_db() -> None:
                 await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
                 await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
 
-            try:
-                await conn.run_sync(Base.metadata.create_all)
-            except Exception as ex:
-                if "already exists" not in str(ex).lower():
-                    raise ex
+            await conn.run_sync(Base.metadata.create_all)
 
             await conn.run_sync(_run_glossary_single_source_migration)
             # Run dynamic DDL schema migration across all dialects (Postgres, SQLite, MySQL)
