@@ -1,3 +1,8 @@
+- **Historical YouTube/workflow progress links (2026-09-23, Task 9D2)**:
+  - Repaired the two `20260908` revisions with frozen migration-owned prerequisites from `eec0ef5`, preserving revision ancestry and adding only missing progress columns. Both groups are validated before writes; invalid/partial schemas and ambiguous downgrades fail closed.
+  - Added independent historical SQL fixtures and regression coverage for blank/startup-created/populated schemas, unchanged rows, foreign-key enforcement, invalid columns/FKs/views, partial progress, replay, and offline MySQL DDL compilation. Updated the knowledge base.
+  - Proven scope is disposable SQLite from initial through workflow progress on supported fixtures only. No configured database, real credentials, network, stamp, upgrade-head, live MySQL, or production compatibility claim.
+
 - **First historical Alembic link repair (2026-09-23, Task 9D1)**:
   - Review fix: compare complete SQL default literals without discarding quoted characters, and preflight views before classifying a database as blank. Added regressions for literal parentheses/quotes and view-only schemas; mismatches leave data and schema unchanged.
   - Reconstructed only four prerequisite tables in `202da08bcdd8` from frozen Git schema definitions; preserved published revision identity and ancestry. Existing schemas are inspected before changes and unknown partial structures fail closed.
