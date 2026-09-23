@@ -1037,3 +1037,4 @@
 - **Legacy script-to-video provider pending state (2026-09-23, Task 6E4B/B1)**:
   - Persist a video `RoutePending` as `provider_pending` for the segment and project with a fixed safe message, manifest state, and SSE status event. Block normal resume and repeat submission; legacy non-pending failures remain failed.
   - Added synthetic SQLite workflow tests. Manual provider reconciliation remains future work. No schema migration, API routing cutover, provider adapter change, or production database action.
+  - Review fix: after the pending database commit, independent best-effort manifest/SSE publication cannot overwrite that state to failed. Publication failure logs use fixed labels without exception text. `run()` propagates any `RoutePending` that was not persisted. Added failing-first disposable SQLite regressions for both manifest writes, SSE, and unpersisted pending.

@@ -189,7 +189,9 @@ class WorkflowOrchestrator:
             })
 
         except RoutePending:
-            # The accepted/uncertain task was persisted by the segment handler.
+            # Only the segment handler's committed pending state may stop quietly.
+            if (await self._get_project()).workflow_status != WorkflowStatus.PROVIDER_PENDING.value:
+                raise
             return
         except WorkflowError as e:
             logger.error(
@@ -479,20 +481,34 @@ class WorkflowOrchestrator:
             project.error_message = PENDING_VIDEO_MESSAGE
             await self.session.commit()
 
-            update_segment_in_manifest(self.project_id, segment.segment_number, {
-                "video_status": SegmentStatus.PROVIDER_PENDING.value,
-                "video_error": PENDING_VIDEO_MESSAGE,
-            })
-            update_manifest(self.project_id, {
-                "workflow_status": WorkflowStatus.PROVIDER_PENDING.value,
-                "error": PENDING_VIDEO_MESSAGE,
-            })
-            await self._emit_progress({
-                "type": "status_change",
-                "status": WorkflowStatus.PROVIDER_PENDING.value,
-                "project_id": self.project_id,
-                "message": PENDING_VIDEO_MESSAGE,
-            })
+            # The DB commit is authoritative. Each notification is best effort:
+            # a storage or SSE outage must never turn an accepted job into a retry.
+            try:
+                update_segment_in_manifest(self.project_id, segment.segment_number, {
+                    "video_status": SegmentStatus.PROVIDER_PENDING.value,
+                    "video_error": PENDING_VIDEO_MESSAGE,
+                })
+            except Exception:
+                logger.warning("Pending video notification failed", project_id=self.project_id,
+                               notification="segment_manifest")
+            try:
+                update_manifest(self.project_id, {
+                    "workflow_status": WorkflowStatus.PROVIDER_PENDING.value,
+                    "error": PENDING_VIDEO_MESSAGE,
+                })
+            except Exception:
+                logger.warning("Pending video notification failed", project_id=self.project_id,
+                               notification="project_manifest")
+            try:
+                await self._emit_progress({
+                    "type": "status_change",
+                    "status": WorkflowStatus.PROVIDER_PENDING.value,
+                    "project_id": self.project_id,
+                    "message": PENDING_VIDEO_MESSAGE,
+                })
+            except Exception:
+                logger.warning("Pending video notification failed", project_id=self.project_id,
+                               notification="sse")
             raise
         except Exception as e:
             err_msg = str(e)
