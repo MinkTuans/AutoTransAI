@@ -1089,6 +1089,7 @@ async def start_translation_pipeline(
                         llm_provider_id=b_job.llm_provider_id or "gemini",
                         db=bg_session,
                         project_id=b_job.project_id,
+                        sessions=async_session_factory,
                     )
 
                     # Clear previous segments if any

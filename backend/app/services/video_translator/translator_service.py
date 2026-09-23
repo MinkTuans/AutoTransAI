@@ -1097,6 +1097,9 @@ async def _translate_sub_batch(
     job_id: str,
     batch_label: str,
     glossary: Optional[Dict[str, str]] = None,
+    *,
+    canonical: bool = False,
+    model_id: Optional[str] = None,
 ) -> List[str]:
     """Helper to translate a sub-batch of segments with structured IDs and targeted retries."""
     if not sub_segments:
@@ -1108,11 +1111,11 @@ async def _translate_sub_batch(
 
     parsed_map: Dict[int, str] = {}
     last_err = None
-    for attempt in range(2):
+    for attempt in range(1 if canonical else 2):
         try:
             resp = await llm.generate_text(
                 prompt if attempt == 0 else prompt + '\nLƯU Ý: Trả về đúng JSON {"lines":[{"n":1,"text":"..."}],"names":[]}',
-                model=getattr(llm, '_resolved_model_id', None),
+                model=model_id,
             )
             parsed_map, _names = parse_translation_envelope(resp)
             mapped = _ordered_translations(parsed_map, numbers, len(sub_segments))
@@ -1133,13 +1136,13 @@ async def _translate_sub_batch(
                     )
                 )
                 try:
-                    rec_resp = await llm.generate_text(rec_prompt, model=getattr(llm, '_resolved_model_id', None))
+                    rec_resp = await llm.generate_text(rec_prompt, model=model_id)
                     rec_map, _ = parse_translation_envelope(rec_resp)
                     for r_id, r_trans in rec_map.items():
                         if r_id in missing_ids:
                             parsed_map[r_id] = r_trans
                 except Exception as ex:
-                    logger.warning(f"Sub-batch {batch_label} recovery failed: {ex}")
+                    logger.warning(f"Sub-batch {batch_label} recovery failed: {'invalid_response' if canonical else ex}")
 
             mapped = _ordered_translations(parsed_map, numbers, len(sub_segments))
             if mapped is not None:
@@ -1147,13 +1150,13 @@ async def _translate_sub_batch(
             still_missing = [n for n in numbers if n not in parsed_map]
             last_err = f"Sub-batch length mismatch: expected {len(sub_segments)}, still missing IDs {still_missing}"
         except Exception as ex:
-            last_err = str(ex)
+            last_err = type(ex).__name__ if canonical else str(ex)
 
     if len(sub_segments) > 5:
         logger.warning(f"Sub-batch {batch_label} failed ({last_err}). Splitting sub-batch of size {len(sub_segments)} into smaller halves...")
         half = len(sub_segments) // 2
-        part1 = await _translate_sub_batch(llm, sub_segments[:half], source_lang_name, target_lang_name, job_id, f"{batch_label}a", glossary)
-        part2 = await _translate_sub_batch(llm, sub_segments[half:], source_lang_name, target_lang_name, job_id, f"{batch_label}b", glossary)
+        part1 = await _translate_sub_batch(llm, sub_segments[:half], source_lang_name, target_lang_name, job_id, f"{batch_label}a", glossary, canonical=canonical, model_id=model_id)
+        part2 = await _translate_sub_batch(llm, sub_segments[half:], source_lang_name, target_lang_name, job_id, f"{batch_label}b", glossary, canonical=canonical, model_id=model_id)
         return part1 + part2
 
     raise ValueError(f"Sub-batch translation failed: {last_err}")
@@ -1204,6 +1207,9 @@ async def translate_transcript_segments(
     db: Optional[AsyncSession] = None,
     project_id: Optional[str] = None,
     glossary: Optional[Dict[str, str]] = None,
+    *,
+    sessions: async_sessionmaker[AsyncSession] | None = None,
+    data_dir: Path | None = None,
 ) -> List[Dict[str, Any]]:
     """
     Translate transcript text segments to target language using LLM Provider (Gemini / OpenAI).
@@ -1232,40 +1238,78 @@ async def translate_transcript_segments(
     registry = get_registry()
     settings = get_settings()
     effective_provider = llm_provider_id or settings.DEFAULT_LLM_PROVIDER
-    
-    primary_llm = registry.get_llm(effective_provider) or registry.get_llm("gemini")
-    
-    candidate_llms = []
-    if primary_llm:
-        candidate_llms.append(primary_llm)
+    canonical = False
+    prompt_limit = None
+    if sessions is not None:
+        # Match Studio STT's explicit compatibility gate. A populated Gemini or
+        # OpenAI catalog must use the canonical default; missing tables propagate.
+        async with sessions() as catalog_db:
+            catalog_model = await catalog_db.scalar(select(CatalogModel.id).where(
+                CatalogModel.source != "system", CatalogModel.provider_id.in_(("gemini", "openai"))
+            ).limit(1))
+            catalog_key = await catalog_db.scalar(select(APIKey.id).where(
+                APIKey.provider_id.in_(("gemini", "openai"))
+            ).limit(1))
+            await catalog_db.scalar(select(CatalogRefreshRun.id).limit(1))
+            canonical = catalog_model is not None or catalog_key is not None
+            if canonical:
+                translation_default = await catalog_db.get(AIFunctionConfig, "translation")
+                if translation_default is None or not translation_default.model_id:
+                    raise RouteConfigurationError("TRANSLATION default is not configured.")
+                route = await build_route(catalog_db, "TRANSLATION")
+                limits = []
+                for target in route.targets:
+                    model = await catalog_db.get(CatalogModel, target.model_id)
+                    metadata = model.discovery_metadata if isinstance(model.discovery_metadata, dict) else {}
+                    for field in ("inputTokenLimit", "max_input_tokens"):
+                        value = metadata.get(field)
+                        if type(value) is int and value > 0:
+                            limits.append(value)
+                            break
+                # UTF-8 byte length is a conservative token upper bound for
+                # provider tokenizers. Reserve 512 tokens for response. When
+                # metadata is absent, cap the whole request at 6 KiB.
+                prompt_limit = min(6000, max(0, min(limits) - 512)) if limits else 6000
+        if canonical:
+            class RoutedTranslationLLM:
+                provider_id = "catalog"
+                provider_name = "Catalog translation route"
 
-    fallback_ids = []
-    if effective_provider == "gemini":
-        if settings.ENABLE_OPENAI_FALLBACK:
+                async def generate_text(self, prompt: str, **_kwargs) -> str:
+                    if len(prompt.encode("utf-8")) > prompt_limit:
+                        raise RuntimeError("Translation prompt exceeds catalog context budget.")
+                    async def transport(target: RouteTarget, secret: str | None) -> str:
+                        adapter = registry.get_llm(target.provider_id)
+                        if adapter is None:
+                            raise UnsupportedModalityError("No Studio translation adapter for this provider.")
+                        return await adapter.generate_text(prompt, route_target=target, api_key=secret)
+
+                    return await invoke_route(route, transport, sessions, data_dir or settings.DATA_DIR,
+                                              max_attempts=2, timeout=180.0)
+
+            candidate_llms = [RoutedTranslationLLM()]
+
+    if not canonical:
+        primary_llm = registry.get_llm(effective_provider) or registry.get_llm("gemini")
+        candidate_llms = [primary_llm] if primary_llm else []
+        fallback_ids = []
+        if effective_provider == "gemini" and settings.ENABLE_OPENAI_FALLBACK:
             fallback_ids.append("openai")
-    elif effective_provider == "openai":
-        fallback_ids.append("gemini")
-
-    for fid in fallback_ids:
-        fb_llm = registry.get_llm(fid)
-        if fb_llm and fb_llm not in candidate_llms:
-            candidate_llms.append(fb_llm)
-
-    if not candidate_llms:
-        raise RuntimeError("Không tìm thấy LLM Provider nào khả thi trong hệ thống.")
-
-    # Resolve translation model ID via AIModelResolver if not explicitly provided
-    if not translation_model_id:
-        from app.services.model_resolver import AIModelResolver
-        try:
-            res_info = await AIModelResolver.resolve_model(db, capability="TRANSLATION", stage="TRANSLATE")
-            translation_model_id = res_info.model_id
-        except Exception as res_err:
-            logger.warning(f"[{job_id}] Model resolution for TRANSLATION capability failed: {res_err}")
-
-    # Attach resolved model ID to each LLM provider for generate_text() calls
-    for llm in candidate_llms:
-        llm._resolved_model_id = translation_model_id
+        elif effective_provider == "openai":
+            fallback_ids.append("gemini")
+        for fid in fallback_ids:
+            fb_llm = registry.get_llm(fid)
+            if fb_llm and fb_llm not in candidate_llms:
+                candidate_llms.append(fb_llm)
+        if not candidate_llms:
+            raise RuntimeError("Không tìm thấy LLM Provider nào khả thi trong hệ thống.")
+        if not translation_model_id:
+            from app.services.model_resolver import AIModelResolver
+            try:
+                res_info = await AIModelResolver.resolve_model(db, capability="TRANSLATION", stage="TRANSLATE")
+                translation_model_id = res_info.model_id
+            except Exception as res_err:
+                logger.warning(f"[{job_id}] Model resolution for TRANSLATION capability failed: {res_err}")
 
 
     lang_names = {
@@ -1306,13 +1350,31 @@ async def translate_transcript_segments(
         try:
             translated_results: List[str] = []
             collected_names: List[Dict[str, Any]] = []
-            chunk = len(segments) if not batch_size or batch_size < 1 else batch_size
-            total_batches = (len(segments) + chunk - 1) // chunk
+            if canonical:
+                batches: List[List[Dict[str, Any]]] = []
+                current: List[Dict[str, Any]] = []
+                for segment in segments:
+                    proposed = current + [segment]
+                    proposed_prompt = _translation_json_prompt(
+                        build_numbered_dialogue_payload(proposed), source_lang_name, target_lang_name, glossary)
+                    if current and (len(proposed_prompt.encode("utf-8")) > prompt_limit or
+                                    batch_size > 0 and len(proposed) > batch_size):
+                        batches.append(current)
+                        current = [segment]
+                    else:
+                        current = proposed
+                    single_prompt = _translation_json_prompt(
+                        build_numbered_dialogue_payload(current), source_lang_name, target_lang_name, glossary)
+                    if len(single_prompt.encode("utf-8")) > prompt_limit:
+                        raise RuntimeError("Translation prompt exceeds catalog context budget.")
+                if current:
+                    batches.append(current)
+            else:
+                chunk = len(segments) if not batch_size or batch_size < 1 else batch_size
+                batches = [segments[i:i + chunk] for i in range(0, len(segments), chunk)]
+            total_batches = len(batches)
 
-            for batch_idx in range(total_batches):
-                start_i = batch_idx * chunk
-                end_i = min(len(segments), start_i + chunk)
-                batch_segments = segments[start_i:end_i]
+            for batch_idx, batch_segments in enumerate(batches):
                 payload = build_numbered_dialogue_payload(batch_segments)
                 numbers = [item["n"] for item in payload["lines"]]
                 prompt = _translation_json_prompt(payload, source_lang_name, target_lang_name, glossary)
@@ -1321,10 +1383,10 @@ async def translate_transcript_segments(
                 batch_error = None
                 parsed_map: Dict[int, str] = {}
 
-                for attempt in range(2):
+                for attempt in range(1 if canonical else 2):
                     try:
                         curr_prompt = prompt if attempt == 0 else prompt + '\nLƯU Ý BẮT BUỘC: Trả về đúng JSON {"lines":[{"n":1,"text":"..."}],"names":[]}'
-                        response_text = await llm.generate_text(curr_prompt, model=getattr(llm, '_resolved_model_id', None))
+                        response_text = await llm.generate_text(curr_prompt, model=translation_model_id)
                         parsed_map, batch_names = parse_translation_envelope(response_text, target_language=target_language)
                         if batch_names:
                             collected_names.extend(batch_names)
@@ -1347,7 +1409,7 @@ async def translate_transcript_segments(
                                     )
                                 )
                                 try:
-                                    rec_resp = await llm.generate_text(rec_prompt, model=getattr(llm, '_resolved_model_id', None))
+                                    rec_resp = await llm.generate_text(rec_prompt, model=translation_model_id)
                                     rec_map, rec_names = parse_translation_envelope(rec_resp, target_language=target_language)
                                     if rec_names:
                                         collected_names.extend(rec_names)
@@ -1360,7 +1422,7 @@ async def translate_transcript_segments(
                                         f"[Gemini Recovery] Recovered missing segments. Total items now: {len(parsed_map)}/{len(batch_segments)}"
                                     )
                                 except Exception as rec_err:
-                                    logger.warning(f"Targeted recovery retry failed: {rec_err}")
+                                    logger.warning(f"Targeted recovery retry failed: {'invalid_response' if canonical else rec_err}")
 
                             mapped = _ordered_translations(parsed_map, numbers, len(batch_segments))
 
@@ -1422,7 +1484,7 @@ async def translate_transcript_segments(
                                     )
                                 )
                                 try:
-                                    rec_resp = await llm.generate_text(correction_prompt, model=getattr(llm, '_resolved_model_id', None))
+                                    rec_resp = await llm.generate_text(correction_prompt, model=translation_model_id)
                                     rec_map, rec_names = parse_translation_envelope(rec_resp, target_language=target_language)
                                     if rec_names:
                                         collected_names.extend(rec_names)
@@ -1466,7 +1528,7 @@ async def translate_transcript_segments(
                                     logger.info(retry_log)
                                     log_job_event(job_id, "TRANSLATING", retry_log)
                                 except Exception as rec_err:
-                                    logger.warning(f"Targeted echo retry attempt {echo_attempt+1} failed: {rec_err}")
+                                    logger.warning(f"Targeted echo retry attempt {echo_attempt+1} failed: {'invalid_response' if canonical else rec_err}")
 
                         # If all segments are valid, finish batch successfully
                         if not invalid_indices:
@@ -1475,7 +1537,7 @@ async def translate_transcript_segments(
 
                         batch_error = f"Output length/echo mismatch: expected {len(batch_segments)}, still invalid IDs {invalid_ids}"
                     except Exception as ex:
-                        batch_error = str(ex)
+                        batch_error = type(ex).__name__ if canonical else str(ex)
                         logger.warning(f"Batch {batch_idx+1}/{total_batches} attempt {attempt+1} failed on {llm.provider_id}: {batch_error}")
 
                 if translated_list is None or len(translated_list) != len(batch_segments):
@@ -1483,14 +1545,14 @@ async def translate_transcript_segments(
                     try:
                         if len(batch_segments) > 1:
                             half = len(batch_segments) // 2
-                            part1 = await _translate_sub_batch(llm, batch_segments[:half], source_lang_name, target_lang_name, job_id, f"B{batch_idx+1}a", glossary)
-                            part2 = await _translate_sub_batch(llm, batch_segments[half:], source_lang_name, target_lang_name, job_id, f"B{batch_idx+1}b", glossary)
+                            part1 = await _translate_sub_batch(llm, batch_segments[:half], source_lang_name, target_lang_name, job_id, f"B{batch_idx+1}a", glossary, canonical=canonical, model_id=translation_model_id)
+                            part2 = await _translate_sub_batch(llm, batch_segments[half:], source_lang_name, target_lang_name, job_id, f"B{batch_idx+1}b", glossary, canonical=canonical, model_id=translation_model_id)
                             translated_list = part1 + part2
                         else:
-                            translated_list = await _translate_sub_batch(llm, batch_segments, source_lang_name, target_lang_name, job_id, f"B{batch_idx+1}", glossary)
+                            translated_list = await _translate_sub_batch(llm, batch_segments, source_lang_name, target_lang_name, job_id, f"B{batch_idx+1}", glossary, canonical=canonical, model_id=translation_model_id)
                         log_job_event(job_id, "TRANSLATING", f"[Gemini Sub-batch Fallback] Successfully translated batch {batch_idx+1}/{total_batches} via sub-batch splitting.")
                     except Exception as sub_ex:
-                        batch_error = f"Sub-batch splitting failed: {sub_ex}"
+                        batch_error = f"Sub-batch splitting failed: {type(sub_ex).__name__ if canonical else sub_ex}"
 
                 if not isinstance(translated_list, list) or len(translated_list) != len(batch_segments):
                     raise ValueError(f"LLM translation failed for batch {batch_idx+1}/{total_batches} on {llm.provider_name}: {batch_error}")
@@ -1544,7 +1606,7 @@ async def translate_transcript_segments(
                             )
                         )
                         try:
-                            retry_resp = await llm.generate_text(strict_retry_prompt)
+                            retry_resp = await llm.generate_text(strict_retry_prompt, model=translation_model_id)
                             retry_map, retry_names = parse_translation_envelope(retry_resp, target_language=target_language)
                             if retry_names:
                                 collected_names.extend(retry_names)
@@ -1559,7 +1621,7 @@ async def translate_transcript_segments(
                                 target_language=target_language,
                             )
                         except Exception as retry_ex:
-                            logger.warning(f"Targeted glossary retry failed: {retry_ex}")
+                            logger.warning(f"Targeted glossary retry failed: {'invalid_response' if canonical else retry_ex}")
 
                 if violations:
                     raise RuntimeError(
