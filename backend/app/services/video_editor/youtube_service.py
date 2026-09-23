@@ -221,7 +221,11 @@ class YouTubePublishingService:
                     or not isinstance(description, str) or len(description) > 4000
                     or not isinstance(tags, list) or len(tags) > 20
                     or any(not isinstance(tag, str) or len(tag) > 100 for tag in tags)
-                    or not isinstance(category, str) or category not in ("22", "24", "27")):
+                    or not isinstance(category, str) or category not in ("22", "24", "27")
+                    or bool(transcript_text.strip()) and (
+                        ai_allow_desc and not description.strip()
+                        or ai_allow_tags and not any(tag.strip() for tag in tags)
+                    )):
                 raise InvalidEditorOutput() from None
             return {"title": title, "description": description, "tags": tags, "category_id": category}
 

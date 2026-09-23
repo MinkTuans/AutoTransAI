@@ -190,14 +190,59 @@ async def test_unified_publish_stage_forwards_catalog_sessions(monkeypatch):
     observed = []
 
     async def seo(**kwargs):
-        observed.append(kwargs.get("sessions"))
+        observed.append(kwargs)
         return {"title": "Title", "description": "", "tags": [], "category_id": "22"}
 
     monkeypatch.setattr(YouTubePublishingService, "generate_youtube_seo_metadata", seo)
-    ctx = WorkflowContext(project_id="project", raw_transcript="Alice sentence")
+    ctx = WorkflowContext(project_id="project", raw_transcript="Alice sentence",
+                          settings_snapshot={"youtube_description_default": "Creator words",
+                                             "youtube_default_tags": "#Owner"})
     result = await publish_stage.PublishStage()._generate_seo(ctx)
     assert result["title"] == "Title"
-    assert observed == [marker]
+    assert observed[0]["sessions"] is marker
+    assert observed[0]["project_settings"]["youtube_description_default"] == "Creator words"
+    assert observed[0]["project_settings"]["youtube_default_tags"] == "#Owner"
+    assert observed[0]["project_name"] == "project"
+
+
+@pytest.mark.asyncio
+async def test_unified_publish_honors_ai_off_and_creator_defaults(monkeypatch):
+    from app.workflow.stages import publish_stage
+    from app.workflow.workflow_context import WorkflowContext
+
+    monkeypatch.setattr(publish_stage, "async_session_factory", object(), raising=False)
+    ctx = WorkflowContext(project_id="owner-project", raw_transcript="Alice sentence",
+                          settings_snapshot={"youtube_ai_seo_enabled": "false",
+                                             "youtube_title_template": "{project_name} — Tập {episode}",
+                                             "youtube_description_default": "Creator description",
+                                             "youtube_default_tags": "#Creator"})
+    result = await publish_stage.PublishStage()._generate_seo(ctx)
+    assert result["title"] == "owner-project — Tập 01"
+    assert result["description"] == "Creator description"
+    assert result["tags"] == ["#Creator"]
+
+
+@pytest.mark.asyncio
+async def test_unified_publish_uses_project_title_and_video_identity(tmp_path, monkeypatch):
+    from app.models import Project
+    from app.workflow.stages import publish_stage
+    from app.workflow.workflow_context import WorkflowContext
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'project.db'}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(publish_stage, "async_session_factory", object(), raising=False)
+    async with sessions.begin() as db:
+        db.add(Project(id="owner-project", title="Creator Series"))
+    ctx = WorkflowContext(project_id="owner-project", raw_transcript="Alice sentence",
+                          video_path=str(tmp_path / "Episode One.mp4"),
+                          settings_snapshot={"youtube_ai_seo_enabled": False,
+                                             "youtube_title_template": "{project_name}/{video_name}/Tập {episode}"})
+    async with sessions() as db:
+        result = await publish_stage.PublishStage().execute_step("generate_seo", ctx, db)
+    assert result["title"] == "Creator Series/Episode One/Tập 01"
+    await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -296,7 +341,7 @@ async def test_concurrent_seo_jobs_keep_configured_model_and_key_local(catalog, 
         if target.remote_model_id == "first-v1":
             first_entered.set()
             await release_first.wait()
-        return json.dumps({"title": "AI", "description": "AI desc", "tags": [], "category_id": "22"})
+        return json.dumps({"title": "AI", "description": "AI desc", "tags": ["#AI"], "category_id": "22"})
 
     registry(monkeypatch, answer)
     job_one = asyncio.create_task(YouTubePublishingService.generate_youtube_seo_metadata(
@@ -351,3 +396,53 @@ async def test_invalid_seo_output_exhaustion_is_visible_not_default_success(cata
         await YouTubePublishingService.generate_youtube_seo_metadata(
             "Alice sentence", sessions=sessions, data_dir=path,
         )
+
+
+@pytest.mark.asyncio
+async def test_all_empty_seo_response_advances_to_backup(catalog, monkeypatch):
+    sessions, path = catalog
+    async with sessions.begin() as db:
+        first = await add_model(db, path, "openai", "a-empty", "synthetic-primary")
+        await add_model(db, path, "gemini", "b-valid", "synthetic-backup")
+        db.add(AIFunctionConfig(function_id="translation", function_name="Translation", capability="LLM",
+                                primary_provider_id="openai", model_id=first.id))
+    seen = []
+
+    async def answer(prompt, target, key):
+        seen.append(target.remote_model_id)
+        if target.remote_model_id == "a-empty":
+            return '{"title":"","description":"","tags":[],"category_id":"22"}'
+        return '{"title":"AI","description":"Useful AI summary","tags":["#AI"],"category_id":"22"}'
+
+    registry(monkeypatch, answer)
+    result = await YouTubePublishingService.generate_youtube_seo_metadata(
+        "Alice sentence", sessions=sessions, data_dir=path,
+    )
+    assert result["description"] == "Useful AI summary"
+    assert seen == ["a-empty", "b-valid"]
+
+
+@pytest.mark.asyncio
+async def test_seo_empty_disabled_ai_fields_do_not_trigger_invalid_output(catalog, monkeypatch):
+    sessions, path = catalog
+    async with sessions.begin() as db:
+        first = await add_model(db, path, "openai", "only", "synthetic-primary")
+        db.add(AIFunctionConfig(function_id="translation", function_name="Translation", capability="LLM",
+                                primary_provider_id="openai", model_id=first.id))
+    seen = []
+
+    async def answer(prompt, target, key):
+        seen.append(target.remote_model_id)
+        return '{"title":"AI","description":"","tags":[],"category_id":"22"}'
+
+    registry(monkeypatch, answer)
+    result = await YouTubePublishingService.generate_youtube_seo_metadata(
+        "Alice sentence", project_settings={"youtube_ai_allow_description": False,
+                                            "youtube_ai_allow_tags": False,
+                                            "youtube_description_default": "Owner text",
+                                            "youtube_default_tags": "#Owner"},
+        sessions=sessions, data_dir=path,
+    )
+    assert result["description"] == "Owner text"
+    assert result["tags"] == ["#Owner"]
+    assert seen == ["only"]

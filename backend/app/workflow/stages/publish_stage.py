@@ -31,7 +31,7 @@ class PublishStage:
         logger.info(f"[Stage PUBLISH] Executing step: {step_name}")
 
         if step_name == "generate_seo":
-            return await self._generate_seo(ctx)
+            return await self._generate_seo(ctx, db)
         elif step_name == "select_thumbnail":
             return await self._select_thumbnail(ctx)
         elif step_name == "user_approval":
@@ -62,11 +62,28 @@ class PublishStage:
             },
         }
 
-    async def _generate_seo(self, ctx: WorkflowContext) -> dict[str, Any]:
+    async def _generate_seo(self, ctx: WorkflowContext, db: Any = None) -> dict[str, Any]:
+        from app.api.routes.projects import normalize_project_settings
+        from app.models.project import Project
+        from app.services.video_editor.youtube_service import calculate_project_video_episode
         from app.services.video_editor.youtube_service import YouTubePublishingService
+
+        project_settings = normalize_project_settings(ctx.settings_snapshot or {})
+        project_name = ctx.project_id
+        if db is not None and hasattr(db, "get"):
+            project = await db.get(Project, ctx.project_id)
+            if project is not None:
+                project_name = project.title or project_name
+        episode_num = (await calculate_project_video_episode(db, ctx.project_id, ctx.job_id)
+                       if db is not None and ctx.job_id else 1)
         seo = await YouTubePublishingService.generate_youtube_seo_metadata(
             transcript_text=ctx.raw_transcript or "",
             target_language=ctx.target_language,
+            job_id=ctx.job_id or ctx.workflow_id or "VT-YT",
+            project_settings=project_settings,
+            project_name=project_name,
+            video_name=Path(ctx.video_path).stem if ctx.video_path else "",
+            episode_num=episode_num,
             sessions=async_session_factory,
         )
         ctx.seo_metadata = seo
