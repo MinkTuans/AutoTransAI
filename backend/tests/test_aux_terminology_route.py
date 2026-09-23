@@ -154,7 +154,7 @@ async def test_malformed_terminology_response_advances_to_same_provider_backup(c
 
 
 @pytest.mark.asyncio
-async def test_terminology_prompt_respects_smallest_catalog_input_limit(catalog, monkeypatch):
+async def test_terminology_prompt_respects_each_target_input_limit(catalog, monkeypatch):
     sessions, path = catalog
     async with sessions.begin() as db:
         first = await add_model(db, path, "openai", "first", "synthetic-first",
@@ -167,12 +167,18 @@ async def test_terminology_prompt_respects_smallest_catalog_input_limit(catalog,
 
     class LLM:
         async def generate_text(self, prompt, *, route_target, api_key):
-            observed.append(len(prompt.encode("utf-8")))
+            observed.append((route_target.remote_model_id, len(prompt.encode("utf-8"))))
+            if route_target.remote_model_id == "first":
+                error = RuntimeError("synthetic model unavailable")
+                error.http_status = 404
+                raise error
             return term_response()
 
     monkeypatch.setattr(terms, "get_registry", lambda: type("Registry", (), {"get_llm": lambda _, p: LLM()})(), raising=False)
     await terms.llm_extract_terms("Alice " + "長文本" * 3000, sessions=sessions, data_dir=path)
-    assert observed and observed[0] <= 2500 - 512
+    assert [name for name, _ in observed] == ["first", "second"]
+    assert observed[0][1] <= 2700 - 512
+    assert observed[1][1] <= 2500 - 512
 
 
 @pytest.mark.asyncio
@@ -203,3 +209,54 @@ def test_invalid_terminology_logging_does_not_emit_source_text(monkeypatch):
     )
     assert result == []
     assert secret_source not in str(logged)
+
+
+@pytest.mark.parametrize("payload", [
+    '{"terms":null}', '{"terms":{"source_term":"Alice"}}',
+    '{"terms":[{"foo":"bar"}]}', '[1,2]', '{"terms":[null]}',
+])
+def test_strict_term_parser_rejects_structured_garbage(payload):
+    with pytest.raises(terms.InvalidTerminologyOutput):
+        terms._parse_llm_terms(payload, strict=True)
+    assert terms._parse_llm_terms('{"terms":[]}', strict=True) == []
+
+
+@pytest.mark.asyncio
+async def test_tiny_backup_budget_does_not_veto_usable_default(catalog, monkeypatch):
+    sessions, path = catalog
+    async with sessions.begin() as db:
+        first = await add_model(db, path, "openai", "a-default", "synthetic-default",
+                                metadata={"max_input_tokens": 8000})
+        await add_model(db, path, "gemini", "b-tiny", "synthetic-tiny",
+                        metadata={"inputTokenLimit": 600})
+        db.add(AIFunctionConfig(function_id="translation", function_name="Translation", capability="LLM",
+                                primary_provider_id="openai", model_id=first.id))
+    calls = []
+
+    class LLM:
+        async def generate_text(self, prompt, *, route_target, api_key):
+            calls.append((route_target.remote_model_id, len(prompt.encode("utf-8"))))
+            return term_response()
+
+    monkeypatch.setattr(terms, "get_registry", lambda: type("Registry", (), {"get_llm": lambda _, p: LLM()})(), raising=False)
+    result = await terms.llm_extract_terms("Alice sentence", sessions=sessions, data_dir=path)
+    assert result[0]["source_term"] == "Alice"
+    assert calls == [("a-default", calls[0][1])]
+    assert calls[0][1] <= 6000
+
+
+@pytest.mark.asyncio
+async def test_legacy_terminology_error_log_never_includes_upstream_secret(monkeypatch):
+    marker = "SYNTHETIC_SECRET_RESPONSE_MARKER"
+    logged = []
+
+    class LLM:
+        async def generate_text(self, prompt, *, model=None):
+            raise RuntimeError(f"transport returned {marker}")
+
+    monkeypatch.setattr(terms, "get_registry", lambda: type("Registry", (), {
+        "get_llm": lambda _, p: LLM(), "_llm": {"gemini": LLM()},
+    })())
+    monkeypatch.setattr(terms.logger, "warning", lambda *args, **kwargs: logged.append((args, kwargs)))
+    assert await terms.llm_extract_terms("Alice sentence") == []
+    assert logged and marker not in str(logged)

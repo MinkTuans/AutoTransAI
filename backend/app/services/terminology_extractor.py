@@ -17,7 +17,7 @@ from app.models import APIKey, CatalogModel, CatalogRefreshRun
 from app.models.settings import AIFunctionConfig
 from app.providers.registry import get_registry
 from app.services.ai_routing import (
-    RouteConfigurationError, RouteTarget, UnsupportedModalityError, build_route, invoke_route,
+    RouteConfigurationError, RouteTarget, UnsupportedModalityError, build_route, classify_failure, invoke_route,
 )
 from app.services.glossary_service import create_glossary_entry
 
@@ -361,20 +361,26 @@ def _parse_llm_terms(payload: str, target_lang: str = "", *, strict: bool = Fals
                 raise InvalidTerminologyOutput() from None
             return []
     if isinstance(data, dict):
-        if strict and not any(key in data for key in ("terms", "entities", "names", "glossary", "items")):
-            raise InvalidTerminologyOutput() from None
-        data = (
-            data.get("terms")
-            or data.get("entities")
-            or data.get("names")
-            or data.get("glossary")
-            or data.get("items")
-            or []
-        )
+        keys = ("terms", "entities", "names", "glossary", "items")
+        if strict:
+            key = next((name for name in keys if name in data), None)
+            if key is None:
+                raise InvalidTerminologyOutput() from None
+            data = data[key]
+        else:
+            data = next((data[name] for name in keys if data.get(name)), [])
     if not isinstance(data, list):
         if strict:
             raise InvalidTerminologyOutput() from None
         return []
+    if strict:
+        for item in data:
+            if not isinstance(item, dict):
+                raise InvalidTerminologyOutput() from None
+            source = next((item.get(key) for key in ("source_term", "source", "name", "term") if item.get(key)), None)
+            suggested = next((item.get(key) for key in ("suggested_term", "translation", "translated_term", "target") if item.get(key)), None)
+            if not isinstance(source, str) or len(source.strip()) < 2 or not isinstance(suggested, str) or not suggested.strip():
+                raise InvalidTerminologyOutput() from None
     return normalize_extracted_terms([x for x in data if isinstance(x, dict)], target_lang=target_lang)
 
 
@@ -387,7 +393,7 @@ async def llm_extract_terms(
     if len(blob) < 8:
         return []
     route = None
-    prompt_limit = 6000
+    model_prompt_limits: dict[str, int] = {}
     if sessions is not None:
         async with sessions() as catalog_db:
             catalog_model = await catalog_db.scalar(select(CatalogModel.id).where(
@@ -405,16 +411,17 @@ async def llm_extract_terms(
                 if configured is None or not configured.model_id:
                     raise RouteConfigurationError("LLM default is not configured.")
                 route = await build_route(catalog_db, "LLM")
-                limits = []
                 for target in route.targets:
+                    if target.model_id in model_prompt_limits:
+                        continue
                     model = await catalog_db.get(CatalogModel, target.model_id)
                     metadata = model.discovery_metadata if isinstance(model.discovery_metadata, dict) else {}
+                    model_prompt_limits[target.model_id] = 6000
                     for field in ("inputTokenLimit", "max_input_tokens"):
                         value = metadata.get(field)
                         if type(value) is int and value > 0:
-                            limits.append(value)
+                            model_prompt_limits[target.model_id] = min(6000, max(0, value - 512))
                             break
-                prompt_limit = min(6000, max(0, min(limits) - 512)) if limits else 6000
 
     prompt_prefix = (
         "Extract important canonical terminology: people/characters, creatures, place names, "
@@ -434,16 +441,11 @@ async def llm_extract_terms(
         "Subtitles:\n"
     )
     if route is not None:
-        room = prompt_limit - len(prompt_prefix.encode("utf-8"))
-        if room < 8:
-            raise RouteConfigurationError("Terminology prompt exceeds catalog context budget.")
-        bounded_blob = blob.encode("utf-8")[:room].decode("utf-8", errors="ignore")
-    else:
-        bounded_blob = blob[:6000]
-    prompt = prompt_prefix + bounded_blob
-
-    if route is not None:
         async def transport(target: RouteTarget, secret: str | None) -> list[dict[str, Any]]:
+            room = model_prompt_limits[target.model_id] - len(prompt_prefix.encode("utf-8"))
+            if room < 8:
+                raise UnsupportedModalityError("Terminology prompt exceeds model context budget.")
+            prompt = prompt_prefix + blob.encode("utf-8")[:room].decode("utf-8", errors="ignore")
             adapter = get_registry().get_llm(target.provider_id)
             if adapter is None:
                 raise UnsupportedModalityError("No terminology LLM adapter for this provider.")
@@ -455,6 +457,7 @@ async def llm_extract_terms(
                                     max_attempts=2, timeout=60.0)
         logger.info("LLM terminology extraction parsed terms", count=len(parsed))
         return parsed
+    prompt = prompt_prefix + blob[:6000]
     try:
         registry = get_registry()
         llm = registry.get_llm("gemini") or next(iter(registry._llm.values()), None)
@@ -466,7 +469,7 @@ async def llm_extract_terms(
         logger.info("LLM terminology extraction parsed terms", count=len(parsed))
         return parsed
     except Exception as exc:
-        logger.warning("LLM terminology extraction failed", error=str(exc))
+        logger.warning("LLM terminology extraction failed", code=classify_failure(exc))
         return []
 
 
