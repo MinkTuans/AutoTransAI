@@ -404,6 +404,55 @@ async def test_legacy_regenerate_partial_override_retains_unsupplied_old_selecti
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("payload,expected_provider,expected_model", [
+    ({"provider_id": "pollinations"}, "pollinations", "legacy-model"),
+    ({"model_id": "new-model"}, "local_image", "new-model"),
+])
+async def test_failed_legacy_partial_regenerate_persists_resolved_selection(
+    image_catalog, monkeypatch, payload, expected_provider, expected_model,
+):
+    from app.api.routes import thumbnail as route
+    from app.services import thumbnail_service
+
+    sessions, path = image_catalog
+    async with sessions.begin() as db:
+        db.add(VideoThumbnail(id="old", project_id="project", status="completed",
+                              provider="local_image", model="legacy-model"))
+    fake_analysis(monkeypatch)
+    monkeypatch.setattr(route, "async_session_factory", sessions)
+    monkeypatch.setattr(route.settings, "DATA_DIR", path)
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(thumbnail_service.asyncio, "sleep", no_sleep)
+
+    class FailingAdapter:
+        requires_api_key = False
+
+        def __init__(self, provider_id):
+            self.provider_id = provider_id
+
+        async def generate_image(self, prompt, *, model="default", **kwargs):
+            return GenerationResult(False, provider_id=self.provider_id,
+                                    error_code="HTTP_503", error_message="synthetic-secret upstream body")
+
+    fake_registry(monkeypatch, {name: FailingAdapter(name) for name in ("pollinations", "local_image")})
+    async with sessions() as db:
+        result = await route.regenerate_thumbnail_endpoint(
+            "old", route.RegenerateThumbnailRequest(**payload), db=db,
+        )
+    assert result["success"] is False
+    assert result["thumbnail"]["status"] == "failed"
+    assert result["thumbnail"]["provider"] == expected_provider
+    assert result["thumbnail"]["model"] == expected_model
+    assert "synthetic-secret" not in (result["thumbnail"]["error_message"] or "")
+    async with sessions() as db:
+        failed = await db.get(VideoThumbnail, result["thumbnail"]["id"])
+        assert failed.provider == expected_provider and failed.model == expected_model
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("payload", [
     {"provider_id": "openai"}, {"model_id": "image-default"},
 ])

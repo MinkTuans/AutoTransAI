@@ -453,9 +453,12 @@ class ThumbnailService:
                 actual_provider = selected_target.provider_id
                 actual_model = selected_target.remote_model_id
             else:
-                registry = get_registry()
                 target_provider_id = provider_id or historical_provider_id or "pollinations"
                 target_model_id = model_id or historical_model_id or "default"
+                record.provider = target_provider_id
+                record.model = target_model_id
+                await db.commit()
+                registry = get_registry()
                 img_provider: Optional[ImageProvider] = registry.get_image(target_provider_id)
                 if not img_provider:
                     img_provider = registry.get_image("pollinations") or registry.get_image("local_image")
