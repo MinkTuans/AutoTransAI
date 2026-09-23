@@ -413,6 +413,11 @@ async def test_studio_background_entry_forwards_catalog_sessions_to_translation(
         return SimpleNamespace(by_speaker={})
 
     captured = {}
+    visual_kwargs = {}
+
+    async def visual(*args, **kwargs):
+        visual_kwargs.update(kwargs)
+        return {}
 
     async def translate(*args, **kwargs):
         captured.update(kwargs)
@@ -421,7 +426,7 @@ async def test_studio_background_entry_forwards_catalog_sessions_to_translation(
     monkeypatch.setattr(studio, "extract_audio_from_video", extract)
     monkeypatch.setattr(studio, "speech_to_text_and_detect_language", stt)
     monkeypatch.setattr(character_mapping_service, "map_and_persist", mapping)
-    monkeypatch.setattr(visual_gender_service, "detect_speakers_gender", mapping)
+    monkeypatch.setattr(visual_gender_service, "detect_speakers_gender", visual)
     monkeypatch.setattr(studio, "translate_transcript_segments", translate)
     tasks = BackgroundTasks()
     try:
@@ -431,6 +436,7 @@ async def test_studio_background_entry_forwards_catalog_sessions_to_translation(
         await tasks()
         assert captured["job_id"] == "job-one"
         assert captured["sessions"] is sessions
+        assert visual_kwargs["sessions"] is sessions
     finally:
         await engine.dispose()
 

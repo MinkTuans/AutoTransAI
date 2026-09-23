@@ -12,17 +12,22 @@ Remastered Pipeline:
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
 import re
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import get_settings
+from app.models import APIKey, CatalogModel, CatalogRefreshRun
+from app.models.settings import AIFunctionConfig
 from app.providers.registry import get_registry
+from app.services.ai_routing import (
+    RouteConfigurationError, RouteTarget, UnsupportedModalityError, build_route, invoke_route,
+)
 from app.services.video_editor.watermark_service import resolve_system_font_path
 
 logger = logging.getLogger(__name__)
@@ -264,6 +269,7 @@ async def detect_gender_from_image(
     provider: str = "gemini",
     model_id: str = "gemini-2.0-flash",
     api_key: str = "",
+    route_target: RouteTarget | None = None,
 ) -> str:
     """
     Send a single contact sheet image to the Vision API to detect gender.
@@ -273,79 +279,26 @@ async def detect_gender_from_image(
     registry = get_registry()
     vision_provider = registry.get_vision(provider)
 
-    raw_text = ""
-    if vision_provider:
-        try:
-            raw_text = await vision_provider.analyze_image(
-                image_path=image_path,
-                prompt=VISUAL_GENDER_PROMPT,
-                model=model_id,
-                api_key=api_key,
-            )
-        except Exception as e:
-            logger.error(f"[Visual Gender Provider] Request failed for {provider}: {e}")
-            return "unknown"
-    else:
-        api_key = api_key or getattr(settings, f"{provider.upper()}_API_KEY", "")
-        if not api_key:
-            logger.warning(f"[Visual Gender API] Missing API key for {provider}")
-            return "unknown"
-
-        with open(image_path, "rb") as f:
-            image_bytes = f.read()
-        base64_image = base64.b64encode(image_bytes).decode("utf-8")
-
-        try:
-            async with httpx.AsyncClient(timeout=35.0) as client:
-                if provider == "openai":
-                    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-                    payload = {
-                        "model": model_id,
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": [
-                                    {"type": "text", "text": VISUAL_GENDER_PROMPT},
-                                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}},
-                                ],
-                            }
-                        ],
-                        "max_tokens": 10,
-                        "temperature": 0.1,
-                    }
-                    res = await client.post("https://api.openai.com/v1/chat/completions", json=payload, headers=headers)
-                    if res.status_code == 200:
-                        data = res.json()
-                        raw_text = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-                else:
-                    target_model = model_id.removeprefix("models/")
-                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={api_key}"
-                    payload = {
-                        "contents": [
-                            {"parts": [{"text": VISUAL_GENDER_PROMPT}, {"inline_data": {"mime_type": "image/jpeg", "data": base64_image}}]}
-                        ],
-                        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 10},
-                    }
-                    res = await client.post(url, json=payload)
-                    if res.status_code == 200:
-                        data = res.json()
-                        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                        raw_text = parts[0].get("text", "").strip() if parts else ""
-        except Exception as e:
-            logger.error(f"[Visual Gender Direct HTTP] Request failed: {e}")
-            return "unknown"
-
-    gender = parse_gender_response(raw_text)
-
+    if vision_provider is None:
+        if route_target is not None:
+            raise UnsupportedModalityError("No Studio vision adapter for this provider.")
+        return "unknown"
     try:
-        debug_log_path = settings.DATA_DIR / "visual_gender_debug.txt"
-        debug_log_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(debug_log_path, "a", encoding="utf-8") as f:
-            f.write(f"Model: {model_id}, Provider: {provider}\nRaw: {raw_text}\nParsed: {gender}\n---\n")
-    except Exception as dbg_err:
-        logger.warning(f"Could not write debug file: {dbg_err}")
-
-    return gender
+        raw_text = await vision_provider.analyze_image(
+            image_path=image_path,
+            prompt=VISUAL_GENDER_PROMPT,
+            model=model_id,
+            api_key=api_key,
+            route_target=route_target,
+        )
+    except Exception:
+        if route_target is not None:
+            raise
+        logger.warning("[VISUAL_GENDER] Legacy vision provider call failed.")
+        return "unknown"
+    # The raw model output may contain media-derived PII or echoed credentials.
+    # It must not be written to a persistent debug file or exception log.
+    return parse_gender_response(raw_text)
 
 
 async def detect_speakers_gender(
@@ -353,6 +306,8 @@ async def detect_speakers_gender(
     segments: List[Dict[str, Any]],
     db: Any = None,
     cache: Optional[Dict[str, Any]] = None,
+    sessions: async_sessionmaker[AsyncSession] | None = None,
+    data_dir: Path | None = None,
 ) -> Dict[str, str]:
     """
     Given video_path and STT segments, extract 4 keyframes per speaker, compose into a 2x2 contact sheet,
@@ -381,11 +336,29 @@ async def detect_speakers_gender(
         logger.warning(f"[VISUAL_GENDER] Video path invalid or not provided: {video_path}")
         return {}
 
+    route = None
+    if sessions is not None:
+        # The catalog and credential sessions close before frame processing or
+        # provider calls. Missing tables are migration errors, not legacy mode.
+        async with sessions() as catalog_db:
+            catalog_model = await catalog_db.scalar(select(CatalogModel.id).where(
+                CatalogModel.source != "system", CatalogModel.provider_id.in_(("gemini", "openai"))
+            ).limit(1))
+            catalog_key = await catalog_db.scalar(select(APIKey.id).where(
+                APIKey.provider_id.in_(("gemini", "openai"))
+            ).limit(1))
+            await catalog_db.scalar(select(CatalogRefreshRun.id).limit(1))
+            if catalog_model is not None or catalog_key is not None:
+                visual_default = await catalog_db.get(AIFunctionConfig, "visual_gender")
+                if visual_default is None or not visual_default.model_id:
+                    raise RouteConfigurationError("VISUAL_GENDER default is not configured.")
+                route = await build_route(catalog_db, "VISUAL_GENDER")
+
     provider = "gemini"
     model_id = "gemini-2.0-flash"
-    api_key = settings.GEMINI_API_KEY
+    api_key = settings.GEMINI_API_KEY if route is None else ""
 
-    if db:
+    if db and route is None:
         try:
             from app.services.model_resolver import AIModelResolver
             from app.services.key_manager import get_key_manager
@@ -400,8 +373,8 @@ async def detect_speakers_gender(
                 api_key = getattr(resolved_key, "api_key", str(resolved_key))
             else:
                 api_key = getattr(settings, f"{provider.upper()}_API_KEY", "")
-        except Exception as e:
-            logger.warning(f"[VISUAL_GENDER] Failed to resolve custom model, using default: {e}")
+        except Exception:
+            logger.warning("[VISUAL_GENDER] Legacy model resolution failed; using default.")
 
     # Collect distinct speaker IDs
     speaker_ids = []
@@ -473,12 +446,20 @@ async def detect_speakers_gender(
             # 4. Send exactly ONE request to Vision API
             logger.info(f"[VISUAL_GENDER] Sending 1 image request to Vision API for {spk}")
             try:
-                gender = await detect_gender_from_image(
-                    image_path=str(contact_sheet_path),
-                    provider=provider,
-                    model_id=model_id,
-                    api_key=api_key,
-                )
+                if route is not None:
+                    async def analyze(target: RouteTarget, secret: str | None) -> str:
+                        return await detect_gender_from_image(
+                            image_path=str(contact_sheet_path), provider=target.provider_id,
+                            model_id=target.remote_model_id, api_key=secret or "", route_target=target,
+                        )
+
+                    gender = await invoke_route(route, analyze, sessions, data_dir or settings.DATA_DIR,
+                                                timeout=60.0)
+                else:
+                    gender = await detect_gender_from_image(
+                        image_path=str(contact_sheet_path), provider=provider,
+                        model_id=model_id, api_key=api_key,
+                    )
                 if gender in ("male", "female"):
                     results[spk] = gender
                     logger.info(f"[VISUAL_GENDER] Vision result for {spk}: {gender.upper()}")
@@ -486,8 +467,10 @@ async def detect_speakers_gender(
                     logger.info(f"[VISUAL_GENDER] Vision detection returned unknown for {spk}")
                     logger.info(f"[VISUAL_GENDER] Falling back to dialogue-based gender detection for {spk}")
                     results[spk] = "unknown"
-            except Exception as v_err:
-                logger.error(f"[VISUAL_GENDER] Vision detection failed for {spk}: {v_err}")
+            except Exception:
+                if route is not None:
+                    raise
+                logger.error(f"[VISUAL_GENDER] Legacy vision detection failed for {spk}.")
                 logger.info(f"[VISUAL_GENDER] Falling back to dialogue-based gender detection for {spk}")
                 results[spk] = "unknown"
 

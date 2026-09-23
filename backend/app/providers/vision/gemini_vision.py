@@ -9,14 +9,23 @@ import base64
 import logging
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import quote
 
 import httpx
 
 from app.config import get_settings
 from app.providers.base import VisionProvider
+from app.services.ai_routing import RouteTarget
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+MAX_VISION_IMAGE_BYTES = 8 * 1024 * 1024
+
+
+class VisionHTTPError(RuntimeError):
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+        super().__init__(f"Vision provider returned HTTP {status_code}.")
 
 
 class GeminiVisionProvider(VisionProvider):
@@ -50,11 +59,14 @@ class GeminiVisionProvider(VisionProvider):
         **kwargs: Any,
     ) -> str:
         """Send image and prompt to Gemini Vision API."""
-        key = api_key or settings.GEMINI_API_KEY
+        route_target: RouteTarget | None = kwargs.get("route_target")
+        if route_target is not None and route_target.provider_id != self.provider_id:
+            raise ValueError("Vision route provider mismatch.")
+        key = api_key if route_target is not None else (api_key or settings.GEMINI_API_KEY)
         if not key:
             raise ValueError("[Gemini Vision] Missing GEMINI_API_KEY")
 
-        target_model = model or "gemini-2.0-flash"
+        target_model = route_target.remote_model_id if route_target is not None else (model or "gemini-2.0-flash")
         if target_model.startswith("models/"):
             target_model = target_model[len("models/"):]
 
@@ -62,13 +74,15 @@ class GeminiVisionProvider(VisionProvider):
         if not img_path.is_file():
             raise FileNotFoundError(f"[Gemini Vision] Image file not found: {img_path}")
 
+        if img_path.stat().st_size > MAX_VISION_IMAGE_BYTES:
+            raise ValueError("Vision image exceeds size limit.")
         image_bytes = img_path.read_bytes()
         base64_image = base64.b64encode(image_bytes).decode("utf-8")
 
         suffix = img_path.suffix.lower()
         mime_type = "image/png" if suffix == ".png" else "image/jpeg"
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{quote(target_model, safe='-._~')}:generateContent"
         payload = {
             "contents": [
                 {
@@ -91,7 +105,7 @@ class GeminiVisionProvider(VisionProvider):
 
         timeout = float(kwargs.get("timeout", 45.0))
         async with httpx.AsyncClient(timeout=timeout) as client:
-            res = await client.post(url, json=payload)
+            res = await client.post(url, json=payload, headers={"x-goog-api-key": key})
             if res.status_code == 200:
                 data = res.json()
                 candidates = data.get("candidates", [])
@@ -101,6 +115,4 @@ class GeminiVisionProvider(VisionProvider):
                         return parts[0].get("text", "").strip()
                 return ""
             else:
-                error_msg = f"Gemini Vision API returned HTTP {res.status_code}: {res.text[:300]}"
-                logger.error(f"[Gemini Vision Error] {error_msg}")
-                raise RuntimeError(error_msg)
+                raise VisionHTTPError(res.status_code)

@@ -1036,11 +1036,15 @@ async def start_translation_pipeline(
                     if video_path_str:
                         from app.services.video_translator.visual_gender_service import detect_speakers_gender
                         try:
-                            visual_genders = await detect_speakers_gender(video_path_str, segments_raw, db=bg_session)
+                            visual_genders = await detect_speakers_gender(
+                                video_path_str, segments_raw, db=bg_session,
+                                sessions=async_session_factory,
+                            )
                             log_job_event(job_id, "VISUAL_GENDER", f"Visual Gender Analysis completed: {visual_genders}")
-                        except Exception as vg_err:
-                            logger.error(f"[{job_id}] Visual gender detection failed: {vg_err}")
-                            log_job_event(job_id, "VISUAL_GENDER", f"Visual detection error: {vg_err}. Falling back to dialogue LLM.")
+                        except Exception:
+                            logger.error(f"[{job_id}] Visual gender routing failed.")
+                            log_job_event(job_id, "VISUAL_GENDER", "Visual model configuration or provider route failed.")
+                            raise
 
                     # 2c. Character Mapping (BEFORE Translation)
                     from app.services.video_translator.character_mapping_service import map_and_persist

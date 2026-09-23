@@ -974,3 +974,8 @@
   - Updated `model_resolver.py` to dynamically query `AIModel` via database lookup instead of relying on rudimentary string matching.
   - Extended the YouTube publish feature (`video_editor.py`) to properly utilize the `channel_id` parameter.
   - Added `pywebview` to `requirements.txt` and ignored scratch analysis files in `.gitignore`.
+# Studio Visual Gender canonical routing and Vision secret safety (2026-09-23)
+- Studio's Visual Gender stage now uses the configured canonical catalog model and request-local encrypted credential when a Gemini/OpenAI keyed catalog is initialized. Compatible same-provider and cross-provider routes are tried without relying on the legacy fallback flag; missing default/schema and all-route failure are visible job errors. Inconclusive visual evidence remains `unknown`.
+- Gemini/OpenAI Vision adapters receive exact route model IDs and request-local keys; Gemini uses `x-goog-api-key` instead of URL credentials. Both omit provider response bodies from errors/logs, reject images over 8 MiB, and no longer write raw visual model output to `visual_gender_debug.txt`. The direct HTTP bypass in the visual service was removed.
+- Affected: `backend/app/api/routes/video_translator.py`, `backend/app/services/video_translator/visual_gender_service.py`, `backend/app/providers/vision/{gemini_vision,openai_vision}.py`, focused tests, and this knowledge base. No database/API schema or frontend change.
+- Verification: 66 focused tests passed with synthetic SQLite/media/HTTP and no live key/network. Seven older visual tests also fail unchanged on the untouched `main` checkout: six use 0-byte frame mocks rejected by existing contact-sheet validation, and one requires the unavailable `ffmpeg` executable.

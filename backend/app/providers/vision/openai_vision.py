@@ -14,6 +14,8 @@ import httpx
 
 from app.config import get_settings
 from app.providers.base import VisionProvider
+from app.services.ai_routing import RouteTarget
+from app.providers.vision.gemini_vision import MAX_VISION_IMAGE_BYTES, VisionHTTPError
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -50,15 +52,20 @@ class OpenAIVisionProvider(VisionProvider):
         **kwargs: Any,
     ) -> str:
         """Send image and prompt to OpenAI Vision API."""
-        key = api_key or settings.OPENAI_API_KEY
+        route_target: RouteTarget | None = kwargs.get("route_target")
+        if route_target is not None and route_target.provider_id != self.provider_id:
+            raise ValueError("Vision route provider mismatch.")
+        key = api_key if route_target is not None else (api_key or settings.OPENAI_API_KEY)
         if not key:
             raise ValueError("[OpenAI Vision] Missing OPENAI_API_KEY")
 
-        target_model = model or "gpt-4o-mini"
+        target_model = route_target.remote_model_id if route_target is not None else (model or "gpt-4o-mini")
         img_path = Path(image_path)
         if not img_path.is_file():
             raise FileNotFoundError(f"[OpenAI Vision] Image file not found: {img_path}")
 
+        if img_path.stat().st_size > MAX_VISION_IMAGE_BYTES:
+            raise ValueError("Vision image exceeds size limit.")
         image_bytes = img_path.read_bytes()
         base64_image = base64.b64encode(image_bytes).decode("utf-8")
 
@@ -101,6 +108,4 @@ class OpenAIVisionProvider(VisionProvider):
                     return choices[0].get("message", {}).get("content", "").strip()
                 return ""
             else:
-                error_msg = f"OpenAI Vision API returned HTTP {res.status_code}: {res.text[:300]}"
-                logger.error(f"[OpenAI Vision Error] {error_msg}")
-                raise RuntimeError(error_msg)
+                raise VisionHTTPError(res.status_code)
