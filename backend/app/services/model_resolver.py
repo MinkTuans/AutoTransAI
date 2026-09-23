@@ -80,14 +80,13 @@ _CAPABILITY_TO_FUNCTION = {
 
 
 def _is_capability_compatible(target_capability: str, model_capabilities: List[str], provider_id: str) -> bool:
-    """Check if a model is compatible with a target capability."""
-    if target_capability in model_capabilities:
-        return True
-    if "LLM" in model_capabilities and target_capability in ("STT", "TRANSLATION"):
-        return True
-    if provider_id in ("gemini", "openai") and target_capability in ("STT", "TRANSLATION"):
-        return True
-    return False
+    """Legacy catalog tags are explicit; LLM is a translation alias only."""
+    from app.services.capability_registry import CAPABILITIES, CapabilityEvidence, compatible
+    tags = set(model_capabilities)
+    if "LLM" in tags:
+        tags.add("TRANSLATION")
+    positive = frozenset(tags)
+    return compatible(target_capability, CapabilityEvidence(positive, "KNOWN", CAPABILITIES - positive))
 
 
 class AIModelResolver:
