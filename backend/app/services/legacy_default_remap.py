@@ -48,7 +48,7 @@ async def _has_access(db: AsyncSession, model: CatalogModel, capability: str) ->
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     keys = (await db.scalars(select(APIKey).where(APIKey.provider_id == model.provider_id)
                              .with_for_update().execution_options(populate_existing=True))).all()
-    eligible = {key.id for key in keys if _key_eligible(key, now)}
+    eligible = {key.id for key in keys if key.provider_id == model.provider_id and _key_eligible(key, now)}
     if not eligible:
         return False
     if model.provider_id in _PUBLIC_CATALOG_PROVIDERS:
@@ -56,7 +56,8 @@ async def _has_access(db: AsyncSession, model: CatalogModel, capability: str) ->
     edges = (await db.scalars(select(KeyModelAccess).where(
         KeyModelAccess.model_id == model.id, KeyModelAccess.provider_id == model.provider_id,
     ).with_for_update().execution_options(populate_existing=True))).all()
-    return any(edge.key_id in eligible for edge in edges)
+    return any(edge.key_id in eligible and edge.model_id == model.id
+               and edge.provider_id == model.provider_id for edge in edges)
 
 
 async def remap_legacy_function_defaults(db: AsyncSession) -> dict[str, object]:
@@ -68,23 +69,28 @@ async def remap_legacy_function_defaults(db: AsyncSession) -> dict[str, object]:
     """
     counts = {"resolved": 0, "unresolved": 0, "already_canonical": 0, "conflicts": 0}
     issues: set[str] = set()
+    # Canonical Function PUT locks its provider before the config. Lock the
+    # small provider table in stable order first so this batch service cannot
+    # invert that order if a config's provider changes concurrently.
+    providers = {provider.id: provider for provider in (await db.scalars(
+        select(Provider).order_by(Provider.id).with_for_update()
+        .execution_options(populate_existing=True)
+    )).all()}
     configs = (await db.scalars(select(AIFunctionConfig).order_by(AIFunctionConfig.function_id)
                                 .with_for_update().execution_options(populate_existing=True))).all()
     for config in configs:
         reason = None
         provider_id = config.primary_provider_id
-        if not provider_id:
+        provider = providers.get(provider_id)
+        if provider is None or provider.id != provider_id:
             reason = "missing_provider"
-        else:
-            provider = await db.scalar(select(Provider).where(Provider.id == provider_id)
-                                       .with_for_update().execution_options(populate_existing=True))
-            if provider is None:
-                reason = "missing_provider"
 
         # A catalog UUID belonging to this provider is already canonical even
         # when its current route is unavailable or has an unrelated error.
         existing = await db.scalar(select(CatalogModel).where(CatalogModel.id == config.model_id)
                                    .with_for_update().execution_options(populate_existing=True))
+        if existing is not None and existing.id != config.model_id:
+            existing = None
         if _is_canonical_uuid(config.model_id) and existing is not None and existing.provider_id == provider_id:
             counts["already_canonical"] += 1
             continue
@@ -98,7 +104,7 @@ async def remap_legacy_function_defaults(db: AsyncSession) -> dict[str, object]:
         if reason is None:
             legacy = await db.scalar(select(AIModel).where(AIModel.id == config.model_id)
                                      .with_for_update().execution_options(populate_existing=True))
-            if legacy is None:
+            if legacy is None or legacy.id != config.model_id:
                 reason = "canonical_provider_conflict" if collision else "missing_legacy_model"
             elif legacy.provider_id != provider_id:
                 reason = "legacy_provider_conflict"
@@ -107,10 +113,11 @@ async def remap_legacy_function_defaults(db: AsyncSession) -> dict[str, object]:
 
         model = None
         if reason is None:
-            matches = (await db.scalars(select(CatalogModel).where(
+            matches = [candidate for candidate in (await db.scalars(select(CatalogModel).where(
                 CatalogModel.provider_id == provider_id,
                 CatalogModel.remote_model_id == legacy.id,
             ).with_for_update().execution_options(populate_existing=True))).all()
+                       if candidate.provider_id == provider_id and candidate.remote_model_id == legacy.id]
             if not matches:
                 reason = "canonical_provider_conflict" if collision else "missing_catalog_model"
             elif len(matches) != 1:

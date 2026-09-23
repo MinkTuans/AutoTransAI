@@ -1,4 +1,5 @@
 - **Safe legacy Function default remap (2026-09-23, Task 9B3C1)**:
+  - Review fix: provider rows are locked in stable ID order before Function rows, matching canonical Function PUT and avoiding lock-order inversion without changing provider revisions. Exact Python checks reject case-only legacy, catalog, key, and listing-edge SQL matches under case-insensitive collation.
   - Added explicit caller-transactional remap from archival provider/remote identity to an existing eligible canonical catalog ID. Unresolved choices retain their provider/model ID and receive a visible fixed configuration error; already-canonical choices stay intact, and successful remaps clear only a migration-specific error.
   - Added synthetic disposable SQLite tests for routing eligibility, collisions, ambiguity, sentinel handling, idempotence, rollback, aggregate-only reporting, and row/fallback preservation. No catalog seeding, schema/API change, provider traffic, configured database access, or startup cutover. Updated the knowledge base.
 

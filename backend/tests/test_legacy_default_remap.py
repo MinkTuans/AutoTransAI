@@ -3,7 +3,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import event, select
+from sqlalchemy import MetaData, String, event, select
 from sqlalchemy.dialects import mysql
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -19,6 +19,30 @@ async def db_factory(tmp_path):
     async with engine.begin() as conn:
         for model in (Provider, APIKey, CatalogModel, KeyModelAccess, AIModel, AIFunctionConfig):
             await conn.run_sync(model.__table__.create)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    yield sessions
+    await engine.dispose()
+
+
+@pytest.fixture
+async def nocase_db_factory(tmp_path):
+    """Emulate MySQL-style case-insensitive equality on identity columns."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'nocase.sqlite'}")
+    metadata = MetaData()
+    for model in (Provider, APIKey, CatalogModel, KeyModelAccess, AIModel, AIFunctionConfig):
+        model.__table__.to_metadata(metadata)
+    for table_name, column_names in {
+        "providers": ("id",),
+        "ai_models": ("id", "provider_id"),
+        "ai_catalog_models": ("id", "provider_id", "remote_model_id"),
+        "api_keys": ("provider_id",),
+        "ai_key_model_access": ("model_id", "provider_id"),
+    }.items():
+        for name in column_names:
+            column = metadata.tables[table_name].c[name]
+            column.type = String(column.type.length, collation="NOCASE")
+    async with engine.begin() as conn:
+        await conn.run_sync(metadata.create_all)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     yield sessions
     await engine.dispose()
@@ -228,6 +252,43 @@ async def test_archival_provider_mismatch_is_a_conflict(db_factory):
         assert (await db.get(AIFunctionConfig, "stt")).model_id == "remote-stt"
 
 
+@pytest.mark.parametrize("variant,expected_issue", [
+    ("provider", "missing_provider"),
+    ("legacy_id", "missing_legacy_model"),
+    ("catalog_remote", "missing_catalog_model"),
+    ("catalog_provider", "missing_catalog_model"),
+    ("key_provider", "no_credential_access"),
+    ("edge_provider", "no_credential_access"),
+])
+async def test_nocase_sql_matches_do_not_change_exact_legacy_identity(nocase_db_factory, variant, expected_issue):
+    async with nocase_db_factory.begin() as db:
+        await seed(db)
+        if variant == "provider":
+            (await db.get(AIFunctionConfig, "stt")).primary_provider_id = "OpenAI"
+        elif variant == "legacy_id":
+            (await db.get(AIFunctionConfig, "stt")).model_id = "REMOTE-STT"
+        elif variant == "catalog_remote":
+            (await db.get(CatalogModel, "11111111-1111-4111-8111-111111111111")).remote_model_id = "REMOTE-STT"
+        elif variant == "catalog_provider":
+            (await db.get(CatalogModel, "11111111-1111-4111-8111-111111111111")).provider_id = "OpenAI"
+            (await db.get(APIKey, "22222222-2222-4222-8222-222222222222")).provider_id = "OpenAI"
+            (await db.get(KeyModelAccess, ("22222222-2222-4222-8222-222222222222",
+                                           "11111111-1111-4111-8111-111111111111"))).provider_id = "OpenAI"
+        elif variant == "key_provider":
+            (await db.get(APIKey, "22222222-2222-4222-8222-222222222222")).provider_id = "OpenAI"
+        else:
+            (await db.get(KeyModelAccess, ("22222222-2222-4222-8222-222222222222",
+                                           "11111111-1111-4111-8111-111111111111"))).provider_id = "OpenAI"
+    async with nocase_db_factory.begin() as db:
+        result = await remap_legacy_function_defaults(db)
+        config = await db.get(AIFunctionConfig, "stt")
+        assert result["counts"]["resolved"] == 0
+        assert result["issues"] == [expected_issue]
+        assert config.model_id == ("REMOTE-STT" if variant == "legacy_id" else "remote-stt")
+        assert config.primary_provider_id == ("OpenAI" if variant == "provider" else "openai")
+        assert config.configuration_error == "legacy_default_unresolved"
+
+
 async def test_non_uuid_catalog_id_collision_does_not_hide_legacy_choice(db_factory):
     async with db_factory.begin() as db:
         target = await seed(db)
@@ -337,3 +398,6 @@ async def test_recheck_uses_mysql_current_locking_reads(db_factory):
     assert any("FROM ai_catalog_models" in sql and "FOR UPDATE" in sql for sql in statements)
     assert any("FROM ai_models" in sql and "FOR UPDATE" in sql for sql in statements)
     assert any("FROM api_keys" in sql and "FOR UPDATE" in sql for sql in statements)
+    provider_lock = next(index for index, sql in enumerate(statements) if "FROM providers" in sql)
+    config_lock = next(index for index, sql in enumerate(statements) if "FROM ai_function_configs" in sql)
+    assert provider_lock < config_lock
