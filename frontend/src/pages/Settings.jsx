@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { providersApi, settingsApi, systemApi, tiktokApi, youtubeApi } from '../api';
+import { settingsApi, systemApi, tiktokApi, youtubeApi } from '../api';
 import { LoadingSpinner, ButtonSpinner, LoadingOverlay, SkeletonLoader } from '../components/LoadingSpinner';
 import ModelCatalog from '../components/settings/ModelCatalog';
 import FunctionRouting from '../components/settings/FunctionRouting';
+import KeyPool from '../components/settings/KeyPool';
 
 
 export default function Settings() {
@@ -10,29 +11,6 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
-
-  // 1. Providers State
-  const [providers, setProviders] = useState({ audio: [], video: [], llm: [] });
-  const [selectedProviderForKeys, setSelectedProviderForKeys] = useState('gemini');
-  const [keysList, setKeysList] = useState([]);
-  const [keysLoading, setKeysLoading] = useState(false);
-  const [showAddKeyModal, setShowAddKeyModal] = useState(false);
-  const [newKeyInput, setNewKeyInput] = useState('');
-  const [newKeyPriority, setNewKeyPriority] = useState(1);
-  const [modalError, setModalError] = useState(null);
-
-  // Custom Provider Modal State
-  const [showAddProviderModal, setShowAddProviderModal] = useState(false);
-  const [customProviderData, setCustomProviderData] = useState({
-    id: '',
-    name: '',
-    provider_type: 'llm',
-    website_url: '',
-    doc_url: '',
-    base_url: '',
-    capabilities: ['LLM'],
-    api_key: '',
-  });
 
   // 4. Social Accounts State
   const [socialAccounts, setSocialAccounts] = useState([]);
@@ -75,24 +53,6 @@ export default function Settings() {
   const [storageTesting, setStorageTesting] = useState(false);
 
   // Data Loading Handlers
-  const fetchProviders = () => {
-    return providersApi.list()
-      .then(res => {
-        if (res.success) setProviders(res.data);
-      })
-      .catch(err => console.error('Failed fetching providers:', err));
-  };
-
-  const fetchKeys = (providerId) => {
-    setKeysLoading(true);
-    return providersApi.listKeys(providerId)
-      .then(res => {
-        if (res.success) setKeysList(res.data);
-      })
-      .catch(err => console.error('Failed fetching keys:', err))
-      .finally(() => setKeysLoading(false));
-  };
-
   const fetchSocialAccounts = async () => {
     try {
       const [settingsRes, ytAccounts, ttAccounts] = await Promise.allSettled([
@@ -214,7 +174,6 @@ export default function Settings() {
   useEffect(() => {
     setLoading(true);
     Promise.all([
-      fetchProviders(),
       fetchSocialAccounts(),
       fetchSystemSettings(),
     ]).finally(() => setLoading(false));
@@ -225,111 +184,6 @@ export default function Settings() {
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, []);
-
-  useEffect(() => {
-    fetchKeys(selectedProviderForKeys);
-  }, [selectedProviderForKeys]);
-
-  // Handler: Add Multi-Key
-  const handleAddKey = async (e) => {
-    if (e) e.preventDefault();
-    const cleanKey = newKeyInput.trim();
-    if (!cleanKey) {
-      setModalError('Vui lòng nhập API Key trước khi lưu!');
-      return;
-    }
-
-    setSaving(true);
-    setMessage(null);
-    setModalError(null);
-    try {
-      const prio = parseInt(newKeyPriority, 10) || 1;
-      const res = await providersApi.addKey(selectedProviderForKeys, cleanKey, prio);
-      if (res.success) {
-        setMessage({ type: 'success', text: `Đã thêm API Key cho ${selectedProviderForKeys.toUpperCase()} thành công!` });
-        setNewKeyInput('');
-        setModalError(null);
-        setShowAddKeyModal(false);
-        fetchKeys(selectedProviderForKeys);
-        fetchProviders();
-      } else {
-        setModalError(res.error?.message || res.detail || 'Không thể thêm API Key');
-      }
-    } catch (err) {
-      console.error('Error adding API Key:', err);
-      const detailMsg = err.response?.data?.detail || err.response?.data?.message || err.message || 'Lỗi kết nối khi thêm API Key';
-      setModalError(detailMsg);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDeleteKey = async (keyId) => {
-    if (!window.confirm('Are you sure you want to delete this API key?')) return;
-    try {
-      await providersApi.deleteKey(selectedProviderForKeys, keyId);
-      setMessage({ type: 'success', text: 'API key deleted' });
-      fetchKeys(selectedProviderForKeys);
-      fetchProviders();
-    } catch (err) {
-      setMessage({ type: 'danger', text: 'Failed to delete API key' });
-    }
-  };
-
-  const handleToggleKeyStatus = async (keyEntry) => {
-    const newStatus = keyEntry.status === 'disabled' ? 'ready' : 'disabled';
-    try {
-      await providersApi.updateKey(selectedProviderForKeys, keyEntry.key_id, { status: newStatus });
-      fetchKeys(selectedProviderForKeys);
-    } catch (err) {
-      setMessage({ type: 'danger', text: 'Failed to update key status' });
-    }
-  };
-
-  const handleTestKey = async (keyId) => {
-    setMessage({ type: 'info', text: 'Testing API key connection...' });
-    try {
-      const res = await providersApi.testKey(selectedProviderForKeys, keyId);
-      if (res.success && res.data.valid) {
-        setMessage({ type: 'success', text: `Key test passed: ${res.data.message}` });
-      } else {
-        setMessage({ type: 'danger', text: `Key test failed: ${res.data?.message || 'Invalid API Key'}` });
-      }
-      fetchKeys(selectedProviderForKeys);
-    } catch (err) {
-      setMessage({ type: 'danger', text: 'Key test call failed' });
-    }
-  };
-
-  // Handler: Add Custom Provider
-  const handleAddCustomProvider = async (e) => {
-    e.preventDefault();
-    if (!customProviderData.id || !customProviderData.name) return;
-
-    setSaving(true);
-    try {
-      const res = await providersApi.addCustomProvider(customProviderData);
-      if (res.success) {
-        setMessage({ type: 'success', text: res.message || 'Custom provider added successfully!' });
-        setShowAddProviderModal(false);
-        setCustomProviderData({
-          id: '',
-          name: '',
-          provider_type: 'llm',
-          website_url: '',
-          doc_url: '',
-          base_url: '',
-          capabilities: ['LLM'],
-          api_key: '',
-        });
-        fetchProviders();
-      }
-    } catch (err) {
-      setMessage({ type: 'danger', text: err.response?.data?.detail || 'Failed to add custom provider' });
-    } finally {
-      setSaving(false);
-    }
-  };
 
   // Handler: Save System Settings
   const handleSaveSystemSettings = async (e) => {
@@ -376,49 +230,6 @@ export default function Settings() {
       setMessage({ type: 'danger', text: 'Failed connecting social account' });
     } finally {
       setSaving(false);
-    }
-  };
-
-  const renderStatusBadge = (k) => {
-    switch (k.status) {
-      case 'active':
-        return <span className="badge badge-success">● Active</span>;
-      case 'ready':
-        return <span className="badge badge-info">● Ready</span>;
-      case 'rate_limited':
-        return <span className="badge badge-warning">● Rate Limited (Cooldown 60s)</span>;
-      case 'exhausted':
-        return <span className="badge badge-danger">● Exhausted / Out of balance</span>;
-      case 'invalid':
-        return <span className="badge badge-danger">● Invalid API Key</span>;
-      case 'disabled':
-        return <span className="badge badge-neutral">● Disabled</span>;
-      default:
-        return <span className="badge badge-neutral">{k.status}</span>;
-    }
-  };
-
-  const closeAddKeyModalSafely = () => {
-    if (newKeyInput.trim()) {
-      if (window.confirm('⚠️ Bạn có API Key đang nhập chưa lưu! Bạn có chắc chắn muốn đóng và thoát không?')) {
-        setNewKeyInput('');
-        setModalError(null);
-        setShowAddKeyModal(false);
-      }
-    } else {
-      setModalError(null);
-      setShowAddKeyModal(false);
-    }
-  };
-
-  const closeAddProviderModalSafely = () => {
-    const isDirty = customProviderData.id || customProviderData.name || customProviderData.base_url || customProviderData.api_key;
-    if (isDirty) {
-      if (window.confirm('⚠️ Bạn có thông tin Custom Provider đang nhập chưa lưu! Bạn có chắc chắn muốn đóng và thoát không?')) {
-        setShowAddProviderModal(false);
-      }
-    } else {
-      setShowAddProviderModal(false);
     }
   };
 
@@ -486,151 +297,7 @@ export default function Settings() {
       </div>
 
       {/* TAB 1: AI & API PROVIDERS */}
-      {activeTab === 'providers' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem' }}>
-          {/* Provider Overview Card */}
-          <div className="card">
-            <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ margin: 0, fontSize: '1.1rem' }}>AI Provider Catalog & Status</h3>
-              <button className="btn btn-secondary" style={{ fontSize: '0.8rem' }} onClick={() => setShowAddProviderModal(true)}>
-                + Add Custom Provider
-              </button>
-            </div>
-            <div className="card-body">
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
-                {[
-                  { id: 'gemini', name: 'Google Gemini', type: 'LLM & STT', supported: true, caps: ['STT', 'LLM', 'TRANSLATION'] },
-                  { id: 'openai', name: 'OpenAI', type: 'LLM & STT', supported: true, caps: ['STT', 'LLM', 'TRANSLATION'] },
-                  { id: 'edge_tts', name: 'Edge TTS', type: 'Audio TTS', supported: true, caps: ['TTS'], free: true },
-                  { id: 'google_cloud_tts', name: 'Google Cloud TTS', type: 'Audio TTS', supported: true, caps: ['TTS'] },
-                  { id: 'elevenlabs', name: 'ElevenLabs', type: 'Audio TTS', supported: true, caps: ['TTS'] },
-                  { id: 'kling', name: 'Kling AI', type: 'Video Generation', supported: true, caps: ['VIDEO_GENERATION'] },
-                  { id: 'fal', name: 'fal.ai', type: 'Video & Image', supported: true, caps: ['VIDEO_GENERATION', 'IMAGE_GENERATION'] },
-                ].map(p => (
-                  <div
-                    key={p.id}
-                    className={`provider-tile ${selectedProviderForKeys === p.id ? 'is-selected' : ''}`}
-                    onClick={() => setSelectedProviderForKeys(p.id)}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                      <strong style={{ fontSize: '1rem', color: '#f8fafc' }}>{p.name}</strong>
-                      <span className="badge badge-info" style={{ fontSize: '0.7rem' }}>{p.type}</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-                      {p.caps.map(c => <span key={c} className="badge badge-neutral" style={{ fontSize: '0.65rem' }}>{c}</span>)}
-                      {p.free && <span className="badge badge-success" style={{ fontSize: '0.65rem' }}> miễn phí</span>}
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem', color: '#94a3b8', gap: '0.5rem' }}>
-                      <span>Status: {p.free ? 'Ready' : 'Multi-Key Pool'}</span>
-                      <div style={{ display: 'flex', gap: '0.3rem' }}>
-                        {!p.free && (
-                          <button
-                            className="btn btn-primary"
-                            style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedProviderForKeys(p.id);
-                              setShowAddKeyModal(true);
-                            }}
-                          >
-                            + Thêm Key
-                          </button>
-                        )}
-                        <button
-                          className="btn btn-secondary"
-                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedProviderForKeys(p.id);
-                            const elem = document.getElementById('key-pool-manager');
-                            if (elem) elem.scrollIntoView({ behavior: 'smooth' });
-                          }}
-                        >
-                          Quản lý →
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Multi-Key Pool Manager Card */}
-          <div className="card" id="key-pool-manager">
-            <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <h3 style={{ margin: 0, fontSize: '1.1rem' }}>
-                  🔑 Key Pool & Rotation Manager — <span style={{ color: '#3b82f6' }}>{selectedProviderForKeys.toUpperCase()}</span>
-                </h3>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: '#94a3b8' }}>
-                  Automatic failover & cooldown on 429/Rate Limit. Masked keys enforced (`AIza****XXXX`).
-                </p>
-              </div>
-              {selectedProviderForKeys !== 'edge_tts' ? (
-                <button className="btn btn-primary" style={{ fontSize: '0.8rem' }} onClick={() => setShowAddKeyModal(true)}>
-                  + Add API Key to Pool
-                </button>
-              ) : (
-                <span className="badge badge-success" style={{ fontSize: '0.75rem' }}>Miễn phí (Không dùng API Key)</span>
-              )}
-            </div>
-            <div className="card-body">
-              {selectedProviderForKeys === 'edge_tts' ? (
-                <div style={{ color: '#94a3b8', fontStyle: 'italic', padding: '1rem 0' }}>
-                  ℹ️ Edge TTS là dịch vụ TTS miễn phí tích hợp sẵn. Không cần cấu hình API key.
-                </div>
-              ) : keysLoading ? (
-                <div style={{ padding: '1rem 0' }}>
-                  <LoadingSpinner size="sm" label={`Đang tải Key Pool cho ${selectedProviderForKeys.toUpperCase()}...`} />
-                  <SkeletonLoader type="table" rows={3} columns={6} />
-                </div>
-              ) : keysList.length === 0 ? (
-                <div style={{ color: '#94a3b8', fontStyle: 'italic', padding: '1rem 0' }}>
-                  Chưa có API key nào cho {selectedProviderForKeys.toUpperCase()}. Bấm nút "+ Add API Key to Pool" hoặc "+ Thêm Key" trên thẻ phía trên để nhập API key mới.
-                </div>
-              ) : (
-                <table className="table" style={{ width: '100%', fontSize: '0.85rem' }}>
-                  <thead>
-                    <tr>
-                      <th>Priority</th>
-                      <th>Masked API Key</th>
-                      <th>Status</th>
-                      <th>Requests (Success/Fail)</th>
-                      <th>Quota Info</th>
-                      <th style={{ textAlign: 'right' }}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {keysList.map(k => (
-                      <tr key={k.key_id}>
-                        <td><span className="badge badge-info">P{k.priority}</span></td>
-                        <td style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{k.masked_key}</td>
-                        <td>{renderStatusBadge(k)}</td>
-                        <td>{k.successful_requests} / {k.failed_requests} ({k.total_requests} total)</td>
-                        <td>{k.quota_info?.status || 'Active'}</td>
-                        <td style={{ textAlign: 'right', verticalAlign: 'middle' }}>
-                          <div style={{ display: 'inline-flex', gap: '0.3rem', justifyContent: 'flex-end', alignItems: 'center' }}>
-                            <button className="btn btn-secondary" style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }} onClick={() => handleTestKey(k.key_id)}>
-                              🧪 Test
-                            </button>
-                            <button className="btn btn-secondary" style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }} onClick={() => handleToggleKeyStatus(k)}>
-                              {k.status === 'disabled' ? 'Enable' : 'Disable'}
-                            </button>
-                            <button className="btn btn-danger" style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }} onClick={() => handleDeleteKey(k.key_id)}>
-                              🗑️
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {activeTab === 'providers' && <KeyPool />}
 
       {/* TAB 2: AI FUNCTION CONFIGURATION */}
       {activeTab === 'functions' && <FunctionRouting />}
@@ -803,119 +470,6 @@ export default function Settings() {
             </div>
           </div>
         </form>
-      )}
-
-      {/* MODAL: ADD API KEY */}
-      {showAddKeyModal && (
-        <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) closeAddKeyModalSafely(); }}>
-          <div className="modal-dialog">
-            <div className="modal-header">
-              <h3>Add API Key to Pool — {selectedProviderForKeys.toUpperCase()}</h3>
-              <button type="button" className="modal-close-btn" onClick={closeAddKeyModalSafely}>&times;</button>
-            </div>
-            <div className="modal-body">
-              {modalError && (
-                <div className="alert alert-danger" style={{ marginBottom: '1rem', padding: '0.6rem 1rem', fontSize: '0.85rem' }}>
-                  ⚠️ {modalError}
-                </div>
-              )}
-              <form onSubmit={handleAddKey}>
-                <div className="form-group">
-                  <label className="form-label">API Key</label>
-                  <input
-                    type="password"
-                    className="form-control"
-                    placeholder="Paste raw secret API Key..."
-                    value={newKeyInput}
-                    onChange={(e) => { setNewKeyInput(e.target.value); if (modalError) setModalError(null); }}
-                    required
-                    autoFocus
-                  />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Priority (1 = Highest)</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    value={newKeyPriority}
-                    min="1"
-                    onChange={(e) => setNewKeyPriority(e.target.value)}
-                  />
-                </div>
-                <div className="modal-footer">
-                  <button type="button" className="btn btn-secondary" onClick={closeAddKeyModalSafely}>Cancel</button>
-                  <button type="button" className="btn btn-primary" disabled={saving} onClick={handleAddKey}>
-                    {saving ? <><ButtonSpinner /> Đang lưu...</> : 'Save Key'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: ADD CUSTOM PROVIDER */}
-      {showAddProviderModal && (
-        <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) closeAddProviderModalSafely(); }}>
-          <div className="modal-dialog">
-            <div className="modal-header">
-              <h3>Add Custom Provider</h3>
-              <button type="button" className="modal-close-btn" onClick={closeAddProviderModalSafely}>&times;</button>
-            </div>
-            <div className="modal-body">
-              <form onSubmit={handleAddCustomProvider}>
-                <div className="form-group">
-                  <label className="form-label">Provider ID (slug)</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="e.g. custom_llm"
-                    value={customProviderData.id}
-                    onChange={(e) => setCustomProviderData({ ...customProviderData, id: e.target.value })}
-                    required
-                  />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Provider Display Name</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="e.g. Custom LLM Provider"
-                    value={customProviderData.name}
-                    onChange={(e) => setCustomProviderData({ ...customProviderData, name: e.target.value })}
-                    required
-                  />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Base URL</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="https://api.custom.com/v1"
-                    value={customProviderData.base_url}
-                    onChange={(e) => setCustomProviderData({ ...customProviderData, base_url: e.target.value })}
-                  />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">API Key</label>
-                  <input
-                    type="password"
-                    className="form-control"
-                    placeholder="Optional API Key..."
-                    value={customProviderData.api_key}
-                    onChange={(e) => setCustomProviderData({ ...customProviderData, api_key: e.target.value })}
-                  />
-                </div>
-                <div className="modal-footer">
-                  <button type="button" className="btn btn-secondary" onClick={closeAddProviderModalSafely}>Cancel</button>
-                  <button type="submit" className="btn btn-primary" disabled={saving}>
-                    {saving ? <><ButtonSpinner /> Đang thêm...</> : 'Add Provider'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
       )}
 
       {/* MODAL: ADD SOCIAL ACCOUNT */}

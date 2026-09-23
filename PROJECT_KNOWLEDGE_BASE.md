@@ -370,9 +370,9 @@ The frontend is a single-page React 18 application built with Vite and designed 
    - Detailed project overview, associated source videos, project-level settings overrides, and deep links to the Studio.
 5. **`Settings.jsx` (Cài đặt)**:
    - 5 Configuration Tabs:
-     - **Providers**: Multi-API key manager with priority, cooldown status, and key testing.
+     - **Providers**: Canonical provider inventory and Key Pool from `/api/ai/providers` and masked `/api/ai/providers/{id}/keys`. Add, enable/disable, and delete use canonical key APIs; model refresh is explicit. Backend-derived `keyless` hides key controls. The UI reports incomplete discovery and refresh results without claiming model cleanup. Priority, quota, usage, and testing controls await a later contract.
      - **AI Functions**: Read-only canonical Function inventory from `/api/ai/functions`, showing exact configured provider/model IDs and invalid/default statuses. A capability-filtered Model Picker uses server search/pagination and writes only `{model_id: CatalogModel.id}` through canonical PUT; no primary/fallback selectors or manual model input remain in this tab.
-     - **AI Models**: Read-only canonical Model Catalog using `/api/ai/providers` and paginated `/api/ai/models`; dynamic provider filters, server search, status/capability/access/default badges, and safe detail metadata. Legacy custom-model add/edit/delete controls are not exposed in this tab. The Providers tab retains its existing legacy behavior until Task 8C.
+     - **AI Models**: Read-only canonical Model Catalog using `/api/ai/providers` and paginated `/api/ai/models`; dynamic provider filters, server search, status/capability/access/default badges, and safe detail metadata. Legacy custom-model add/edit/delete controls are not exposed in this tab.
      - **Social Accounts**: YouTube and TikTok OAuth connect buttons and active account list.
      - **System**: Storage configuration, processing concurrency, sync strategies, and default languages.
 
@@ -384,6 +384,7 @@ The frontend is a single-page React 18 application built with Vite and designed 
 - **`LoadingSpinner.jsx`**: Consistent loading indicators and skeleton screens.
 - **`settings/ModelCatalog.jsx`**: The focused AI Models tab view; details use an allowlist for provider metadata and never render credentials. Frontend DOM regressions use Vitest 2, React Testing Library, and jsdom with mocked canonical API responses.
 - **`settings/FunctionRouting.jsx`**: The focused AI Functions tab view and accessible Model Picker. Its Select control uses the backend's capability-specific `selectable === true` result, rather than deriving eligibility from provider-wide keyless scope; fully unknown capability remains selectable when actual access exists. Canonical PUT remains final authority. Failed writes retain the previous default and show a fixed safe error. The catalog detail dialog is shared with the Models tab.
+- **`settings/KeyPool.jsx`**: The focused AI & API tab. It uses canonical provider/key DTOs, fixed safe errors, per-provider refresh results, and a backend-derived `keyless` flag. The old custom-provider creation form is absent because a canonical generic creation API does not yet exist.
 
 ---
 

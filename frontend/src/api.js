@@ -75,6 +75,11 @@ export const settingsApi = {
 
 export const aiApi = {
   listProviders: () => api.get('/ai/providers').then(res => res.data),
+  listKeys: (providerId) => api.get(`/ai/providers/${encodeURIComponent(providerId)}/keys`).then(res => res.data),
+  addKey: (providerId, key) => api.post(`/ai/providers/${encodeURIComponent(providerId)}/keys`, { key }).then(res => res.data),
+  setKeyEnabled: (keyId, enabled) => api.patch(`/ai/keys/${encodeURIComponent(keyId)}`, { enabled }).then(res => res.data),
+  deleteKey: (keyId) => api.delete(`/ai/keys/${encodeURIComponent(keyId)}`).then(res => res.data),
+  refreshModels: () => api.post('/ai/models/refresh').then(res => res.data),
   listModels: (params) => api.get('/ai/models', { params }).then(res => res.data),
   getModel: (modelId) => api.get(`/ai/models/${encodeURIComponent(modelId)}`).then(res => res.data),
   listFunctions: () => api.get('/ai/functions').then(res => res.data),

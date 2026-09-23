@@ -55,6 +55,7 @@ class ProviderView(BaseModel):
     active_model_count: int
     enabled_key_count: int
     status: str
+    keyless: bool
 
 
 class CapabilityView(BaseModel):
@@ -205,6 +206,7 @@ async def list_providers(db: AsyncSession = Depends(get_db)):
                                  enabled=p.enabled, supported=p.supported, model_count=len(owned),
                                  active_model_count=sum(m.enabled and m.retired_at is None for m in owned),
                                  enabled_key_count=enabled_keys,
+                                 keyless=keyless,
                                  status="disabled" if not p.enabled else "ready" if enabled_keys or keyless else "no_key"))
     return Envelope(data=rows)
 

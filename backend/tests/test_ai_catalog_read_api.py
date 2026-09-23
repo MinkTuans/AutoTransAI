@@ -124,6 +124,7 @@ async def test_keyless_system_provider_is_ready_without_credentials(catalog_api)
     provider = (await client.get("/api/ai/providers")).json()["data"][0]
     model = (await client.get("/api/ai/models/edge")).json()["data"]
     assert provider["status"] == "ready"
+    assert provider["keyless"] is True
     assert model["access_scope"] == "keyless"
 
 

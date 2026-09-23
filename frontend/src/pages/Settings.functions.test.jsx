@@ -5,18 +5,15 @@ import { aiApi } from '../api';
 import Settings from './Settings';
 
 vi.mock('../api', () => ({
-  providersApi: { list: vi.fn(), listKeys: vi.fn() },
   settingsApi: { getSettings: vi.fn(), getSocialAccounts: vi.fn(), getFunctions: vi.fn(), getModels: vi.fn() },
   youtubeApi: { listAccounts: vi.fn() },
   tiktokApi: { listAccounts: vi.fn() },
   systemApi: {},
-  aiApi: { listFunctions: vi.fn(), listProviders: vi.fn(), listModels: vi.fn(), getModel: vi.fn(), updateFunction: vi.fn() },
+  aiApi: { listFunctions: vi.fn(), listProviders: vi.fn(), listKeys: vi.fn(), listModels: vi.fn(), getModel: vi.fn(), updateFunction: vi.fn() },
 }));
 
 beforeEach(async () => {
-  const { providersApi, settingsApi, youtubeApi, tiktokApi } = await import('../api');
-  providersApi.list.mockResolvedValue({ success: true, data: { audio: [], video: [], llm: [] } });
-  providersApi.listKeys.mockResolvedValue({ success: true, data: [] });
+  const { settingsApi, youtubeApi, tiktokApi } = await import('../api');
   settingsApi.getSettings.mockResolvedValue({ success: true, data: {} });
   settingsApi.getSocialAccounts.mockResolvedValue({ success: true, data: [] });
   settingsApi.getFunctions.mockResolvedValue({ success: true, data: [] });
@@ -28,6 +25,7 @@ beforeEach(async () => {
     primary_provider_id: 'openai', model_id: 'catalog-id', configuration_error: null,
     default_status: 'ready', selectable: true, updated_at: '2026-09-23T10:00:00',
   }] });
+  aiApi.listProviders.mockResolvedValue({ success: true, data: [] });
 });
 afterEach(cleanup);
 
