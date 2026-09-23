@@ -22,6 +22,7 @@ class ThumbnailStatus(str, enum.Enum):
     ANALYZING = "analyzing"
     GENERATING_PROMPT = "generating_prompt"
     GENERATING_IMAGE = "generating_image"
+    PROVIDER_PENDING = "provider_pending"
     UPLOADING = "uploading"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -50,7 +51,7 @@ class VideoThumbnail(Base):
     generated_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     provider: Mapped[str] = mapped_column(String(50), default="pollinations")
-    model: Mapped[str] = mapped_column(String(100), default="default")
+    model: Mapped[str] = mapped_column(String(255), default="default")
 
     r2_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     thumbnail_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

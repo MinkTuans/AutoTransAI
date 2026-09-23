@@ -276,6 +276,55 @@ async def test_accepted_async_job_pending_does_not_retry_or_fallback(routing_db)
 
 
 @pytest.mark.asyncio
+async def test_image_route_allows_only_compatible_system_keyless_models(routing_db):
+    from app.services.ai_routing import build_route
+    sessions, _ = routing_db
+    async with sessions.begin() as db:
+        db.add_all([
+            Provider(id="pollinations", name="Pollinations", provider_type="image"),
+            Provider(id="local_image", name="Local", provider_type="image"),
+        ])
+        await db.flush()
+        system = CatalogModel(provider_id="pollinations", remote_model_id="pollinations-default",
+                              source="system", capabilities=["IMAGE_GENERATION"], capability_status="KNOWN")
+        local = CatalogModel(provider_id="local_image", remote_model_id="default",
+                             source="system", capabilities=["IMAGE_GENERATION"], capability_status="KNOWN")
+        manual = CatalogModel(provider_id="pollinations", remote_model_id="manual-without-key",
+                              source="manual", capabilities=["IMAGE_GENERATION"], capability_status="KNOWN")
+        wrong = CatalogModel(provider_id="local_image", remote_model_id="tts-only",
+                             source="system", capabilities=["TTS"], capability_status="KNOWN")
+        db.add_all([system, local, manual, wrong])
+        await db.flush()
+        db.add(AIFunctionConfig(function_id="image_generation", function_name="Image", capability="IMAGE_GENERATION",
+                                primary_provider_id="pollinations", model_id=system.id))
+    async with sessions() as db:
+        route = await build_route(db, "IMAGE_GENERATION")
+    assert [(target.provider_id, target.remote_model_id, target.key_id) for target in route.targets] == [
+        ("pollinations", "pollinations-default", None), ("local_image", "default", None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_forged_keyless_image_target_never_invokes_transport(routing_db):
+    from app.services.ai_routing import RouteExhausted, RoutePlan, RouteTarget, invoke_route
+    sessions, path = routing_db
+    async with sessions.begin() as db:
+        manual = await add_model(db, "openai", "keyed-model", caps=["IMAGE_GENERATION"], status="KNOWN")
+    called = []
+
+    async def transport(target, secret):
+        called.append(1)
+        return "unexpected"
+
+    forged = RoutePlan("IMAGE_GENERATION", (
+        RouteTarget(manual.id, "openai", "keyed-model", None, "IMAGE_GENERATION", "keyless"),
+    ), manual.id)
+    with pytest.raises(RouteExhausted, match="configuration"):
+        await invoke_route(forged, transport, sessions, path)
+    assert called == []
+
+
+@pytest.mark.asyncio
 async def test_canceled_submitted_job_is_terminal_pending(routing_db):
     from app.services.ai_routing import RoutePending, build_route, invoke_route
     sessions, path = routing_db

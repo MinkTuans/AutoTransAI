@@ -6,13 +6,17 @@ and Storage Management for Video Thumbnails.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 import asyncio
+from io import BytesIO
+from math import gcd
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
+from PIL import Image
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -21,15 +25,33 @@ from app.core import get_logger
 from app.models.video_thumbnail import VideoThumbnail, ThumbnailStatus
 from app.models.project import Project
 from app.models.video_translator import VideoAsset, VideoTranslationJob, VideoTranslationSegment
+from app.models import APIKey, CatalogModel, CatalogRefreshRun
+from app.models.settings import AIFunctionConfig
 from app.providers.registry import get_registry
-from app.providers.base import ImageProvider
-from app.services.key_manager import get_key_manager
+from app.providers.base import GenerationResult, ImageProvider
+from app.providers.image.catalog_media import CatalogImageError, validate_image_bytes
 from app.services.storage_service import storage_service
-from app.services.ai_routing import classify_failure
+from app.services.ai_routing import (
+    RouteConfigurationError, RouteExhausted, RoutePending, RouteTarget, UnsupportedModalityError,
+    build_route, classify_failure, invoke_route,
+)
 from app.services.video_editor.catalog_llm import InvalidEditorOutput, generate_catalog_json
 
 logger = get_logger(__name__)
 settings = get_settings()
+_IMAGE_FORMATS = {"PNG": (".png", "image/png"), "JPEG": (".jpg", "image/jpeg"),
+                  "WEBP": (".webp", "image/webp")}
+
+
+class _ThumbnailImageFailure(Exception):
+    """Classified provider failure without raw upstream text."""
+
+    def __init__(self, result: GenerationResult):
+        code = result.error_code if isinstance(result.error_code, str) else ""
+        status = code.removeprefix("HTTP_")
+        self.status_code = int(status) if code.startswith("HTTP_") and status.isdigit() else None
+        self.code = "invalid_output" if code == "INVALID_OUTPUT" else "provider_unavailable"
+        super().__init__("Image generation failed")
 
 
 class AIThumbnailAnalysis(BaseModel):
@@ -201,6 +223,68 @@ class ThumbnailService:
         base_prompt += " Clear single focal point, strong visual storytelling, expressive emotion, 16:9 aspect ratio. No text, no watermark, no logo."
         return base_prompt
 
+    @staticmethod
+    async def _catalog_image_route(sessions: async_sessionmaker[AsyncSession] | None):
+        if sessions is None:
+            return None
+        async with sessions() as catalog_db:
+            config = await catalog_db.get(AIFunctionConfig, "image_generation")
+            await catalog_db.scalar(select(CatalogRefreshRun.id).limit(1))
+            # Seeded legacy Pollinations config remains untouched until Task 9
+            # imports a system catalog row and migrates the default to its ID.
+            if (config and config.primary_provider_id == "pollinations"
+                    and config.model_id in ("pollinations-default", "default")):
+                return None
+            selected = (await catalog_db.get(CatalogModel, config.model_id)
+                        if config and config.model_id else None)
+            model = await catalog_db.scalar(select(CatalogModel.id).where(
+                CatalogModel.source != "system",
+                CatalogModel.provider_id.in_(("openai", "fal")),
+            ).limit(1))
+            key = await catalog_db.scalar(select(APIKey.id).where(
+                APIKey.provider_id.in_(("openai", "fal")),
+            ).limit(1))
+            if selected is None and model is None and key is None:
+                return None
+            if config is None or not config.model_id:
+                raise RouteConfigurationError("Image generation default is not configured.")
+            return await build_route(catalog_db, "IMAGE_GENERATION")
+
+    @staticmethod
+    async def _catalog_image_result(route, prompt: str, sessions, data_dir: Path,
+                                    attempted: list[RouteTarget]):
+        registry = get_registry()
+
+        async def transport(target: RouteTarget, secret: str | None):
+            attempted[:] = [target]
+            provider = registry.get_image(target.provider_id)
+            if provider is None:
+                raise UnsupportedModalityError("Image adapter is unavailable.")
+            kwargs = {"prompt": prompt, "width": 1280, "height": 720, "aspect_ratio": "16:9"}
+            if target.access_scope == "keyless":
+                if target.provider_id not in ("pollinations", "local_image"):
+                    raise UnsupportedModalityError("Unsupported keyless image adapter.")
+                # System Pollinations catalog identity is a service sentinel,
+                # not a paid remote model identifier.
+                model = ("default" if target.provider_id == "pollinations"
+                         and target.remote_model_id == "pollinations-default"
+                         else target.remote_model_id)
+                result = await provider.generate_image(**kwargs, model=model)
+            elif target.provider_id in ("openai", "fal"):
+                result = await provider.generate_image(**kwargs, route_target=target, api_key=secret)
+            else:
+                raise UnsupportedModalityError("Unsupported image adapter.")
+            if not result.success:
+                raise _ThumbnailImageFailure(result)
+            content = result.metadata.get("image_bytes")
+            if not isinstance(content, bytes):
+                raise CatalogImageError("invalid_output")
+            validate_image_bytes(content)
+            return result, target
+
+        return await invoke_route(route, transport, sessions, data_dir,
+                                  max_attempts=1, timeout=150.0)
+
     @classmethod
     async def create_thumbnail(
         cls,
@@ -215,6 +299,7 @@ class ThumbnailService:
         *,
         sessions: async_sessionmaker[AsyncSession] | None = None,
         data_dir: Path | None = None,
+        historical_selection_hint: bool = False,
     ) -> VideoThumbnail:
         """
         Full End-to-End AI Auto Thumbnail Generation Workflow.
@@ -225,9 +310,20 @@ class ThumbnailService:
         source_lang = "auto"
         target_lang = "vi"
 
+        # These identifiers become storage path components; imported rows may not be UUIDs.
+        if not any((project_id, job_id, asset_id)) or any(
+            value is not None and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", value) is None
+            for value in (project_id, job_id, asset_id)
+        ):
+            raise ValueError("Invalid thumbnail target identifier.")
+
         # Check existing generating status to prevent duplicate jobs
         existing_stmt = select(VideoThumbnail).where(
-            VideoThumbnail.status.in_([ThumbnailStatus.ANALYZING.value, ThumbnailStatus.GENERATING_IMAGE.value]),
+            VideoThumbnail.status.in_([ThumbnailStatus.ANALYZING.value,
+                                       ThumbnailStatus.GENERATING_PROMPT.value,
+                                       ThumbnailStatus.GENERATING_IMAGE.value,
+                                       ThumbnailStatus.UPLOADING.value,
+                                       ThumbnailStatus.PROVIDER_PENDING.value]),
         )
         if project_id:
             existing_stmt = existing_stmt.where(VideoThumbnail.project_id == project_id)
@@ -236,8 +332,8 @@ class ThumbnailService:
         elif asset_id:
             existing_stmt = existing_stmt.where(VideoThumbnail.asset_id == asset_id)
 
-        existing_res = await db.execute(existing_stmt)
-        if existing_res.scalar_one_or_none():
+        existing_res = await db.execute(existing_stmt.limit(1))
+        if existing_res.scalars().first():
             raise ValueError("Thumbnail generation is already in progress for this video.")
 
         # 1. Fetch metadata & transcript content
@@ -299,10 +395,12 @@ class ThumbnailService:
             provider=provider_id or "pollinations",
             model=model_id or "default",
             status=ThumbnailStatus.ANALYZING.value,
+            is_active=False,
         )
         db.add(record)
         await db.commit()
 
+        attempted: list[RouteTarget] = []
         try:
             # 2. Intelligent transcript chunking & AI Content Analysis
             cleaned = cls.clean_transcript(transcript_text)
@@ -336,51 +434,57 @@ class ThumbnailService:
             record.status = ThumbnailStatus.GENERATING_IMAGE.value
             await db.commit()
 
-            registry = get_registry()
-            target_provider_id = provider_id or "pollinations"
-            img_provider: Optional[ImageProvider] = registry.get_image(target_provider_id)
-
-            if not img_provider:
-                img_provider = registry.get_image("pollinations") or registry.get_image("local_image")
-
-            if not img_provider:
-                raise RuntimeError("No suitable AI Image Provider found.")
-
-            # Retry loop (max 2 retries)
-            max_retries = 2
-            gen_res = None
-            for attempt in range(max_retries + 1):
-                gen_res = await img_provider.generate_image(
-                    prompt=prompt,
-                    width=1280,
-                    height=720,
-                    aspect_ratio="16:9",
-                    model=model_id or "default",
+            route = await cls._catalog_image_route(sessions)
+            if route is not None:
+                configured_target = route.targets[0]
+                legacy_hint = (historical_selection_hint or
+                               (provider_id == "pollinations"
+                                and model_id in (None, "default", "pollinations-default")))
+                if ((provider_id is not None and provider_id != configured_target.provider_id
+                     and not legacy_hint)
+                        or (model_id not in (None, "default", configured_target.model_id,
+                                             configured_target.remote_model_id) and not legacy_hint)):
+                    raise RouteConfigurationError("Explicit thumbnail model differs from the configured image default.")
+                gen_res, selected_target = await cls._catalog_image_result(
+                    route, prompt, sessions, data_dir or settings.DATA_DIR, attempted,
                 )
-                if gen_res.success:
-                    break
-                logger.warning(
-                    f"[THUMBNAIL] Generation attempt {attempt + 1} failed",
-                    provider=img_provider.provider_id,
-                    error=gen_res.error_message,
-                )
-                await asyncio.sleep(1.5)
+                actual_provider = selected_target.provider_id
+                actual_model = selected_target.remote_model_id
+            else:
+                registry = get_registry()
+                target_provider_id = provider_id or "pollinations"
+                img_provider: Optional[ImageProvider] = registry.get_image(target_provider_id)
+                if not img_provider:
+                    img_provider = registry.get_image("pollinations") or registry.get_image("local_image")
+                if not img_provider:
+                    raise RuntimeError("No suitable AI Image Provider found.")
+                gen_res = None
+                for attempt in range(3):
+                    gen_res = await img_provider.generate_image(
+                        prompt=prompt, width=1280, height=720,
+                        aspect_ratio="16:9", model=model_id or "default",
+                    )
+                    if gen_res.success or img_provider.requires_api_key:
+                        break
+                    logger.warning("[THUMBNAIL] Legacy image attempt failed",
+                                   provider=img_provider.provider_id, code=classify_failure(
+                                       _ThumbnailImageFailure(gen_res)))
+                    await asyncio.sleep(1.5)
+                if not gen_res or not gen_res.success or not gen_res.metadata.get("image_bytes"):
+                    fallback_provider = registry.get_image("local_image")
+                    if fallback_provider:
+                        logger.info("[THUMBNAIL] Retrying with local image fallback provider")
+                        gen_res = await fallback_provider.generate_image(prompt=prompt, width=1280, height=720)
+                        img_provider = fallback_provider
+                if not gen_res or not gen_res.success or not gen_res.metadata.get("image_bytes"):
+                    raise _ThumbnailImageFailure(gen_res or GenerationResult(False))
+                actual_provider = img_provider.provider_id
+                actual_model = gen_res.metadata.get("model") or model_id or "default"
 
-            if not gen_res or not gen_res.success or not gen_res.metadata.get("image_bytes"):
-                # Fallback to local image provider if primary provider failed
-                fallback_provider = registry.get_image("local_image")
-                if fallback_provider:
-                    logger.info("[THUMBNAIL] Retrying with local image fallback provider")
-                    gen_res = await fallback_provider.generate_image(prompt=prompt, width=1280, height=720)
-
-            if not gen_res or not gen_res.success or not gen_res.metadata.get("image_bytes"):
-                err_text = gen_res.error_message if gen_res else "Image generation timeout or failure"
-                record.status = ThumbnailStatus.FAILED.value
-                record.error_message = err_text
-                await db.commit()
-                return record
-
-            image_bytes = gen_res.metadata["image_bytes"]
+            image_bytes = validate_image_bytes(gen_res.metadata["image_bytes"])
+            with Image.open(BytesIO(image_bytes)) as decoded:
+                width, height = decoded.size
+                ext, mime = _IMAGE_FORMATS[decoded.format]
 
             # 5. Upload image to Storage (Cloudflare R2 / Supabase Storage)
             record.status = ThumbnailStatus.UPLOADING.value
@@ -388,27 +492,23 @@ class ThumbnailService:
 
             tmp_dir = settings.DATA_DIR / "temp_thumbnails"
             tmp_dir.mkdir(parents=True, exist_ok=True)
-            tmp_file = tmp_dir / f"thumb_{thumbnail_id}.webp"
-            tmp_file.write_bytes(image_bytes)
-
+            tmp_file = tmp_dir / f"thumb_{thumbnail_id}{ext}"
             timestamp = int(datetime.now(timezone.utc).timestamp())
             if project_id:
-                object_key = f"projects/{project_id}/thumbnails/thumbnail_{timestamp}.webp"
+                object_key = f"projects/{project_id}/thumbnails/thumbnail_{timestamp}{ext}"
             elif job_id:
-                object_key = f"translator/jobs/{job_id}/thumbnails/thumbnail_{timestamp}.webp"
+                object_key = f"translator/jobs/{job_id}/thumbnails/thumbnail_{timestamp}{ext}"
             else:
-                object_key = f"translator/assets/{asset_id}/thumbnails/thumbnail_{timestamp}.webp"
+                object_key = f"translator/assets/{asset_id}/thumbnails/thumbnail_{timestamp}{ext}"
 
-            r2_key, public_url = await storage_service.upload_file(
-                local_path=tmp_file,
-                object_key=object_key,
-                content_type="image/webp",
-                is_public=True,
-            )
-
-            # Cleanup temp local file
-            if tmp_file.exists():
-                tmp_file.unlink()
+            try:
+                tmp_file.write_bytes(image_bytes)
+                r2_key, public_url = await storage_service.upload_file(
+                    local_path=tmp_file, object_key=object_key,
+                    content_type=mime, is_public=True,
+                )
+            finally:
+                tmp_file.unlink(missing_ok=True)
 
             # 6. Deactivate old thumbnails & mark current active
             deact_stmt = update(VideoThumbnail).values(is_active=False)
@@ -425,7 +525,12 @@ class ThumbnailService:
             record.thumbnail_url = public_url
             record.status = ThumbnailStatus.COMPLETED.value
             record.is_active = True
-            record.provider = img_provider.provider_id
+            record.provider = actual_provider
+            record.model = actual_model
+            record.width = width
+            record.height = height
+            divisor = gcd(width, height)
+            record.aspect_ratio = f"{width // divisor}:{height // divisor}"
 
             # Update parent entity direct thumbnail references
             if project_id:
@@ -449,13 +554,23 @@ class ThumbnailService:
 
             await db.commit()
             await db.refresh(record)
-            logger.info("[THUMBNAIL] Successfully completed thumbnail generation", thumbnail_id=thumbnail_id, url=public_url)
+            logger.info("[THUMBNAIL] Successfully completed thumbnail generation", thumbnail_id=thumbnail_id)
             return record
 
+        except RoutePending:
+            record.status = ThumbnailStatus.PROVIDER_PENDING.value
+            record.error_message = "Image provider accepted the request; completion is not yet confirmed."
+            if attempted:
+                record.provider = attempted[0].provider_id
+                record.model = attempted[0].remote_model_id
+            await db.commit()
+            return record
         except Exception as ex:
-            logger.error("[THUMBNAIL] Critical failure during generation", error=str(ex))
+            code = classify_failure(ex)
+            logger.error("[THUMBNAIL] Generation failed", code=code)
             record.status = ThumbnailStatus.FAILED.value
-            record.error_message = str(ex)
+            record.error_message = (str(ex) if isinstance(ex, (RouteConfigurationError, RouteExhausted))
+                                    else f"Thumbnail generation failed: {code}")
             await db.commit()
             return record
 

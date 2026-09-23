@@ -21,6 +21,13 @@ _FUNCTION = {"STT": "stt", "TRANSLATION": "translation", "LLM": "translation", "
 # They cannot establish a model/key edge; an enabled provider key is only a
 # candidate to try at generation time, not verified model entitlement.
 _PUBLIC_CATALOG_PROVIDERS = frozenset({"fal", "elevenlabs"})
+_KEYLESS_SYSTEM_IMAGE_PROVIDERS = frozenset({"pollinations", "local_image"})
+
+
+def _keyless_allowed(model: CatalogModel, capability: str) -> bool:
+    return (model.provider_id == "edge_tts" and capability == "TTS"
+            or (capability == "IMAGE_GENERATION" and model.source == "system"
+                and model.provider_id in _KEYLESS_SYSTEM_IMAGE_PROVIDERS))
 
 
 class RouteConfigurationError(Exception):
@@ -84,7 +91,7 @@ async def build_route(db: AsyncSession, capability: str, *, preferred_key_ids: t
         ids.sort(key=lambda key_id: (priority.get(key_id, len(priority)), key_id))
 
     def available(model: CatalogModel) -> bool:
-        return model.provider_id == "edge_tts" and capability == "TTS" or bool(access.get(model.id))
+        return _keyless_allowed(model, capability) or bool(access.get(model.id))
 
     configured = config.model_id if config and config.model_id and config.model_id != "default" else None
     selected = None
@@ -110,7 +117,8 @@ async def build_route(db: AsyncSession, capability: str, *, preferred_key_ids: t
     targets = tuple(RouteTarget(m.id, m.provider_id, m.remote_model_id, key_id, capability,
                                 "keyless" if key_id is None else
                                 "catalog_unverified" if m.provider_id in _PUBLIC_CATALOG_PROVIDERS else "listing_unverified")
-                    for m in ordered for key_id in ([None] if m.provider_id == "edge_tts" else access[m.id]))
+                    for m in ordered for key_id in (
+                        [None] if _keyless_allowed(m, capability) else access[m.id]))
     if not targets:
         raise RouteConfigurationError("No compatible AI model with credential access is available.")
     return RoutePlan(capability, targets, selected.id if selected and configured else None)
@@ -184,6 +192,8 @@ async def invoke_route(route: RoutePlan, transport: Callable[[RouteTarget, str |
                     credentials = await CredentialService.open(db, data_dir)
                     secret = await credentials.reveal(target.key_id)
                 else:
+                    if not _keyless_allowed(model, target.capability) or target.access_scope != "keyless":
+                        raise RouteConfigurationError("Keyless target is not allowed.")
                     secret = None
             for attempt in range(max_attempts):
                 try:

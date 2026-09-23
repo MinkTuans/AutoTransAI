@@ -20,6 +20,7 @@ from app.models.video_thumbnail import VideoThumbnail, ThumbnailStatus
 from app.models.project import Project
 from app.models.video_translator import VideoTranslationJob, VideoAsset
 from app.services.thumbnail_service import ThumbnailService
+from app.services.ai_routing import classify_failure
 from app.core import get_logger
 
 logger = get_logger(__name__)
@@ -166,10 +167,13 @@ async def generate_thumbnail_endpoint(
             "thumbnail": _format_thumbnail_response(record),
         }
     except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
+        detail = ("Thumbnail generation is already in progress for this video."
+                  if str(ve) == "Thumbnail generation is already in progress for this video."
+                  else "Invalid thumbnail request.")
+        raise HTTPException(status_code=400, detail=detail)
     except Exception as ex:
-        logger.error("Failed creating thumbnail", error=str(ex))
-        raise HTTPException(status_code=500, detail=f"Thumbnail generation failed: {str(ex)}")
+        logger.error("Failed creating thumbnail", code=classify_failure(ex))
+        raise HTTPException(status_code=500, detail="Thumbnail generation failed.")
 
 
 @router.get("/{thumbnail_id}", response_model=Dict[str, Any])
@@ -255,6 +259,7 @@ async def regenerate_thumbnail_endpoint(
             custom_instruction=req.custom_instruction if req.custom_instruction is not None else record.custom_instruction,
             provider_id=req.provider_id or record.provider,
             model_id=req.model_id or record.model,
+            historical_selection_hint=req.provider_id is None and req.model_id is None,
             sessions=async_session_factory,
             data_dir=settings.DATA_DIR,
         )
@@ -263,7 +268,8 @@ async def regenerate_thumbnail_endpoint(
             "thumbnail": _format_thumbnail_response(new_record),
         }
     except Exception as ex:
-        raise HTTPException(status_code=500, detail=f"Regeneration failed: {str(ex)}")
+        logger.error("Failed regenerating thumbnail", code=classify_failure(ex))
+        raise HTTPException(status_code=500, detail="Thumbnail regeneration failed.")
 
 
 @router.post("/{thumbnail_id}/set-active", response_model=Dict[str, Any])
