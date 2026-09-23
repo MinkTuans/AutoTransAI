@@ -13,12 +13,15 @@ The UI never calls providers directly. It calls the orchestrator which:
 """
 
 import asyncio
+import os
+import shutil
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import get_settings
 from app.core import get_logger
@@ -42,8 +45,11 @@ from app.services.file_manager import (
     get_final_output_path,
     get_project_dir,
 )
+from app.services import file_manager
 from app.services.manifest import update_manifest, update_segment_in_manifest
-from app.services.ai_routing import RoutePending
+from app.services.ai_routing import (RouteConfigurationError, RouteExhausted, RoutePending,
+                                     RoutePlan, UnsupportedModalityError, build_route, invoke_route)
+from app.services.video_catalog_selection import canonical_video_selected, supported_video_target
 from app.workflow.state_machine import validate_transition, is_resumable_state
 
 logger = get_logger(__name__)
@@ -373,8 +379,15 @@ class WorkflowOrchestrator:
     async def _generate_all_video(self) -> None:
         """Generate video for all pending segments."""
         project = await self._get_project()
-        provider = self._registry.get_video(project.video_provider_id)
-        if not provider:
+        try:
+            canonical = await canonical_video_selected(self.session)
+            route = await build_route(self.session, "VIDEO_GENERATION") if canonical else None
+        except RouteConfigurationError as error:
+            raise WorkflowError(str(error), code="VIDEO_CONFIGURATION_ERROR") from None
+        # The project provider is a legacy snapshot. Only an exact catalog
+        # selection activates the canonical route; unrelated catalog rows do not.
+        provider = None if canonical else self._registry.get_video(project.video_provider_id)
+        if not canonical and not provider:
             raise WorkflowError(
                 f"Video provider '{project.video_provider_id}' not found",
                 code="PROVIDER_NOT_FOUND",
@@ -384,7 +397,7 @@ class WorkflowOrchestrator:
         for seg in segments:
             if self._cancelled:
                 return
-            await self._generate_segment_video(seg, provider)
+            await self._generate_segment_video(seg, provider, route=route)
 
         segments = await self._get_segments()
         failed = [s for s in segments if s.video_status == SegmentStatus.FAILED.value]
@@ -396,7 +409,7 @@ class WorkflowOrchestrator:
             )
 
     async def _generate_segment_video(
-        self, segment: Segment, provider: VideoProvider
+        self, segment: Segment, provider: VideoProvider | None, *, route: RoutePlan | None = None
     ) -> None:
         """Generate video for a single segment with idempotency and retry."""
         if segment.video_status == SegmentStatus.PROVIDER_PENDING.value:
@@ -415,6 +428,8 @@ class WorkflowOrchestrator:
         await self.session.commit()
 
         output_path = get_segment_video_path(self.project_id, segment.segment_number)
+        if route is not None and not output_path.resolve().is_relative_to(file_manager.settings.STORAGE_ROOT.resolve()):
+            raise WorkflowError("Video output path is invalid.", code="VIDEO_OUTPUT_PATH_INVALID")
         ensure_segment_dirs(self.project_id, segment.segment_number)
 
         await self._emit_progress({
@@ -424,40 +439,66 @@ class WorkflowOrchestrator:
         })
 
         try:
-            result = await retry_async(
-                provider.generate_video,
-                segment.text_content,
-                settings.VIDEO_TARGET_DURATION,
-                output_path,
-                config=self._retry_config,
-                context={
-                    "provider_id": provider.provider_id,
-                    "segment": segment.segment_number,
-                    "project_id": self.project_id,
-                },
-            )
+            if route is not None:
+                result = await self._generate_catalog_video(segment, route, output_path)
+            else:
+                result = await retry_async(
+                    provider.generate_video,
+                    segment.text_content,
+                    settings.VIDEO_TARGET_DURATION,
+                    output_path,
+                    config=self._retry_config,
+                    context={
+                        "provider_id": provider.provider_id,
+                        "segment": segment.segment_number,
+                        "project_id": self.project_id,
+                    },
+                )
 
+            if route is not None and (not result.success or not result.file_path or not result.file_path.exists()):
+                raise RoutePending(PENDING_VIDEO_MESSAGE)
             if result.success and result.file_path and result.file_path.exists():
-                duration = await probe_duration_async(result.file_path)
+                if route is not None:
+                    # The provider has already delivered media. A local probe
+                    # failure must preserve it and block a second submission.
+                    segment.video_file_path = str(result.file_path)
+                    await self.session.commit()
+                    try:
+                        duration = await asyncio.wait_for(probe_duration_async(result.file_path), 20.0)
+                    except Exception:
+                        raise RoutePending(PENDING_VIDEO_MESSAGE) from None
+                else:
+                    duration = await probe_duration_async(result.file_path)
                 segment.video_status = SegmentStatus.COMPLETED.value
                 segment.video_duration = duration
                 segment.video_file_path = str(result.file_path)
                 segment.video_error_message = None
-                await self.session.commit()
+                if route is not None:
+                    try:
+                        await self.session.commit()
+                    except Exception:
+                        raise RoutePending(PENDING_VIDEO_MESSAGE) from None
+                else:
+                    await self.session.commit()
 
-                update_segment_in_manifest(self.project_id, segment.segment_number, {
-                    "video_status": "completed",
-                    "video_duration": duration,
-                    "video_file": str(result.file_path),
-                    "video_error": None,
-                })
+                try:
+                    update_segment_in_manifest(self.project_id, segment.segment_number, {
+                        "video_status": "completed",
+                        "video_duration": duration,
+                        "video_file": str(result.file_path),
+                        "video_error": None,
+                    })
 
-                await self._emit_progress({
-                    "type": "segment_video_complete",
-                    "segment": segment.segment_number,
-                    "duration": duration,
-                    "project_id": self.project_id,
-                })
+                    await self._emit_progress({
+                        "type": "segment_video_complete",
+                        "segment": segment.segment_number,
+                        "duration": duration,
+                        "project_id": self.project_id,
+                    })
+                except Exception:
+                    if route is None:
+                        raise
+                    logger.warning("Completed video notification failed", project_id=self.project_id)
             else:
                 err_msg = result.error_message or "Video generation returned failure"
                 segment.video_status = SegmentStatus.FAILED.value
@@ -511,7 +552,8 @@ class WorkflowOrchestrator:
                                notification="sse")
             raise
         except Exception as e:
-            err_msg = str(e)
+            err_msg = ("Video generation failed; review the catalog route."
+                       if route is not None else str(e))
             segment.video_status = SegmentStatus.FAILED.value
             segment.video_error_message = err_msg
             await self.session.commit()
@@ -526,6 +568,66 @@ class WorkflowOrchestrator:
                 segment=segment.segment_number,
                 error=err_msg,
             )
+
+    async def _generate_catalog_video(self, segment: Segment, route: RoutePlan,
+                                      output_path: Path):
+        """Submit once per eligible target and publish a completed download atomically."""
+        sessions = async_sessionmaker(self.session.bind, expire_on_commit=False)
+
+        async def transport(target, secret):
+            provider = self._registry.get_video(target.provider_id)
+            if provider is None or not supported_video_target(target.provider_id, target.remote_model_id):
+                raise UnsupportedModalityError("Video adapter unavailable for catalog model.")
+            staging_root = settings.DATA_DIR / "video_staging"
+            staging_root.mkdir(parents=True, exist_ok=True)
+            directory = Path(tempfile.mkdtemp(dir=staging_root))
+            preserve = False
+            try:
+                staged = Path(directory) / "video.mp4"
+                result = await provider.generate_video(
+                    segment.text_content, settings.VIDEO_TARGET_DURATION, staged,
+                    route_target=target, api_key=secret)
+                if not result.success:
+                    # Canonical adapters normally raise classified errors. A
+                    # returned failure carries no trusted message to expose.
+                    raise RuntimeError("Video provider unavailable")
+                if result.file_path != staged or not staged.is_file():
+                    raise RoutePending(PENDING_VIDEO_MESSAGE)
+                preserve = True
+                temporary = output_path.with_name(f".{output_path.name}.{uuid.uuid4().hex}.tmp")
+                try:
+                    # First persist the durable recovery copy. Every operation
+                    # after successful generation is terminal on failure.
+                    segment.video_file_path = str(staged)
+                    await self.session.commit()
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(staged, temporary)
+                    os.replace(temporary, output_path)
+                    temporary.unlink(missing_ok=True)
+                    segment.video_file_path = str(output_path)
+                    await self.session.commit()
+                except (Exception, asyncio.CancelledError):
+                    try:
+                        temporary.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    raise RoutePending(PENDING_VIDEO_MESSAGE) from None
+                result.file_path = output_path
+                preserve = False
+                return result
+            finally:
+                if not preserve:
+                    try:
+                        shutil.rmtree(directory)
+                    except OSError:
+                        logger.warning("Video staging cleanup failed", project_id=self.project_id)
+
+        try:
+            return await invoke_route(route, transport, sessions, settings.DATA_DIR,
+                                      max_attempts=1, timeout=260.0)
+        except RouteExhausted:
+            raise WorkflowError("Video generation failed for all catalog targets.",
+                                code="VIDEO_GENERATION_FAILED") from None
 
     async def _sync_all_segments(self) -> None:
         """Sync audio and video durations for all segments."""

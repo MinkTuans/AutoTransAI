@@ -7,6 +7,7 @@ If ANY required check fails, the workflow MUST NOT start.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core import get_logger
@@ -14,6 +15,8 @@ from app.media.ffprobe import is_ffmpeg_installed, get_ffmpeg_version
 from app.providers.registry import get_registry
 from app.schemas.workflow import PreflightCheck, PreflightResult
 from app.services.file_manager import check_storage_writable, get_disk_space_mb
+from app.services.ai_routing import RouteConfigurationError, build_route
+from app.services.video_catalog_selection import canonical_video_selected, supported_video_target
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -26,6 +29,7 @@ async def run_preflight(
     video_provider_id: str | None,
     voice_id: str | None,
     total_segments: int,
+    db: AsyncSession | None = None,
 ) -> PreflightResult:
     """
     Run all preflight checks for a project.
@@ -81,42 +85,76 @@ async def run_preflight(
 
     # 5-7. Video provider checks (only if audio_video mode)
     if workflow_mode == "audio_video":
-        video_provider = registry.get_video(video_provider_id) if video_provider_id else None
-
-        checks.append(PreflightCheck(
-            name="video_provider_configured",
-            description=f"Video provider '{video_provider_id}' is registered",
-            passed=video_provider is not None,
-            required=True,
-            error_code="PROVIDER_NOT_CONFIGURED" if not video_provider else None,
-            error_message=f"Video provider '{video_provider_id}' not found" if not video_provider else None,
-        ))
-
-        if video_provider:
-            video_valid = await video_provider.validate_configuration()
+        canonical = False
+        route_error = None
+        if db is not None:
+            try:
+                canonical = await canonical_video_selected(db)
+                route = await build_route(db, "VIDEO_GENERATION") if canonical else None
+            except RouteConfigurationError:
+                route_error = "Configured video model needs review."
+        if canonical or route_error:
+            usable = [] if route_error else [registry.get_video(t.provider_id) for t in route.targets
+                                           if supported_video_target(t.provider_id, t.remote_model_id)]
+            usable = [provider for provider in usable if provider is not None]
+            configured = bool(usable) and route_error is None
             checks.append(PreflightCheck(
-                name="video_provider_reachable",
-                description=f"Video provider '{video_provider_id}' is reachable",
-                passed=video_valid,
+                name="video_provider_configured", description="Catalog video route is configured",
+                passed=configured, required=True,
+                error_code=None if configured else "PROVIDER_NOT_CONFIGURED",
+                error_message=None if configured else route_error or "No supported video adapter is available.",
+            ))
+            checks.append(PreflightCheck(
+                name="video_provider_reachable", description="Catalog video credential and adapter are available",
+                passed=configured, required=True,
+                error_code=None if configured else "PROVIDER_UNREACHABLE",
+                error_message=None if configured else route_error or "No catalog video credential is available.",
+            ))
+            supported = any(provider.max_duration_seconds >= settings.VIDEO_TARGET_DURATION
+                            for provider in usable)
+            checks.append(PreflightCheck(
+                name="video_duration_supported", description="Catalog video duration is supported",
+                passed=supported, required=True,
+                error_code=None if supported else "UNSUPPORTED_DURATION",
+                error_message=None if supported else "No catalog video adapter supports the requested duration.",
+            ))
+        else:
+            video_provider = registry.get_video(video_provider_id) if video_provider_id else None
+
+            checks.append(PreflightCheck(
+                name="video_provider_configured",
+                description=f"Video provider '{video_provider_id}' is registered",
+                passed=video_provider is not None,
                 required=True,
-                error_code="PROVIDER_UNREACHABLE" if not video_valid else None,
-                error_message=f"Tài khoản {video_provider_id} hết số dư (Exhausted balance) hoặc API Key chưa đúng. Vui lòng chuyển sang 'Local FFmpeg Generator' để sử dụng miễn phí." if not video_valid else None,
+                error_code="PROVIDER_NOT_CONFIGURED" if not video_provider else None,
+                error_message=f"Video provider '{video_provider_id}' not found" if not video_provider else None,
             ))
 
-            # Check duration support
-            target_dur = settings.VIDEO_TARGET_DURATION
-            supported = video_provider.max_duration_seconds >= target_dur
-            checks.append(PreflightCheck(
-                name="video_duration_supported",
-                description=f"Video provider supports {target_dur}s duration",
-                passed=supported,
-                required=True,
-                error_code="UNSUPPORTED_DURATION" if not supported else None,
-                error_message=(
-                    f"Provider supports max {video_provider.max_duration_seconds}s, "
-                    f"but {target_dur}s requested"
-                ) if not supported else None,
-            ))
+            if video_provider:
+                video_valid = await video_provider.validate_configuration()
+                checks.append(PreflightCheck(
+                    name="video_provider_reachable",
+                    description=f"Video provider '{video_provider_id}' is reachable",
+                    passed=video_valid,
+                    required=True,
+                    error_code="PROVIDER_UNREACHABLE" if not video_valid else None,
+                    error_message=f"Tài khoản {video_provider_id} hết số dư (Exhausted balance) hoặc API Key chưa đúng. Vui lòng chuyển sang 'Local FFmpeg Generator' để sử dụng miễn phí." if not video_valid else None,
+                ))
+
+                # Check duration support
+                target_dur = settings.VIDEO_TARGET_DURATION
+                supported = video_provider.max_duration_seconds >= target_dur
+                checks.append(PreflightCheck(
+                    name="video_duration_supported",
+                    description=f"Video provider supports {target_dur}s duration",
+                    passed=supported,
+                    required=True,
+                    error_code="UNSUPPORTED_DURATION" if not supported else None,
+                    error_message=(
+                        f"Provider supports max {video_provider.max_duration_seconds}s, "
+                        f"but {target_dur}s requested"
+                    ) if not supported else None,
+                ))
 
     # 8. FFmpeg installed
     ffmpeg_ok = is_ffmpeg_installed()
@@ -390,4 +428,3 @@ async def run_video_translator_preflight(
         blocking_failures=blocking_failures,
         warnings=warnings,
     )
-

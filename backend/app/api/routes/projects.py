@@ -913,6 +913,8 @@ async def precheck(
     )
     total_segments = seg_count.scalar() or 0
 
+    from app.services.preflight import run_preflight
+
     preflight_result = await run_preflight(
         project_id=project_id,
         workflow_mode=project.workflow_mode,
@@ -920,6 +922,7 @@ async def precheck(
         video_provider_id=project.video_provider_id,
         voice_id=project.voice_id,
         total_segments=total_segments,
+        db=session,
     )
 
     if preflight_result.passed:
