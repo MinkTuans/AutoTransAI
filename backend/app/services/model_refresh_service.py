@@ -94,7 +94,7 @@ class ModelRefreshService:
             keys = (await db.scalars(select(APIKey).order_by(APIKey.id))).all()
             signature = _signature(keys)
             active_providers = {p.id for p in providers if p.enabled and p.id not in EDGE_PROVIDERS}
-            selected = [k for k in keys if k.enabled and k.provider_id in active_providers
+            selected = [k for k in keys if (k.enabled or k.id == key_id) and k.provider_id in active_providers
                         and (key_id is None or k.id == key_id)]
             credentials = None
             staged = []

@@ -137,7 +137,7 @@ async def global_exception_handler(request: Request, exc: Exception):
         },
     )
 
-from app.api.routes import projects, providers, system, video_translator, storage, apps, video_editor, thumbnail, video_merger, settings as settings_router, ai_catalog
+from app.api.routes import projects, providers, system, video_translator, storage, apps, video_editor, thumbnail, video_merger, settings as settings_router, ai_catalog, ai_keys
 
 from app.api.routers import youtube, tiktok
 
@@ -153,6 +153,7 @@ app.include_router(video_merger.router)
 app.include_router(thumbnail.router)
 app.include_router(settings_router.router)
 app.include_router(ai_catalog.router)
+app.include_router(ai_keys.router)
 app.include_router(youtube.router, prefix="/api")
 app.include_router(tiktok.router, prefix="/api")
 

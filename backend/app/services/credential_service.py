@@ -136,7 +136,7 @@ class CredentialService:
         except (InvalidToken, ValueError, TypeError, KeyError, UnicodeError):
             raise CredentialDecryptionError("Credential cannot be decrypted; restore the original master key or replace the credential.") from None
 
-    async def create(self, provider_id: str, secret: str) -> CredentialDTO:
+    async def create(self, provider_id: str, secret: str, *, enabled: bool = True) -> CredentialDTO:
         if not isinstance(secret, str) or not secret or secret != secret.strip():
             raise CredentialValidationError("Credential must be nonempty and have no surrounding whitespace.")
         message = json.dumps([provider_id, secret], separators=(",", ":")).encode("utf-8")
@@ -153,6 +153,7 @@ class CredentialService:
             id=key_id, provider_id=provider_id,
             ciphertext=self._fernet.encrypt(payload).decode("ascii"), fingerprint=fingerprint,
             masked_key="****" + (secret[-4:] if len(secret) > 8 else ""),
+            enabled=enabled,
         )
         try:
             self._session.add(row)
