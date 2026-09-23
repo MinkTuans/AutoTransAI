@@ -1,0 +1,9 @@
+# Task 6D2 scoped re-review fix — bounded historical Edge voice lookup
+
+The verified Important finding in `task-6d2-rereview.md` is fixed in the Studio Phase 2 historical confirmed-voice path. An absent-pool Edge voice is still revalidated by exact current provider metadata, but `get_voices()` now has a five-second `asyncio.wait_for` bound. Timeout leaves the voice ineligible, so normal route selection raises a visible `No compatible TTS voice` job configuration error before synthesis; it never accepts or remaps the voice. The catalog session is already closed before this lookup.
+
+Test-first evidence: the hanging `get_voices()` coroutine regression initially failed by timing out the entire render task at the test's outer 0.3-second guard. With the internal bound overridden to 0.05 seconds in the test, the render returns promptly, records failed job status and the visible configuration error, and makes no synthesis call. Existing successful historical and disabled-voice paths remain in the same integration test.
+
+Final focused command from `backend/`: `/home/codexproxy/Codex-project-2/AutoTransAI/.venv/bin/python -m pytest tests/test_studio_tts_route.py tests/unit/test_character_voice_validation_api.py tests/unit/test_same_voice_overlap_lifecycle.py tests/unit/test_workflow_lifecycle_regression.py tests/unit/test_tts_request_boundary.py tests/unit/test_edge_tts_timeout.py tests/test_ai_routing_contract.py -q --tb=short` — **103 passed in 19.41s**, exit 0. `git diff --check` passed. Tests use isolated SQLite and a fake hanging coroutine; no real provider key/network or production database was used.
+
+Limit: this bounds only the historical Edge revalidation added by Task 6D2. Review endpoints' own voice-list calls and upstream cancellation behavior outside this render path were not changed or live-tested.

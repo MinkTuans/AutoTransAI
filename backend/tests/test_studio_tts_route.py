@@ -296,7 +296,7 @@ async def test_first_keyed_tts_row_does_not_activate_unmigrated_legacy_edge_defa
 
 
 @pytest.mark.asyncio
-async def test_review_confirmed_edge_voice_outside_seed_pool_renders_canonically(tmp_path, monkeypatch):
+async def test_review_confirmed_edge_voice_outside_pool_revalidates_and_times_out_safely(tmp_path, monkeypatch):
     from fastapi import BackgroundTasks
     from unittest.mock import AsyncMock
     from app.database import Base
@@ -328,7 +328,8 @@ async def test_review_confirmed_edge_voice_outside_seed_pool_renders_canonically
             output_path.write_bytes(b"audio")
             return GenerationResult(success=True, file_path=output_path)
 
-    monkeypatch.setattr(studio, "get_registry", lambda: Registry({"edge_tts": Edge()}))
+    normal_registry = Registry({"edge_tts": Edge()})
+    monkeypatch.setattr(studio, "get_registry", lambda: normal_registry)
     async with sessions.begin() as db:
         db.add_all([Provider(id="edge_tts", name="edge", provider_type="audio"),
                     Provider(id="elevenlabs", name="eleven", provider_type="audio")])
@@ -383,12 +384,29 @@ async def test_review_confirmed_edge_voice_outside_seed_pool_renders_canonically
         (tts_dir / "seg_001.meta.json").unlink()
         await studio.execute_job_render_pipeline("job")
         assert calls == [("edge_tts", None, "vi-VN-XiaNeural")] * 2
+        # A stalled upstream voice list cannot stall Phase 2 indefinitely.
+        class HangingEdge:
+            async def get_voices(self, language=None):
+                await asyncio.Event().wait()
+
+            async def generate_audio(self, *args, **kwargs):
+                raise AssertionError("unvalidated historical voice reached synthesis")
+
+        monkeypatch.setattr(studio, "get_registry", lambda: Registry({"edge_tts": HangingEdge()}))
+        monkeypatch.setattr(studio, "HISTORICAL_EDGE_VOICE_LOOKUP_TIMEOUT", 0.05, raising=False)
+        (tts_dir / "seg_001.wav").unlink()
+        (tts_dir / "seg_001.meta.json").unlink()
+        await asyncio.wait_for(studio.execute_job_render_pipeline("job"), timeout=0.3)
+        async with sessions() as db:
+            failed = await db.get(VideoTranslationJob, "job")
+            assert failed.status == "failed"
+            assert "No compatible TTS voice" in failed.error_message
+        assert calls == [("edge_tts", None, "vi-VN-XiaNeural")] * 2
+        monkeypatch.setattr(studio, "get_registry", lambda: normal_registry)
         # A deliberate pool disable must never be bypassed by historical review metadata.
         async with sessions.begin() as db:
             db.add(VoicePoolEntry(id="disabled-voice", provider="edge_tts", voice_id="vi-VN-XiaNeural",
                                   language="vi-VN", gender="Female", display_name="Xia", enabled=False))
-        (tts_dir / "seg_001.wav").unlink()
-        (tts_dir / "seg_001.meta.json").unlink()
         await studio.execute_job_render_pipeline("job")
         assert calls == [("edge_tts", None, "vi-VN-XiaNeural")] * 2
         async with sessions() as db:

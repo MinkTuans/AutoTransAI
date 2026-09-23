@@ -86,6 +86,7 @@ router = APIRouter(prefix="/api/video-translator", tags=["video-translator"])
 _job_sse_queues: Dict[str, asyncio.Queue] = {}
 _job_cancellation_events: Dict[str, asyncio.Event] = {}
 _active_render_jobs: set[str] = set()
+HISTORICAL_EDGE_VOICE_LOOKUP_TIMEOUT = 5.0
 
 
 
@@ -2078,7 +2079,9 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                         if selected_voice not in historical_edge_voices:
                             edge_provider = registry.get_audio("edge_tts")
                             try:
-                                live_voices = await edge_provider.get_voices() if edge_provider else []
+                                live_voices = (await asyncio.wait_for(
+                                    edge_provider.get_voices(), timeout=HISTORICAL_EDGE_VOICE_LOOKUP_TIMEOUT,
+                                )) if edge_provider else []
                             except Exception:
                                 live_voices = []
                             verified = next((v for v in live_voices if v.id == selected_voice[1]), None)

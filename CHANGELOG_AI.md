@@ -1,5 +1,6 @@
 - **Studio TTS review fixes (2026-09-23, Task 6D2 review)**:
   - A review-accepted voice is enrolled in the enabled pool with verified provider metadata; disabled rows stay disabled and are rejected. Confirmed historical Edge voices absent from the pool are revalidated by exact ID, language, and gender for canonical render, without persisting guessed metadata or silently switching provider/voice.
+  - Re-review follow-up: historical Edge voice-list revalidation is bounded to five seconds; a stalled lookup makes the voice ineligible and fails the canonical job visibly before synthesis. Added a hanging-coroutine regression.
   - A first keyed TTS catalog entry no longer breaks installations with the seeded legacy `edge_tts`/`edge-tts` default. This exact state remains on the read-only legacy Studio path until Task 9 creates the Edge provider/system catalog row and migrates the default to its UUID; no catalog row or entitlement is fabricated by render. Added isolated review/render and migration-gate regressions. Updated the knowledge base; no schema or public API change.
 
 - **Studio TTS canonical cutover (2026-09-23, Task 6D2)**:
