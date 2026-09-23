@@ -89,10 +89,7 @@ def _sync_schema_sync(sync_conn):
         if not matched_real_table:
             continue
 
-        try:
-            existing_cols = {col["name"].lower(): col for col in inspector.get_columns(matched_real_table)}
-        except Exception:
-            existing_cols = {}
+        existing_cols = {col["name"].lower(): col for col in inspector.get_columns(matched_real_table)}
 
         for col_name, column_obj in table_obj.columns.items():
             real_col_name = column_obj.name or col_name
@@ -125,13 +122,13 @@ def _sync_schema_sync(sync_conn):
                 if is_pg:
                     sync_conn.exec_driver_sql("RELEASE SAVEPOINT sp_col_add")
                 logger.info(f"Added column '{real_col_name}' to table '{matched_real_table}' via DDL")
-            except Exception as ex:
+            except Exception:
                 if is_pg:
                     try:
                         sync_conn.exec_driver_sql("ROLLBACK TO SAVEPOINT sp_col_add")
                     except Exception:
                         pass
-                logger.error(f"Failed adding column '{real_col_name}' to table '{matched_real_table}': {str(ex)}")
+                raise RuntimeError("Database schema update failed") from None
 
 
 def _run_glossary_single_source_migration(sync_conn) -> None:
@@ -160,13 +157,9 @@ def _run_glossary_single_source_migration(sync_conn) -> None:
 
 
 async def init_db() -> None:
-    """Create all tables and run dialect-agnostic schema migrations."""
-    global engine, async_session_factory, is_sqlite, is_mysql, is_postgres
-    import logging
-    logger = logging.getLogger("app.database")
-
-    await engine.dispose()
+    """Create and update schema, failing startup if the configured database fails."""
     try:
+        await engine.dispose()
         async with engine.begin() as conn:
             if is_sqlite:
                 await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
@@ -181,30 +174,8 @@ async def init_db() -> None:
             await conn.run_sync(_run_glossary_single_source_migration)
             # Run dynamic DDL schema migration across all dialects (Postgres, SQLite, MySQL)
             await conn.run_sync(_sync_schema_sync)
-    except Exception as ex:
-        if is_mysql and "GLOSSARY_MIGRATION_" not in str(ex):
-            logger.warning(f"MySQL connection failed ({str(ex)}). Falling back to local SQLite database...")
-            fallback_db_url = f"sqlite+aiosqlite:///{settings.DATA_DIR / settings.DB_FILENAME}"
-            _ensure_db_directory()
-            engine = create_async_engine(fallback_db_url, connect_args={"check_same_thread": False})
-            
-            @event.listens_for(engine.sync_engine, "connect")
-            def set_sqlite_pragma_fallback(dbapi_connection, connection_record):
-                cursor = dbapi_connection.cursor()
-                cursor.execute("PRAGMA foreign_keys=ON")
-                cursor.close()
-
-            async_session_factory.configure(bind=engine)
-            is_sqlite = True
-            is_mysql = False
-            async with engine.begin() as conn:
-                await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
-                await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
-                await conn.run_sync(Base.metadata.create_all)
-                await conn.run_sync(_run_glossary_single_source_migration)
-                await conn.run_sync(_sync_schema_sync)
-        else:
-            raise ex
+    except Exception:
+        raise RuntimeError("Database startup failed") from None
 
 
 
