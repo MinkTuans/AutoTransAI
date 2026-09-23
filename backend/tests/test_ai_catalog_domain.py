@@ -81,6 +81,16 @@ def test_access_pair_is_unique_and_cannot_reference_missing_rows(catalog, db):
         db.commit()
 
 
+def test_remote_ids_keep_case_and_prefix_and_require_provider(catalog, db):
+    Model, _, _ = catalog
+    db.add_all([Model(provider_id="one", remote_model_id=remote) for remote in ("models/Case", "models/case")])
+    db.commit()
+    assert set(db.scalars(select(Model.remote_model_id))) == {"models/Case", "models/case"}
+    db.add(Model(provider_id="absent", remote_model_id="remote"))
+    with pytest.raises(IntegrityError):
+        db.commit()
+
+
 def migration():
     path = Path(__file__).parents[1] / "alembic/versions/20260923_ai_catalog.py"
     assert path.exists(), "additive catalog migration is missing"

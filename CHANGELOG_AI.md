@@ -1,3 +1,8 @@
+- **Encrypted Credential Domain (2026-09-23)**:
+  - Added `backend/app/services/credential_service.py` with stable IDs, masked immutable DTOs, provider-scoped keyed duplicate detection, authenticated payload binding, and fail-closed decryption.
+  - Supports explicit Fernet master keys or first-use private `.api_key_master_key` generation; missing/invalid master keys cannot overwrite existing encrypted credentials. No legacy credential reads or migration.
+  - Added isolated SQLite/temporary-directory tests in `backend/tests/test_credential_service.py`, including rollback ownership and model retention. Extended catalog identity coverage and updated knowledge base. Existing API consumers remain unchanged.
+
 - **Canonical Catalog Schema (2026-09-23)**:
   - Added `CatalogModel`, `APIKey`, and `KeyModelAccess` in `backend/app/models/ai_catalog.py`, `api_key.py`, and model exports; provider-scoped remote identity and credential-independent catalog lifetime.
   - Added additive Alembic revision `20260923_ai_catalog` and isolated schema/migration tests in `backend/tests/test_ai_catalog_domain.py`. SQLite round-trip and offline MySQL DDL pass; no real DB migration or legacy rewrite performed. Updated knowledge base.
