@@ -16,6 +16,8 @@ _GLOSSARY_FIELDS = frozenset({"source_term", "translated_term", "term_type", "ap
 _AUDIO_FIELDS = frozenset({
     "id", "segment_number", "start_time", "end_time", "tts_audio_path",
     "tts_audio_duration", "tts_duration", "speaker_id", "synced_audio_path",
+    "voice_provider", "catalog_model_id", "model_id", "key_id", "voice_id",
+    "translated_text", "route_default_model_id",
 })
 
 
@@ -45,10 +47,12 @@ def _voice_map(value: Any) -> dict[str, dict[str, Any]]:
     if (not isinstance(value, dict) or len(value) > 1000 or
             any(not isinstance(key, str) or not isinstance(row, dict) for key, row in value.items())):
         raise ValueError("Invalid workflow checkpoint: speaker_voice_map.")
-    result = {key: {field: row[field] for field in ("provider", "voice_id") if field in row}
+    result = {key: {field: row[field] for field in ("provider", "voice_id", "gender", "confirmed_by_user") if field in row}
               for key, row in value.items()}
-    if any(len(key) > 255 or any(not isinstance(item, str) or len(item) > 512
-                                 for item in row.values()) for key, row in result.items()):
+    if any(len(key) > 255 or any(
+        (not isinstance(item, bool) if field == "confirmed_by_user" else
+         not isinstance(item, str) or len(item) > 512)
+        for field, item in row.items()) for key, row in result.items()):
         raise ValueError("Invalid workflow checkpoint: speaker_voice_map.")
     return result
 

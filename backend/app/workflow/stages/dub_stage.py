@@ -2,11 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import json
 import logging
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
+from app.config import get_settings
+from app.database import async_session_factory
+from app.models import APIKey, CatalogModel, CatalogRefreshRun
+from app.models.settings import AIFunctionConfig
+from app.models.workflow_engine import CharacterVoiceProfile, VoicePoolEntry
+from app.media.ffprobe import probe_duration_async
+from app.providers.registry import get_registry
+from app.services.ai_routing import RouteConfigurationError, build_route
+from app.services.video_translator.studio_tts_routing import (
+    cache_identity, cache_matches, generate_segment_audio, select_segment_route,
+)
 from app.workflow.workflow_context import WorkflowContext
 from app.models.workflow_engine import SpeakerVoiceMapping
 
@@ -71,47 +85,112 @@ class DubStage:
                 select(SpeakerVoiceMapping).where(SpeakerVoiceMapping.project_id == ctx.project_id)
             )
             mappings = result.scalars().all()
+            character_ids = {m.character_id for m in mappings if m.character_id}
+            profiles = {}
+            if character_ids:
+                result = await db.execute(select(CharacterVoiceProfile).where(
+                    CharacterVoiceProfile.project_id == ctx.project_id,
+                    CharacterVoiceProfile.character_id.in_(character_ids),
+                ))
+                profiles = {p.character_id: p for p in result.scalars().all()}
             for m in mappings:
+                profile = profiles.get(m.character_id)
+                provider = {"edge": "edge_tts", "google": "google_cloud_tts"}.get(
+                    m.voice_provider, m.voice_provider)
+                profile_provider = ({"edge": "edge_tts", "google": "google_cloud_tts"}.get(
+                    profile.voice_provider, profile.voice_provider) if profile else None)
+                if (profile and profile.confirmed_by_user and
+                        (provider != profile_provider or m.voice_id != profile.voice_id)):
+                    raise RouteConfigurationError("Confirmed TTS voice mapping needs review.")
                 ctx.speaker_voice_map[m.speaker_id] = {
-                    "provider": m.voice_provider,
+                    "provider": provider,
                     "voice_id": m.voice_id,
+                    "confirmed_by_user": bool(m.voice_id and not m.needs_review) or bool(
+                        profile and profile.confirmed_by_user),
+                    "gender": profile.gender if profile else "unknown",
                     "settings": m.voice_settings or {},
                 }
 
         return {"speaker_voice_mappings": len(ctx.speaker_voice_map)}
 
     async def _tts_generation(self, ctx: WorkflowContext) -> dict[str, Any]:
-        from app.providers.registry import get_registry
-        from app.media.ffprobe import probe_duration_async
-
-        output_dir = Path(ctx.video_path).parent / "tts_clips" if ctx.video_path else Path("tts_clips")
+        project_slot = hashlib.sha256(ctx.project_id.encode("utf-8")).hexdigest()[:16]
+        output_dir = (Path(ctx.video_path).parent if ctx.video_path else get_settings().STORAGE_ROOT) / "tts_clips" / project_slot
         output_dir.mkdir(parents=True, exist_ok=True)
         registry = get_registry()
 
+        async with async_session_factory() as catalog_db:
+            catalog_model = await catalog_db.scalar(select(CatalogModel.id).where(
+                CatalogModel.provider_id.in_(("edge_tts", "elevenlabs", "google_cloud_tts")),
+                CatalogModel.source != "system",
+            ).limit(1))
+            catalog_key = await catalog_db.scalar(select(APIKey.id).where(
+                APIKey.provider_id.in_(("elevenlabs", "google_cloud_tts")),
+            ).limit(1))
+            await catalog_db.scalar(select(CatalogRefreshRun.id).limit(1))
+            config = await catalog_db.get(AIFunctionConfig, "tts")
+            selected = await catalog_db.get(CatalogModel, config.model_id) if config and config.model_id else None
+            canonical = bool(catalog_model or catalog_key or selected)
+            # The seeded legacy Edge string has no catalog UUID until migration.
+            if config and config.primary_provider_id == "edge_tts" and config.model_id == "edge-tts":
+                canonical = False
+            if canonical:
+                if not config or not config.model_id:
+                    raise RouteConfigurationError("TTS default is not configured.")
+                route = await build_route(catalog_db, "TTS")
+                rows = (await catalog_db.scalars(select(VoicePoolEntry).where(
+                    VoicePoolEntry.enabled.is_(True)))).all()
+                pool = [{"provider": r.provider, "voice_id": r.voice_id,
+                         "language": r.language, "gender": r.gender} for r in rows]
+
         audio_info = []
         segments = ctx.translated_segments or ctx.source_segments or []
-        for seg in segments:
+        ctx.audio_segments_info = []
+        for index, seg in enumerate(segments, start=1):
             seg_num = seg.get("number") or seg.get("segment_number") or 1
             spk = seg.get("speaker_id")
             spk_info = ctx.speaker_voice_map.get(spk, {}) if spk else {}
-            provider_id = spk_info.get("provider") or ctx.tts_provider_id or "edge_tts"
-            voice_id = spk_info.get("voice_id") or ctx.tts_voice_id or "vi-VN-HoaiMyNeural"
+            text = seg.get("translated_text") or seg.get("text") or ""
+            out_clip = output_dir / f"seg_{index:05d}.wav"
+            meta_path = out_clip.with_suffix(".meta.json")
+            identity = None
+            if canonical:
+                segment = {"voice_provider": spk_info.get("provider") or ctx.tts_provider_id or "edge_tts",
+                           "voice_id": spk_info.get("voice_id") or ctx.tts_voice_id,
+                           "confirmed_by_user": bool(spk_info.get("confirmed_by_user")),
+                           "gender": spk_info.get("gender") or seg.get("gender")}
+                segment_route, voices = select_segment_route(route, segment, pool, ctx.target_language)
+                if out_clip.is_file() and out_clip.stat().st_size and meta_path.is_file():
+                    try:
+                        cached = json.loads(meta_path.read_text(encoding="utf-8"))
+                        if isinstance(cached, dict) and cache_matches(cached, segment_route, voices, text):
+                            identity = cached
+                    except (OSError, ValueError, UnicodeError):
+                        pass
+                if identity is None:
+                    meta_path.unlink(missing_ok=True)
+                    generated = await generate_segment_audio(
+                        segment_route, voices, text, out_clip, async_session_factory,
+                        get_settings().DATA_DIR, registry,
+                    )
+                    identity = cache_identity(generated.target, generated.voice_id, text,
+                                              segment_route.configured_model_id)
+                    meta_path.write_text(json.dumps(identity, ensure_ascii=False), encoding="utf-8")
+            else:
+                provider_id = spk_info.get("provider") or ctx.tts_provider_id or "edge_tts"
+                voice_id = spk_info.get("voice_id") or ctx.tts_voice_id or "vi-VN-HoaiMyNeural"
+                provider = registry.get_audio(provider_id)
+                if not provider:
+                    raise RouteConfigurationError("TTS provider adapter is unavailable.")
+                out_clip.unlink(missing_ok=True)
+                res = await asyncio.wait_for(provider.generate_audio(
+                    text=text, voice_id=voice_id, output_path=out_clip,
+                ), timeout=180.0)
+                if not res.success or not out_clip.is_file() or out_clip.stat().st_size == 0:
+                    raise RuntimeError("TTS synthesis failed.")
 
-            provider = registry.get_audio(provider_id)
-            if not provider:
-                raise RuntimeError(f"Audio provider '{provider_id}' is unavailable.")
-
-            out_clip = output_dir / f"seg_{seg_num:03d}.wav"
-            res = await provider.generate_audio(
-                text=seg.get("translated_text") or seg.get("text") or "",
-                voice_id=voice_id,
-                output_path=out_clip,
-            )
-            if not res.success or not out_clip.exists():
-                raise RuntimeError(f"TTS synthesis failed for segment #{seg_num}: {res.error_message}")
-
-            dur = await probe_duration_async(out_clip)
-            audio_info.append({
+            dur = await asyncio.wait_for(probe_duration_async(out_clip), timeout=30.0)
+            info = {
                 "id": seg.get("id"),
                 "segment_number": seg_num,
                 "start_time": seg.get("start_time", 0.0),
@@ -120,7 +199,10 @@ class DubStage:
                 "tts_audio_duration": dur,
                 "tts_duration": dur,
                 "speaker_id": spk,
-            })
+            }
+            if identity:
+                info.update(identity)
+            audio_info.append(info)
 
         ctx.audio_segments_info = audio_info
         return {"tts_clips_generated": len(ctx.audio_segments_info)}
