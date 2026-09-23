@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.database import async_session_factory
 from app.workflow.workflow_context import WorkflowContext
 from app.services.glossary_service import load_project_glossary
 
@@ -123,6 +124,7 @@ class TranslateStage:
             glossary=glossary_dict,
             db=db,
             project_id=ctx.project_id,
+            sessions=async_session_factory,
         )
 
         ctx.translated_segments = translated

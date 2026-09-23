@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
+from app.database import async_session_factory
 from app.workflow.workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
@@ -69,15 +71,17 @@ class AnalyzeStage:
         }
 
     async def _speech_to_text(self, ctx: WorkflowContext, db: Any) -> dict[str, Any]:
-        # Use module-level STT function with db session for model resolution
+        # Studio's route owns short catalog/credential sessions. The workflow
+        # engine commits its step state before this provider/media call.
         from app.services.video_translator.translator_service import speech_to_text_and_detect_language
 
         result_segments, detected_lang = await speech_to_text_and_detect_language(
-            audio_path=ctx.audio_path,
-            job_id=getattr(ctx, 'job_id', 'WF-JOB'),
+            audio_path=Path(ctx.audio_path),
+            job_id=ctx.job_id or ctx.workflow_id or "WF-JOB",
             target_language=ctx.target_language,
             source_language=ctx.source_language,
             db=db,
+            sessions=async_session_factory,
         )
         
         ctx.raw_transcript = " ".join(seg.get("text", "") for seg in result_segments)

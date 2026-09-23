@@ -6,6 +6,53 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 
+_SEGMENT_FIELDS = frozenset({
+    "id", "index", "number", "segment_number", "start", "end", "start_time",
+    "end_time", "text", "original_text", "translated_text", "speaker",
+    "speaker_id", "speaker_name", "character_id", "gender", "role",
+})
+_SPEAKER_FIELDS = frozenset({"speaker_id", "speaker_name", "gender", "role"})
+_GLOSSARY_FIELDS = frozenset({"source_term", "translated_term", "term_type", "approved", "priority"})
+_AUDIO_FIELDS = frozenset({
+    "id", "segment_number", "start_time", "end_time", "tts_audio_path",
+    "tts_audio_duration", "tts_duration", "speaker_id", "synced_audio_path",
+})
+
+
+def _records(value: Any, field_name: str, allowed: frozenset[str]) -> list[dict[str, Any]]:
+    """Bound checkpoint lists and retain only downstream, non-credential fields."""
+    if not isinstance(value, list) or len(value) > 10000 or any(not isinstance(row, dict) for row in value):
+        raise ValueError(f"Invalid workflow checkpoint: {field_name}.")
+    result = []
+    for row in value:
+        kept = {key: item for key, item in row.items() if key in allowed}
+        if any(item is not None and (
+            not isinstance(item, (str, int, float, bool)) or
+            isinstance(item, str) and len(item) > 65536
+        ) for item in kept.values()):
+            raise ValueError(f"Invalid workflow checkpoint: {field_name}.")
+        result.append(kept)
+    return result
+
+
+def _transcript(value: Any) -> str | None:
+    if value is not None and (not isinstance(value, str) or len(value) > 2_000_000):
+        raise ValueError("Invalid workflow checkpoint: raw_transcript.")
+    return value
+
+
+def _voice_map(value: Any) -> dict[str, dict[str, Any]]:
+    if (not isinstance(value, dict) or len(value) > 1000 or
+            any(not isinstance(key, str) or not isinstance(row, dict) for key, row in value.items())):
+        raise ValueError("Invalid workflow checkpoint: speaker_voice_map.")
+    result = {key: {field: row[field] for field in ("provider", "voice_id") if field in row}
+              for key, row in value.items()}
+    if any(len(key) > 255 or any(not isinstance(item, str) or len(item) > 512
+                                 for item in row.values()) for key, row in result.items()):
+        raise ValueError("Invalid workflow checkpoint: speaker_voice_map.")
+    return result
+
+
 @dataclass
 class WorkflowContext:
     """Holds runtime metadata and lightweight resource references across stage steps."""
@@ -41,6 +88,7 @@ class WorkflowContext:
 
     # Dubbing & Voice Mapping
     speaker_voice_map: dict[str, dict[str, Any]] = field(default_factory=dict)
+    tts_provider_id: Optional[str] = None
     tts_voice_id: str = "vi-VN-HoaiMyNeural"
     dubbed_audio_path: Optional[str] = None
     audio_segments_info: list[dict[str, Any]] = field(default_factory=list)
@@ -96,6 +144,15 @@ class WorkflowContext:
             "video_metadata": self.video_metadata,
             "source_language": self.source_language,
             "target_language": self.target_language,
+            "raw_transcript": _transcript(self.raw_transcript),
+            "source_segments": _records(self.source_segments, "source_segments", _SEGMENT_FIELDS),
+            "speakers": _records(self.speakers, "speakers", _SPEAKER_FIELDS),
+            "glossary": _records(self.glossary, "glossary", _GLOSSARY_FIELDS),
+            "translated_segments": _records(self.translated_segments, "translated_segments", _SEGMENT_FIELDS),
+            "speaker_voice_map": _voice_map(self.speaker_voice_map),
+            "tts_provider_id": self.tts_provider_id,
+            "tts_voice_id": self.tts_voice_id,
+            "audio_segments_info": _records(self.audio_segments_info, "audio_segments_info", _AUDIO_FIELDS),
             "segment_count": len(self.source_segments),
             "translated_segment_count": len(self.translated_segments),
             "glossary_count": len(self.glossary),
@@ -133,6 +190,8 @@ class WorkflowContext:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> WorkflowContext:
         """Hydrate WorkflowContext from serialized dictionary."""
+        if not isinstance(data, dict):
+            raise ValueError("Invalid workflow checkpoint.")
         ctx = cls(project_id=data.get("project_id", ""))
         ctx.job_id = data.get("job_id")
         ctx.workflow_id = data.get("workflow_id")
@@ -145,6 +204,15 @@ class WorkflowContext:
         ctx.video_metadata = data.get("video_metadata", {})
         ctx.source_language = data.get("source_language", "auto")
         ctx.target_language = data.get("target_language", "vi")
+        ctx.raw_transcript = _transcript(data.get("raw_transcript"))
+        ctx.source_segments = _records(data.get("source_segments", []), "source_segments", _SEGMENT_FIELDS)
+        ctx.speakers = _records(data.get("speakers", []), "speakers", _SPEAKER_FIELDS)
+        ctx.glossary = _records(data.get("glossary", []), "glossary", _GLOSSARY_FIELDS)
+        ctx.translated_segments = _records(data.get("translated_segments", []), "translated_segments", _SEGMENT_FIELDS)
+        ctx.speaker_voice_map = _voice_map(data.get("speaker_voice_map", {}))
+        ctx.tts_provider_id = data.get("tts_provider_id")
+        ctx.tts_voice_id = data.get("tts_voice_id") or ctx.tts_voice_id
+        ctx.audio_segments_info = _records(data.get("audio_segments_info", []), "audio_segments_info", _AUDIO_FIELDS)
         ctx.dubbed_audio_path = data.get("dubbed_audio_path")
         ctx.subtitle_files = data.get("subtitle_files", {})
         ctx.final_video_path = data.get("final_video_path")

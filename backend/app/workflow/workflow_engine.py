@@ -6,6 +6,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 from sqlalchemy import select
@@ -271,7 +272,14 @@ class WorkflowEngine:
                 return
 
             ctx_dict = wf_exec.context_data or {"project_id": project_id}
-            ctx = WorkflowContext.from_dict(ctx_dict)
+            try:
+                ctx = WorkflowContext.from_dict(ctx_dict)
+            except (TypeError, ValueError):
+                wf_exec.status = WorkflowEngineStatus.FAILED.value
+                wf_exec.error_message = "Invalid workflow checkpoint."
+                await db.commit()
+                await self.emit_progress(project_id)
+                return
             ctx.workflow_id = execution_id
 
             # Ensure video_path and video_url are hydrated from DB if missing

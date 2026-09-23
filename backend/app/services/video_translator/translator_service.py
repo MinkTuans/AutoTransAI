@@ -702,9 +702,12 @@ async def speech_to_text_and_detect_language(
             )
             # Check the canonical schema even when this table does not decide STT readiness.
             await catalog_db.scalar(select(CatalogRefreshRun.id).limit(1))
-            initialized = catalog_model is not None or catalog_key is not None
+            stt_default = await catalog_db.get(AIFunctionConfig, "stt")
+            canonical_default = (await catalog_db.get(CatalogModel, stt_default.model_id)
+                                 if stt_default and stt_default.model_id else None)
+            initialized = (catalog_model is not None or catalog_key is not None or
+                           canonical_default is not None)
             if initialized:
-                stt_default = await catalog_db.get(AIFunctionConfig, "stt")
                 if stt_default is None or not stt_default.model_id:
                     raise RouteConfigurationError("STT default is not configured.")
                 route = await build_route(catalog_db, "STT")
@@ -1263,9 +1266,12 @@ async def translate_transcript_segments(
                 APIKey.provider_id.in_(("gemini", "openai"))
             ).limit(1))
             await catalog_db.scalar(select(CatalogRefreshRun.id).limit(1))
-            canonical = catalog_model is not None or catalog_key is not None
+            translation_default = await catalog_db.get(AIFunctionConfig, "translation")
+            canonical_default = (await catalog_db.get(CatalogModel, translation_default.model_id)
+                                 if translation_default and translation_default.model_id else None)
+            canonical = (catalog_model is not None or catalog_key is not None or
+                         canonical_default is not None)
             if canonical:
-                translation_default = await catalog_db.get(AIFunctionConfig, "translation")
                 if translation_default is None or not translation_default.model_id:
                     raise RouteConfigurationError("TRANSLATION default is not configured.")
                 route = await build_route(catalog_db, "TRANSLATION")
