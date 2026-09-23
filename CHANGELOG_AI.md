@@ -34,6 +34,11 @@
   - Explicit compatibility gate keeps `.env` STT for schemas without Gemini/OpenAI non-system catalog models or keys. Keyless system rows, unrelated TTS rows, and unrelated global refresh history leave legacy STT available; activated catalogs with missing/invalid defaults fail visibly, and absent canonical tables surface migration errors.
   - Initialized the Studio render-launch flag before Phase 1 so an STT failure records the failed job state without a secondary unbound-variable exception. No database schema, REST API, UI, translation, TTS, Unified, or legacy workflow changes. Added isolated mocked catalog/HTTP and actual Studio background-entry tests; updated the knowledge base.
 
+- **Canonical Key Pool and Refresh API (2026-09-23, Task 7B1)**:
+  - Added typed masked key list/add/enable/disable/delete and explicit global model refresh under `/api/ai`; additive discovery follows a committed disabled key, and only a complete credential-scoped listing can activate an unchanged key. Deletion retains catalog rows until explicit complete refresh.
+  - Added fixed secret-safe validation and unexpected-error responses for key routes, revision-guarded activation against concurrent rotation/disable, and outcome DTOs that preserve partial/stale/failed reasons without raw provider text.
+  - Added disposable SQLite tests with synthetic keys, injected discovery, and an outbound socket guard; no real credentials, provider traffic, production database, legacy route, UI, or schema changes. Durable validation status and priority remain for Task 9. Updated the knowledge base.
+
 - **Request-local LLM/STT provider boundary (2026-09-23, Task 6A)**:
   - Review follow-up: OpenAI STT non-200 responses now raise sanitized status-bearing `PipelineError` instead of status-losing `RuntimeError`; routed 401/404/400/429 classify as auth/model unavailable/capability mismatch/rate limit. Added four failing-first HTTP regressions and reran the scoped suite.
   - Gemini/OpenAI LLM providers and direct Gemini/OpenAI STT functions accept a Task 5 `RouteTarget` and decrypted call credential, validate provider/capability, and send the target's remote model and request key to HTTP without mutating provider instances or global settings. Existing callers retain their optional legacy arguments and configuration paths.
