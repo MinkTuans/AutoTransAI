@@ -6,11 +6,15 @@ Uses OpenAI DALL-E 3 API with KeyManager failover.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
 
+from app.providers.image.catalog_media import (
+    CatalogImageError, decode_image_base64, download_image, request_json, validated_output_path,
+)
+from app.providers.request_target import resolve_request_target
+from app.services.ai_routing import RouteTarget
 from app.config import get_settings
 from app.core import get_logger
 from app.providers.base import (
@@ -57,7 +61,14 @@ class OpenAIImageProvider(ImageProvider):
         aspect_ratio: str = "16:9",
         model: str = "dall-e-3",
         options: Optional[Dict[str, Any]] = None,
+        *,
+        route_target: RouteTarget | None = None,
+        api_key: str | None = None,
     ) -> GenerationResult:
+        if route_target is not None:
+            return await self._generate_catalog_image(prompt, width, height, aspect_ratio, route_target, api_key)
+        if api_key is not None:
+            raise ValueError("A request credential requires a route target.")
         options = options or {}
         key_mgr = get_key_manager()
         key_entry = await key_mgr.get_active_key(self.provider_id)
@@ -89,30 +100,12 @@ class OpenAIImageProvider(ImageProvider):
         }
 
         try:
-            async with httpx.AsyncClient(timeout=45.0) as client:
-                res = await client.post(url, json=payload, headers=headers)
-                if res.status_code == 429:
-                    await key_mgr.report_result(self.provider_id, key_entry.key_id, success=False, status_code=429)
-                    return GenerationResult(
-                        success=False,
-                        error_message="OpenAI API rate limited (429)",
-                        error_code="RATE_LIMIT",
-                        provider_id=self.provider_id,
-                    )
-
-                if res.status_code != 200:
-                    fail_msg = f"OpenAI DALL-E error HTTP {res.status_code}: {res.text[:200]}"
-                    await key_mgr.report_result(self.provider_id, key_entry.key_id, success=False, status_code=res.status_code)
-                    return GenerationResult(
-                        success=False,
-                        error_message=fail_msg,
-                        error_code=f"HTTP_{res.status_code}",
-                        provider_id=self.provider_id,
-                    )
-
-                data = res.json()
+            output_path = validated_output_path(options.get("output_path"), settings.DATA_DIR)
+            async with httpx.AsyncClient(timeout=45.0, follow_redirects=False) as client:
+                data = await request_json(client, "POST", url, headers=headers, payload=payload)
                 data_list = data.get("data", [])
-                if not data_list or not data_list[0].get("url"):
+                if (not isinstance(data_list, list) or not data_list
+                        or not isinstance(data_list[0], dict) or not data_list[0].get("url")):
                     return GenerationResult(
                         success=False,
                         error_message="OpenAI DALL-E returned empty response.",
@@ -121,44 +114,82 @@ class OpenAIImageProvider(ImageProvider):
                     )
 
                 img_url = data_list[0]["url"]
-                img_dl_res = await client.get(img_url)
-                if img_dl_res.status_code == 200 and len(img_dl_res.content) > 1000:
-                    output_path = options.get("output_path")
-                    if output_path:
-                        output_path = Path(output_path)
-                        output_path.parent.mkdir(parents=True, exist_ok=True)
-                        output_path.write_bytes(img_dl_res.content)
+                image_bytes = await download_image(client, img_url)
+                if output_path:
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    output_path.write_bytes(image_bytes)
 
-                    await key_mgr.report_result(self.provider_id, key_entry.key_id, success=True)
-                    return GenerationResult(
-                        success=True,
-                        file_path=output_path if output_path else None,
-                        provider_id=self.provider_id,
-                        metadata={
-                            "image_bytes": img_dl_res.content,
-                            "image_url": img_url,
-                            "width": width,
-                            "height": height,
-                            "aspect_ratio": aspect_ratio,
-                            "provider": self.provider_id,
-                            "model": "dall-e-3",
-                        },
-                    )
-
+                await key_mgr.report_result(self.provider_id, key_entry.key_id, success=True)
                 return GenerationResult(
-                    success=False,
-                    error_message=f"Failed downloading DALL-E image from {img_url}",
-                    error_code="DOWNLOAD_FAILED",
+                    success=True,
+                    file_path=output_path,
                     provider_id=self.provider_id,
+                    metadata={"image_bytes": image_bytes, "width": width, "height": height,
+                              "aspect_ratio": aspect_ratio, "provider": self.provider_id,
+                              "model": "dall-e-3"},
                 )
 
-        except Exception as ex:
-            logger.error("OpenAI DALL-E image generation exception", error=str(ex))
+        except CatalogImageError as error:
+            if error.status_code:
+                await key_mgr.report_result(self.provider_id, key_entry.key_id,
+                                            success=False, status_code=error.status_code)
+            return GenerationResult(
+                success=False, provider_id=self.provider_id,
+                error_code="RATE_LIMIT" if error.status_code == 429 else
+                f"HTTP_{error.status_code}" if error.status_code else error.code.upper(),
+                error_message=str(error),
+            )
+        except Exception:
+            logger.error("OpenAI DALL-E image generation exception", code="provider_unavailable")
             return GenerationResult(
                 success=False,
-                error_message=f"OpenAI DALL-E error: {str(ex)}",
+                error_message="OpenAI DALL-E request failed.",
                 error_code="EXCEPTION",
                 provider_id=self.provider_id,
+            )
+
+    async def _generate_catalog_image(
+        self, prompt: str, width: int, height: int, aspect_ratio: str,
+        route_target: RouteTarget, api_key: str | None,
+    ) -> GenerationResult:
+        model_id, secret = resolve_request_target(
+            route_target, api_key, provider_id=self.provider_id,
+            capabilities=("IMAGE_GENERATION",), legacy_model=None, legacy_key=None,
+        )
+        try:
+            async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
+                payload = await request_json(
+                    client, "POST",
+                    "https://api.openai.com/v1/images/generations",
+                    headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json"},
+                    payload={"model": model_id, "prompt": prompt[:4000], "n": 1},
+                )
+                try:
+                    item = payload["data"][0]
+                    if not isinstance(item, dict):
+                        raise ValueError()
+                except (ValueError, TypeError, KeyError, IndexError):
+                    raise CatalogImageError("invalid_output") from None
+                if isinstance(item.get("url"), str):
+                    image_bytes = await download_image(client, item["url"])
+                elif isinstance(item.get("b64_json"), str):
+                    image_bytes = decode_image_base64(item["b64_json"])
+                else:
+                    raise CatalogImageError("invalid_output")
+            return GenerationResult(
+                success=True, provider_id=self.provider_id,
+                metadata={"image_bytes": image_bytes, "model": model_id},
+            )
+        except CatalogImageError as error:
+            return GenerationResult(
+                success=False, provider_id=self.provider_id,
+                error_code=f"HTTP_{error.status_code}" if error.status_code else error.code.upper(),
+                error_message=str(error),
+            )
+        except (httpx.HTTPError, ValueError):
+            return GenerationResult(
+                success=False, provider_id=self.provider_id,
+                error_code="PROVIDER_UNAVAILABLE", error_message="Image generation failed: provider_unavailable",
             )
 
     async def estimate_usage(self, prompt: str) -> List[UsageEstimate]:

@@ -7,11 +7,16 @@ Uses fal.ai REST API for FLUX and image generation models with KeyManager failov
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
+import re
 from typing import Any, Dict, List, Optional
 
 import httpx
 
+from app.providers.image.catalog_media import (
+    CatalogImageError, download_image, request_json, validate_public_https_url, validated_output_path,
+)
+from app.providers.request_target import resolve_request_target
+from app.services.ai_routing import RouteTarget
 from app.config import get_settings
 from app.core import get_logger
 from app.providers.base import (
@@ -58,7 +63,14 @@ class FalImageProvider(ImageProvider):
         aspect_ratio: str = "16:9",
         model: str = "fal-ai/flux/schnell",
         options: Optional[Dict[str, Any]] = None,
+        *,
+        route_target: RouteTarget | None = None,
+        api_key: str | None = None,
     ) -> GenerationResult:
+        if route_target is not None:
+            return await self._generate_catalog_image(prompt, width, height, route_target, api_key)
+        if api_key is not None:
+            raise ValueError("A request credential requires a route target.")
         options = options or {}
         key_mgr = get_key_manager()
         key_entry = await key_mgr.get_active_key(self.provider_id)
@@ -90,59 +102,34 @@ class FalImageProvider(ImageProvider):
         }
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                res = await client.post(url, json=payload, headers=headers)
-                if res.status_code == 429:
-                    await key_mgr.report_result(self.provider_id, key_entry.key_id, success=False, status_code=429)
-                    return GenerationResult(
-                        success=False,
-                        error_message="fal.ai API key rate limited (429)",
-                        error_code="RATE_LIMIT",
-                        provider_id=self.provider_id,
-                    )
-
-                if res.status_code not in (200, 202):
-                    fail_msg = f"fal.ai API error HTTP {res.status_code}: {res.text[:200]}"
-                    await key_mgr.report_result(self.provider_id, key_entry.key_id, success=False, status_code=res.status_code)
-                    return GenerationResult(
-                        success=False,
-                        error_message=fail_msg,
-                        error_code=f"HTTP_{res.status_code}",
-                        provider_id=self.provider_id,
-                    )
-
-                data = res.json()
+            output_path = validated_output_path(options.get("output_path"), settings.DATA_DIR)
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+                data = await request_json(client, "POST", url, headers=headers,
+                                          payload=payload, accepted=(200, 202))
                 image_url = None
 
-                if "images" in data and len(data["images"]) > 0:
+                if isinstance(data.get("images"), list) and data["images"] and isinstance(data["images"][0], dict):
                     image_url = data["images"][0].get("url")
                 elif "response_url" in data or "status_url" in data:
                     # Async polling task
-                    status_url = data.get("status_url")
-                    response_url = data.get("response_url")
+                    status_url = await validate_public_https_url(data.get("status_url"), expected_host="queue.fal.run")
+                    response_url = await validate_public_https_url(data.get("response_url"), expected_host="queue.fal.run")
                     max_polls = 40
 
                     for _ in range(max_polls):
                         await asyncio.sleep(2.0)
-                        poll_res = await client.get(status_url, headers=headers)
-                        if poll_res.status_code == 200:
-                            p_data = poll_res.json()
-                            if p_data.get("status") == "COMPLETED":
-                                break
-                            elif p_data.get("status") == "FAILED":
-                                return GenerationResult(
-                                    success=False,
-                                    error_message="fal.ai task failed during processing.",
-                                    error_code="TASK_FAILED",
-                                    provider_id=self.provider_id,
-                                )
+                        p_data = await request_json(client, "GET", status_url, headers=headers)
+                        if p_data.get("status") == "COMPLETED":
+                            break
+                        if p_data.get("status") in ("FAILED", "CANCELED"):
+                            raise CatalogImageError("provider_unavailable")
+                    else:
+                        raise CatalogImageError("timeout")
 
-                    final_res = await client.get(response_url, headers=headers)
-                    if final_res.status_code == 200:
-                        f_data = final_res.json()
-                        imgs = f_data.get("images", [])
-                        if imgs:
-                            image_url = imgs[0].get("url")
+                    f_data = await request_json(client, "GET", response_url, headers=headers)
+                    imgs = f_data.get("images", [])
+                    if isinstance(imgs, list) and imgs and isinstance(imgs[0], dict):
+                        image_url = imgs[0].get("url")
 
                 if not image_url:
                     return GenerationResult(
@@ -153,44 +140,97 @@ class FalImageProvider(ImageProvider):
                     )
 
                 # Download image bytes
-                img_dl_res = await client.get(image_url)
-                if img_dl_res.status_code == 200 and len(img_dl_res.content) > 1000:
-                    output_path = options.get("output_path")
-                    if output_path:
-                        output_path = Path(output_path)
-                        output_path.parent.mkdir(parents=True, exist_ok=True)
-                        output_path.write_bytes(img_dl_res.content)
+                image_bytes = await download_image(client, image_url)
+                if output_path:
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    output_path.write_bytes(image_bytes)
 
-                    await key_mgr.report_result(self.provider_id, key_entry.key_id, success=True)
-                    return GenerationResult(
-                        success=True,
-                        file_path=output_path if output_path else None,
-                        provider_id=self.provider_id,
-                        metadata={
-                            "image_bytes": img_dl_res.content,
-                            "image_url": image_url,
-                            "width": width,
-                            "height": height,
-                            "aspect_ratio": aspect_ratio,
-                            "provider": self.provider_id,
-                            "model": model,
-                        },
-                    )
-
+                await key_mgr.report_result(self.provider_id, key_entry.key_id, success=True)
                 return GenerationResult(
-                    success=False,
-                    error_message=f"Failed to download image from fal.ai URL: {image_url}",
-                    error_code="DOWNLOAD_FAILED",
+                    success=True,
+                    file_path=output_path,
                     provider_id=self.provider_id,
+                    metadata={"image_bytes": image_bytes, "width": width, "height": height,
+                              "aspect_ratio": aspect_ratio, "provider": self.provider_id,
+                              "model": model},
                 )
 
-        except Exception as ex:
-            logger.error("fal.ai image generation exception", error=str(ex))
+        except CatalogImageError as error:
+            if error.status_code:
+                await key_mgr.report_result(self.provider_id, key_entry.key_id,
+                                            success=False, status_code=error.status_code)
+            return GenerationResult(
+                success=False, provider_id=self.provider_id,
+                error_code="RATE_LIMIT" if error.status_code == 429 else
+                f"HTTP_{error.status_code}" if error.status_code else error.code.upper(),
+                error_message=str(error),
+            )
+        except Exception:
+            logger.error("fal.ai image generation exception", code="provider_unavailable")
             return GenerationResult(
                 success=False,
-                error_message=f"fal.ai error: {str(ex)}",
+                error_message="fal.ai request failed.",
                 error_code="EXCEPTION",
                 provider_id=self.provider_id,
+            )
+
+    async def _generate_catalog_image(
+        self, prompt: str, width: int, height: int,
+        route_target: RouteTarget, api_key: str | None,
+    ) -> GenerationResult:
+        model_id, secret = resolve_request_target(
+            route_target, api_key, provider_id=self.provider_id,
+            capabilities=("IMAGE_GENERATION",), legacy_model=None, legacy_key=None,
+        )
+        if (len(model_id) > 255 or not re.fullmatch(r"[A-Za-z0-9_-]+(?:/[A-Za-z0-9_.-]+)+", model_id)
+                or any(part in (".", "..") for part in model_id.split("/"))):
+            return GenerationResult(False, provider_id=self.provider_id,
+                                    error_code="CAPABILITY_MISMATCH",
+                                    error_message="Image generation failed: capability_mismatch")
+        headers = {"Authorization": f"Key {secret}", "Content-Type": "application/json"}
+        try:
+            async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
+                payload = await request_json(
+                    client, "POST",
+                    f"https://queue.fal.run/{model_id}", headers=headers,
+                    payload={"prompt": prompt, "image_size": {"width": width, "height": height},
+                             "num_images": 1, "enable_safety_checker": True},
+                    accepted=(200, 202),
+                )
+                images = payload.get("images")
+                if not images:
+                    status_url = await validate_public_https_url(
+                        payload.get("status_url"), expected_host="queue.fal.run")
+                    response_url = await validate_public_https_url(
+                        payload.get("response_url"), expected_host="queue.fal.run")
+                    for _ in range(12):
+                        state = (await request_json(client, "GET", status_url, headers=headers)).get("status")
+                        if state == "COMPLETED":
+                            break
+                        if state in ("FAILED", "CANCELED"):
+                            raise CatalogImageError("provider_unavailable")
+                        await asyncio.sleep(1)
+                    else:
+                        raise CatalogImageError("timeout")
+                    images = (await request_json(client, "GET", response_url, headers=headers)).get("images")
+                if not isinstance(images, list) or not images or not isinstance(images[0], dict):
+                    raise CatalogImageError("invalid_output")
+                image_bytes = await download_image(client, images[0].get("url"))
+            return GenerationResult(
+                success=True, provider_id=self.provider_id,
+                metadata={"image_bytes": image_bytes, "model": model_id,
+                          "width": width, "height": height},
+            )
+        except CatalogImageError as error:
+            return GenerationResult(
+                success=False, provider_id=self.provider_id,
+                error_code=f"HTTP_{error.status_code}" if error.status_code else error.code.upper(),
+                error_message=str(error),
+            )
+        except (httpx.HTTPError, ValueError):
+            return GenerationResult(
+                success=False, provider_id=self.provider_id,
+                error_code="PROVIDER_UNAVAILABLE", error_message="Image generation failed: provider_unavailable",
             )
 
     async def estimate_usage(self, prompt: str) -> List[UsageEstimate]:
