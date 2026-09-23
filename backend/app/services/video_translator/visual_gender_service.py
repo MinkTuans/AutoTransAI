@@ -348,8 +348,14 @@ async def detect_speakers_gender(
                 APIKey.provider_id.in_(("gemini", "openai"))
             ).limit(1))
             await catalog_db.scalar(select(CatalogRefreshRun.id).limit(1))
-            if catalog_model is not None or catalog_key is not None:
-                visual_default = await catalog_db.get(AIFunctionConfig, "visual_gender")
+            visual_default = await catalog_db.get(AIFunctionConfig, "visual_gender")
+            # A canonical default is a durable per-function activation signal,
+            # even when its provider has no Gemini/OpenAI credential. Unrelated
+            # providers/keys alone cannot force an unmigrated legacy function
+            # off its historical default.
+            canonical_default = (await catalog_db.get(CatalogModel, visual_default.model_id)
+                                 if visual_default and visual_default.model_id else None)
+            if catalog_model is not None or catalog_key is not None or canonical_default is not None:
                 if visual_default is None or not visual_default.model_id:
                     raise RouteConfigurationError("VISUAL_GENDER default is not configured.")
                 route = await build_route(catalog_db, "VISUAL_GENDER")

@@ -28,7 +28,7 @@ async def catalog(tmp_path):
             await conn.run_sync(model.__table__.create)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with sessions.begin() as db:
-        db.add_all(Provider(id=p, name=p, provider_type="llm") for p in ("gemini", "openai"))
+        db.add_all(Provider(id=p, name=p, provider_type="llm") for p in ("gemini", "openai", "anthropic", "edge_tts"))
     yield sessions, tmp_path
     await engine.dispose()
 
@@ -142,6 +142,93 @@ async def test_active_catalog_without_default_does_not_use_env(catalog, monkeypa
     monkeypatch.setattr(service.settings, "GEMINI_API_KEY", "legacy-key")
     with pytest.raises(RouteConfigurationError, match="default"):
         await service.detect_speakers_gender(video, segments, sessions=sessions, data_dir=path)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("catalog_shape", ["anthropic_discovered", "anthropic_system"])
+async def test_non_gemini_catalog_never_escapes_to_legacy(catalog, monkeypatch, tmp_path, catalog_shape):
+    sessions, path = catalog
+    async with sessions.begin() as db:
+        if catalog_shape == "anthropic_discovered":
+            model = CatalogModel(provider_id="anthropic", remote_model_id="claude-vision",
+                                 source="discovered", capability_status="FULL_UNKNOWN", capabilities=[])
+        else:
+            model = CatalogModel(provider_id="anthropic", remote_model_id="claude-system",
+                                 source="system", capability_status="FULL_UNKNOWN", capabilities=[])
+        db.add(model)
+        await db.flush()
+        db.add(AIFunctionConfig(function_id="visual_gender", function_name="Visual Gender", capability="VISUAL_GENDER",
+                                primary_provider_id="anthropic", model_id=model.id))
+    video, segments = fake_frames(monkeypatch, tmp_path)
+    monkeypatch.setattr(service.settings, "GEMINI_API_KEY", "legacy-secret")
+    calls = []
+
+    async def legacy(*args, **kwargs):
+        calls.append(kwargs)
+        return "male"
+
+    monkeypatch.setattr(service, "detect_gender_from_image", legacy)
+    with pytest.raises(RouteConfigurationError, match="credential access"):
+        await service.detect_speakers_gender(video, segments, sessions=sessions, data_dir=path)
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_unrelated_key_only_keeps_legacy_migration_hold(catalog, monkeypatch, tmp_path):
+    sessions, path = catalog
+    async with sessions.begin() as db:
+        await (await CredentialService.open(db, path)).create("anthropic", "anthropic-secret")
+        db.add(AIFunctionConfig(function_id="visual_gender", function_name="Visual Gender", capability="VISUAL_GENDER",
+                                primary_provider_id="gemini", model_id="gemini-2.0-flash"))
+    video, segments = fake_frames(monkeypatch, tmp_path)
+    calls = []
+
+    async def legacy(*args, **kwargs):
+        calls.append(kwargs)
+        return "male"
+
+    monkeypatch.setattr(service, "detect_gender_from_image", legacy)
+    assert await service.detect_speakers_gender(video, segments, sessions=sessions, data_dir=path) == {"S1": "male"}
+    assert calls[0]["provider"] == "gemini"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_catalog_default_with_access_fails_as_unsupported_not_gemini(catalog, monkeypatch, tmp_path):
+    sessions, path = catalog
+    async with sessions.begin() as db:
+        selected = await add_model(db, path, "anthropic", "claude-vision", "anthropic-secret")
+        db.add(AIFunctionConfig(function_id="visual_gender", function_name="Visual Gender", capability="VISUAL_GENDER",
+                                primary_provider_id="anthropic", model_id=selected.id))
+    video, segments = fake_frames(monkeypatch, tmp_path)
+    monkeypatch.setattr(service.settings, "GEMINI_API_KEY", "legacy-secret")
+    calls = []
+
+    async def post(_client, url, **kwargs):
+        calls.append((url, kwargs))
+        return httpx.Response(200, text="should not call")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    with pytest.raises(RouteExhausted, match="capability_mismatch"):
+        await service.detect_speakers_gender(video, segments, sessions=sessions, data_dir=path)
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_keyless_edge_only_catalog_keeps_uninitialized_legacy_path(catalog, monkeypatch, tmp_path):
+    sessions, path = catalog
+    async with sessions.begin() as db:
+        db.add(CatalogModel(provider_id="edge_tts", remote_model_id="edge-tts", source="system",
+                            capability_status="KNOWN", capabilities=["TTS"]))
+    video, segments = fake_frames(monkeypatch, tmp_path)
+    calls = []
+
+    async def legacy(*args, **kwargs):
+        calls.append(kwargs)
+        return "male"
+
+    monkeypatch.setattr(service, "detect_gender_from_image", legacy)
+    assert await service.detect_speakers_gender(video, segments, sessions=sessions, data_dir=path) == {"S1": "male"}
+    assert calls[0]["provider"] == "gemini"
 
 
 @pytest.mark.asyncio
