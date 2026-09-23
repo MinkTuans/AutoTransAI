@@ -33,6 +33,12 @@ from app.core import get_logger
 from app.services.storage_service import storage_service
 from app.core.job_logger import log_job_event, get_job_logs
 from app.database import get_session, async_session_factory
+from app.models import APIKey, CatalogModel, CatalogRefreshRun
+from app.models.settings import AIFunctionConfig
+from app.services.ai_routing import RouteConfigurationError, build_route
+from app.services.video_translator.studio_tts_routing import (
+    cache_identity, cache_matches, generate_segment_audio, select_segment_route,
+)
 from app.core.security_url import SSRFValidationError
 from app.models.asset import Asset
 from app.models.project import Project, WorkflowStatus
@@ -2018,7 +2024,45 @@ async def execute_job_render_pipeline(job_id: str) -> None:
 
             registry = get_registry()
             audio_provider = registry.get_audio(b_job.audio_provider_id or "edge_tts")
-            if not audio_provider:
+            # An existing system Edge row alone does not activate catalog TTS.
+            catalog_model = await init_session.scalar(select(CatalogModel.id).where(
+                CatalogModel.provider_id.in_(("edge_tts", "elevenlabs", "google_cloud_tts")),
+                CatalogModel.source != "system",
+            ).limit(1))
+            catalog_key = await init_session.scalar(select(APIKey.id).where(
+                APIKey.provider_id.in_(("elevenlabs", "google_cloud_tts")),
+            ).limit(1))
+            await init_session.scalar(select(CatalogRefreshRun.id).limit(1))
+            canonical_tts = catalog_model is not None or catalog_key is not None
+            segment_routes = {}
+            if canonical_tts:
+                tts_default = await init_session.get(AIFunctionConfig, "tts")
+                if not tts_default or not tts_default.model_id:
+                    raise RouteConfigurationError("TTS default is not configured.")
+                tts_route = await build_route(init_session, "TTS")
+                pool_rows = (await init_session.execute(select(VoicePoolEntry).where(
+                    VoicePoolEntry.enabled.is_(True)
+                ))).scalars().all()
+                voice_pool = [{"provider": p.provider, "voice_id": p.voice_id,
+                               "language": p.language, "gender": p.gender} for p in pool_rows]
+                profiles = {}
+                if b_job.project_id:
+                    profiles = {p.character_id: p for p in (await init_session.execute(
+                        select(CharacterVoiceProfile).where(CharacterVoiceProfile.project_id == b_job.project_id)
+                    )).scalars().all()}
+                for seg in segments_data:
+                    profile = profiles.get(seg.get("character_id"))
+                    seg["gender"] = profile.gender if profile else None
+                    seg["confirmed_by_user"] = bool(profile and profile.confirmed_by_user)
+                    if seg["confirmed_by_user"] and (
+                        seg.get("voice_provider") != profile.voice_provider
+                        or seg.get("voice_id") != profile.voice_id
+                    ):
+                        raise RouteConfigurationError("Confirmed TTS voice mapping needs review.")
+                    segment_routes[seg["id"]] = select_segment_route(
+                        tts_route, seg, voice_pool, b_job.target_language,
+                    )
+            if not canonical_tts and not audio_provider:
                 await init_session.execute(
                     update(VideoTranslationJob)
                     .where(VideoTranslationJob.id == job_id)
@@ -2037,11 +2081,19 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                 meta_f = tts_dir_p / f"seg_{s_dict['segment_number']:03d}.meta.json"
                 if not audio_f.exists() or audio_f.stat().st_size == 0:
                     return False
+                if canonical_tts and not meta_f.exists():
+                    return False
                 if meta_f.exists():
                     try:
                         with open(meta_f, "r", encoding="utf-8") as mf:
                             m_data = json.load(mf)
-                        if m_data.get("voice_id") != s_dict.get("voice_id") or m_data.get("translated_text") != s_dict.get("translated_text"):
+                        if canonical_tts:
+                            route, voices = segment_routes[s_dict["id"]]
+                            if not cache_matches(m_data, route, voices, s_dict.get("translated_text") or ""):
+                                return False
+                            s_dict["voice_provider"] = m_data["voice_provider"]
+                            s_dict["voice_id"] = m_data["voice_id"]
+                        elif m_data.get("voice_id") != s_dict.get("voice_id") or m_data.get("translated_text") != s_dict.get("translated_text"):
                             return False
                     except Exception:
                         return False
@@ -2100,13 +2152,28 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                 if not reused:
                     log_job_event(job_id, "TTS", f"[TTS] Regenerating segments: [{seg['segment_number']}]")
                     log_job_event(job_id, "GENERATING_TTS", f"Generating TTS for segment #{seg['segment_number']}/{len(segments_data)}")
-                    segment_provider = registry.get_audio(seg.get("voice_provider") or audio_provider_id) or audio_provider
-                    res = await segment_provider.generate_audio(
-                        text=seg["translated_text"] or "",
-                        voice_id=seg.get("voice_id") or voice_id,
-                        output_path=seg_tts_path,
-                    )
-                    if not res.success or not seg_tts_path.exists():
+                    if canonical_tts:
+                        route, voices = segment_routes[seg["id"]]
+                        clip = await generate_segment_audio(
+                            route, voices, seg["translated_text"] or "", seg_tts_path,
+                            async_session_factory, settings.DATA_DIR, registry,
+                        )
+                        seg["voice_provider"] = clip.target.provider_id
+                        seg["voice_id"] = clip.voice_id
+                        reused = True
+                        meta_data = cache_identity(clip.target, clip.voice_id, seg["translated_text"] or "",
+                                                   route.configured_model_id)
+                    else:
+                        segment_provider = registry.get_audio(seg.get("voice_provider") or audio_provider_id) or audio_provider
+                        res = await segment_provider.generate_audio(
+                            text=seg["translated_text"] or "",
+                            voice_id=seg.get("voice_id") or voice_id,
+                            output_path=seg_tts_path,
+                        )
+                        meta_data = {"voice_id": seg.get("voice_id") or voice_id,
+                                     "voice_provider": seg.get("voice_provider") or audio_provider_id,
+                                     "translated_text": seg.get("translated_text")}
+                    if not canonical_tts and (not res.success or not seg_tts_path.exists()):
                         logger.warning(f"[VIDEO-SYNC] TTS failed for Segment #{seg['segment_number']}: {res.error_message}")
                         log_job_event(job_id, "GENERATING_TTS", f"[VIDEO-SYNC] ⚠️ Segment #{seg['segment_number']} TTS failed: {res.error_message}. Fallback to silence.")
                         seg["tts_audio_path"] = None
@@ -2116,11 +2183,7 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                         reused = True
                         try:
                             with open(seg_meta_path, "w", encoding="utf-8") as mf:
-                                json.dump({
-                                    "voice_id": seg.get("voice_id") or voice_id,
-                                    "voice_provider": seg.get("voice_provider") or audio_provider_id,
-                                    "translated_text": seg.get("translated_text"),
-                                }, mf)
+                                json.dump(meta_data, mf)
                         except Exception as me:
                             logger.warning(f"Failed to write TTS meta: {me}")
                 if reused and seg_tts_path.exists():
@@ -2140,6 +2203,8 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                         except Exception:
                             pass
             except Exception as tts_err:
+                if canonical_tts:
+                    raise
                 logger.warning(f"[VIDEO-SYNC] TTS exception for Segment #{seg['segment_number']}: {str(tts_err)}")
                 log_job_event(job_id, "GENERATING_TTS", f"[VIDEO-SYNC] ⚠️ Segment #{seg['segment_number']} TTS exception: {str(tts_err)}. Fallback to silence.")
                 seg["tts_audio_path"] = None
@@ -2157,6 +2222,8 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                         tts_audio_duration=seg["tts_audio_duration"],
                         tts_duration=seg.get("tts_duration", 0.0),
                         status=seg["status"],
+                        voice_provider=seg.get("voice_provider"),
+                        voice_id=seg.get("voice_id"),
                     )
                 )
                 if upd_res.rowcount == 0:
@@ -2217,60 +2284,86 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                 )).scalars().all()
                 confirmed_char_ids = {p.character_id for p in profiles_rows if p.confirmed_by_user}
 
-                affected_seg_nums = []
-                seg_dict_by_id = {s["id"]: s for s in segments_data}
-                for conflict in schedule_result.unresolved_conflicts:
-                    cand_id = conflict.get("segment_id")
-                    prior_id = conflict.get("with")
-                    for sid in [cand_id, prior_id]:
-                        target_s = seg_dict_by_id.get(sid)
-                        if not target_s:
+            affected_seg_nums = []
+            seg_dict_by_id = {s["id"]: s for s in segments_data}
+            for conflict in schedule_result.unresolved_conflicts:
+                for sid in (conflict.get("segment_id"), conflict.get("with")):
+                    target_s = seg_dict_by_id.get(sid)
+                    if not target_s or target_s.get("character_id") in confirmed_char_ids:
+                        continue
+                    curr_v = target_s.get("voice_id")
+                    alt_choices = [v for v in pool if v.get("voice_id") != curr_v]
+                    chosen_route = None
+                    if canonical_tts:
+                        compatible = []
+                        for candidate in alt_choices:
+                            proposed = {**target_s, "voice_provider": candidate["provider"],
+                                        "voice_id": candidate["voice_id"]}
+                            try:
+                                route_and_voices = select_segment_route(tts_route, proposed, [candidate],
+                                                                        b_job.target_language)
+                            except RouteConfigurationError:
+                                continue
+                            compatible.append((candidate, route_and_voices))
+                        if not compatible:
                             continue
-                        if target_s.get("character_id") in confirmed_char_ids:
+                        chosen, chosen_route = compatible[0]
+                    else:
+                        if not alt_choices:
                             continue
-                        curr_v = target_s.get("voice_id")
-                        alt_choices = [v for v in pool if v.get("voice_id") != curr_v]
-                        if alt_choices:
-                            chosen = alt_choices[0]
-                            target_s["voice_id"] = chosen["voice_id"]
-                            target_s["voice_provider"] = chosen["provider"]
-                            affected_seg_nums.append(target_s["segment_number"])
-                            s_f = tts_dir / f"seg_{target_s['segment_number']:03d}.wav"
-                            s_m = tts_dir / f"seg_{target_s['segment_number']:03d}.meta.json"
-                            s_f.unlink(missing_ok=True)
-                            s_m.unlink(missing_ok=True)
-                            log_job_event(job_id, "TTS_CACHE", f"[TTS_CACHE] Invalidating segments: [{target_s['segment_number']}]")
-                            log_job_event(job_id, "TTS", f"[TTS] Regenerating segments: [{target_s['segment_number']}]")
-                            sp = registry.get_audio(chosen["provider"]) or audio_provider
-                            await sp.generate_audio(text=target_s["translated_text"] or "", voice_id=chosen["voice_id"], output_path=s_f)
-                            if s_f.exists():
-                                dur = await probe_duration_async(s_f)
-                                target_s["tts_audio_path"] = str(s_f)
-                                target_s["tts_audio_duration"] = dur
-                                target_s["tts_duration"] = dur
-                                try:
-                                    with open(s_m, "w", encoding="utf-8") as mf:
-                                        json.dump({"voice_id": chosen["voice_id"], "voice_provider": chosen["provider"], "translated_text": target_s["translated_text"]}, mf)
-                                except Exception:
-                                    pass
-                            await resolve_session.execute(
-                                update(VideoTranslationSegment)
-                                .where(VideoTranslationSegment.id == sid)
-                                .values(
-                                    voice_id=chosen["voice_id"],
-                                    voice_provider=chosen["provider"],
-                                    tts_audio_path=target_s["tts_audio_path"],
-                                    tts_audio_duration=target_s["tts_audio_duration"],
-                                    tts_duration=target_s["tts_duration"],
-                                )
-                            )
-                            break
-                await resolve_session.commit()
+                        chosen = alt_choices[0]
 
-                if affected_seg_nums:
-                    schedule_result = schedule_segments(segments_data, video_dur, policy)
-                    if not schedule_result.requires_review:
-                        log_job_event(job_id, "AUDIO_SCHEDULE", f"[AUDIO_SCHEDULE] Conflict resolved for segments {affected_seg_nums}")
+                    s_f = tts_dir / f"seg_{target_s['segment_number']:03d}.wav"
+                    s_m = tts_dir / f"seg_{target_s['segment_number']:03d}.meta.json"
+                    s_f.unlink(missing_ok=True)
+                    s_m.unlink(missing_ok=True)
+                    log_job_event(job_id, "TTS_CACHE", f"[TTS_CACHE] Invalidating segments: [{target_s['segment_number']}]")
+                    log_job_event(job_id, "TTS", f"[TTS] Regenerating segments: [{target_s['segment_number']}]")
+                    if canonical_tts:
+                        retry_route, retry_voices = chosen_route
+                        clip = await generate_segment_audio(
+                            retry_route, retry_voices, target_s["translated_text"] or "", s_f,
+                            async_session_factory, settings.DATA_DIR, registry,
+                        )
+                        chosen = {"provider": clip.target.provider_id, "voice_id": clip.voice_id}
+                        metadata = cache_identity(clip.target, clip.voice_id, target_s["translated_text"] or "",
+                                                  retry_route.configured_model_id)
+                        segment_routes[sid] = chosen_route
+                    else:
+                        sp = registry.get_audio(chosen["provider"]) or audio_provider
+                        await sp.generate_audio(text=target_s["translated_text"] or "",
+                                                voice_id=chosen["voice_id"], output_path=s_f)
+                        metadata = {"voice_id": chosen["voice_id"], "voice_provider": chosen["provider"],
+                                    "translated_text": target_s["translated_text"]}
+                    target_s["voice_id"] = chosen["voice_id"]
+                    target_s["voice_provider"] = chosen["provider"]
+                    affected_seg_nums.append(target_s["segment_number"])
+                    if s_f.exists():
+                        dur = await probe_duration_async(s_f)
+                        target_s["tts_audio_path"] = str(s_f)
+                        target_s["tts_audio_duration"] = dur
+                        target_s["tts_duration"] = dur
+                        try:
+                            with open(s_m, "w", encoding="utf-8") as mf:
+                                json.dump(metadata, mf)
+                        except Exception:
+                            pass
+                    async with async_session_factory() as retry_session:
+                        await retry_session.execute(
+                            update(VideoTranslationSegment).where(VideoTranslationSegment.id == sid).values(
+                                voice_id=chosen["voice_id"], voice_provider=chosen["provider"],
+                                tts_audio_path=target_s["tts_audio_path"],
+                                tts_audio_duration=target_s["tts_audio_duration"],
+                                tts_duration=target_s["tts_duration"],
+                            )
+                        )
+                        await retry_session.commit()
+                    break
+
+            if affected_seg_nums:
+                schedule_result = schedule_segments(segments_data, video_dur, policy)
+                if not schedule_result.requires_review:
+                    log_job_event(job_id, "AUDIO_SCHEDULE", f"[AUDIO_SCHEDULE] Conflict resolved for segments {affected_seg_nums}")
 
         async with async_session_factory() as schedule_session:
             for scheduled in schedule_result.segments:

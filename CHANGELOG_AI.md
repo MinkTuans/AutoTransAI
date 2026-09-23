@@ -1,3 +1,8 @@
+- **Studio TTS canonical cutover (2026-09-23, Task 6D2)**:
+  - Studio Phase 2 now builds a TTS route for initialized canonical state and sends each segment and schedule retry through request-local targets and keys. It selects enabled voices by provider, target language, and known gender, preserving confirmed mappings and rejecting runs with no eligible voice.
+  - Canonical failed synthesis now advances through classified route fallback and fails the job if exhausted. TTS cache identity includes provider, catalog/remote model, key ID, voice, text, and configured default. Schedule retries close their read session before network/media work. Uninitialized catalogs retain legacy positional calls.
+  - Added isolated SQLite/synthetic-key render entry and helper tests. Google Cloud remains compatibility-only until a voice discovery/access bridge exists. No schema, public API, UI, Unified, live provider, or production database change.
+
 - **TTS provider request boundary (2026-09-23, Task 6D1)**:
   - ElevenLabs and Google Cloud TTS generation now accept request-local catalog targets and keys while preserving legacy positional calls. ElevenLabs uses exact catalog `model_id`; Google supports only an exact voice-name catalog mapping and rejects mismatched identities.
   - Google Cloud TTS sends API keys in headers for synthesis, validation, and voice listing. Edge TTS validates keyless targets and preserves its selected voice and bounded retry behavior. Provider HTTP/timeout errors retain safe codes without exposing response bodies or keys.
