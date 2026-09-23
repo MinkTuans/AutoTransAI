@@ -82,3 +82,32 @@ async def test_bad_input_does_not_echo_secret(key_api):
         result = await client.post("/api/ai/providers/openai/keys", **kwargs)
         assert result.status_code == 422
         assert secret not in result.text
+
+
+@pytest.mark.parametrize("mutation", ["rotate", "disable"])
+async def test_add_does_not_enable_key_changed_after_discovery(key_api, monkeypatch, mutation, tmp_path):
+    from app.services.credential_service import CredentialService
+    from app.services.model_refresh_service import ModelRefreshService
+
+    client, sessions, responses = key_api
+    responses["synthetic-key-before"] = listing("model-one")
+    original = ModelRefreshService.discover_key
+
+    async def discover_then_change(self, key_id):
+        outcome = await original(self, key_id)
+        async with sessions.begin() as db:
+            credentials = await CredentialService.open(db, tmp_path)
+            if mutation == "rotate":
+                await credentials.rotate(key_id, "synthetic-key-after")
+            else:
+                await credentials.set_enabled(key_id, False)
+        return outcome
+
+    monkeypatch.setattr(ModelRefreshService, "discover_key", discover_then_change)
+    response = await client.post("/api/ai/providers/openai/keys", json={"key": "synthetic-key-before"})
+    assert response.status_code == 409
+    assert "synthetic-key-before" not in response.text
+    async with sessions() as db:
+        key = await db.scalar(select(APIKey))
+        assert key.enabled is False
+        assert key.revision == 2

@@ -197,6 +197,21 @@ class CredentialService:
         await self._session.flush()
         return _dto(row)
 
+    async def enable_if_unchanged(self, key_id: str, expected_revision: int) -> CredentialDTO | None:
+        """Activate a newly discovered key only if no writer changed it since creation."""
+        provider_id = await self._session.scalar(select(APIKey.provider_id).where(APIKey.id == key_id))
+        if provider_id is None:
+            return None
+        await lock_catalog_provider(self._session, provider_id)
+        row = await self._session.scalar(select(APIKey).where(APIKey.id == key_id)
+                                         .execution_options(populate_existing=True))
+        if row is None or row.enabled or row.revision != expected_revision:
+            return None
+        row.enabled = True
+        row.revision += 1
+        await self._session.flush()
+        return _dto(row)
+
     async def rotate(self, key_id: str, secret: str) -> CredentialDTO:
         if not isinstance(secret, str) or not secret or secret != secret.strip():
             raise CredentialValidationError("Credential must be nonempty and have no surrounding whitespace.")

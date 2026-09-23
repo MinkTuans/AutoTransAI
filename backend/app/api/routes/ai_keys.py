@@ -15,7 +15,7 @@ from app.config import get_settings
 from app.database import async_session_factory
 from app.models import Provider
 from app.services.credential_service import (CredentialDTO, CredentialError, CredentialService,
-                                             CredentialNotFoundError, DuplicateCredentialError)
+                                             DuplicateCredentialError)
 from app.services.model_refresh_service import ModelRefreshService, RefreshOutcome
 
 
@@ -117,8 +117,12 @@ async def add_key(provider_id: str, body: KeyInput,
     if outcome.status == "complete" and discovery.status == "complete" and discovery.access_scope == "credential" and discovery.error_code is None:
         try:
             async with context.sessions.begin() as db:
-                key = await (await CredentialService.open(db, context.data_dir)).set_enabled(key.id, True)
-        except CredentialNotFoundError:
-            discovery = DiscoveryView(status="stale", error_code="key_unavailable")
+                activated = await (await CredentialService.open(db, context.data_dir)).enable_if_unchanged(
+                    key.id, key.revision)
+            if activated is None:
+                raise HTTPException(409, "Credential changed during discovery.")
+            key = activated
+        except CredentialError:
+            raise HTTPException(409, "Credential changed during discovery.") from None
     view = AddKeyView(key=_key_view(key), discovery=discovery)
     return {"success": True, "data": view.model_dump(mode="json")}
