@@ -1,3 +1,7 @@
+- **Safe legacy Function default remap (2026-09-23, Task 9B3C1)**:
+  - Added explicit caller-transactional remap from archival provider/remote identity to an existing eligible canonical catalog ID. Unresolved choices retain their provider/model ID and receive a visible fixed configuration error; already-canonical choices stay intact, and successful remaps clear only a migration-specific error.
+  - Added synthetic disposable SQLite tests for routing eligibility, collisions, ambiguity, sentinel handling, idempotence, rollback, aggregate-only reporting, and row/fallback preservation. No catalog seeding, schema/API change, provider traffic, configured database access, or startup cutover. Updated the knowledge base.
+
 - **Disabled legacy JSON key import checkpoint (2026-09-23, Task 9B3B1)**:
   - Added explicit-path, bounded, fail-closed import into encrypted canonical credentials. Imported keys remain disabled; duplicate, missing/keyless provider, and normalized metadata counts are aggregate only. Legacy JSON and `.env` remain untouched.
   - Added synthetic disposable SQLite coverage for malformed sources, duplicates, idempotence, metadata, rollback, and plaintext absence. No schema/API/configuration change, provider calls, production database access, or runtime cutover. Updated the knowledge base.
