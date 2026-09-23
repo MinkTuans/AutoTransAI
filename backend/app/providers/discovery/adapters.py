@@ -16,10 +16,17 @@ class DiscoveryError(Exception):
     """Contains a locally defined code only, never an upstream message."""
 
 
+def _contains_credential(value: str, secret: str | None) -> bool:
+    # Check before decoding too: a credential may itself contain percent escapes.
+    if not secret:
+        return False
+    return secret in value or secret in unquote(value)
+
+
 def identity(value, secret: str | None, max_length=255) -> str:
     if (not isinstance(value, str) or not value or len(value) > max_length
             or value != value.strip() or any(unicodedata.category(c).startswith("C") for c in value)
-            or (secret and secret in unquote(value))):
+            or _contains_credential(value, secret)):
         raise DiscoveryError("malformed")
     return value
 
@@ -28,8 +35,8 @@ def safe_text(value, secret: str | None) -> str | None:
     if not isinstance(value, str):
         return None
     value = "".join(c for c in value if not unicodedata.category(c).startswith("C"))
-    if secret:
-        value = value.replace(secret, "[redacted]")
+    if _contains_credential(value, secret):
+        return "[redacted]"
     value = re.sub(r"https?://\S+", "[url]", value)
     return value[:255] or None
 

@@ -1,3 +1,7 @@
+- **Discovery Credential Echo Redaction (2026-09-23)**:
+  - Fixed percent-escape handling in `backend/app/providers/discovery/adapters.py`: check both literal and decoded credential echoes before accepting IDs/cursors or returning display/metadata text.
+  - Added nine synthetic HTTP regression cases in `backend/tests/test_model_discovery.py` spanning identities, cursor forwarding, names, metadata, and metadata lists. No API/database changes; updated knowledge base.
+
 - **Bounded Provider Model Discovery (2026-09-23)**:
   - Added read-only Gemini/OpenAI/Anthropic/ElevenLabs/Fal list adapters under `backend/app/providers/discovery/` and `backend/app/services/model_discovery_service.py`, with complete/partial/unsupported/failed results and explicit credential-visible versus public catalog scope.
   - Preserves exact remote identities (only Gemini `models/` is stripped), deduplicates IDs, allowlists provider metadata, bounds pages/rows/bytes/time, rejects unsafe pagination/malformed JSON/redirects, and keeps secrets out of URLs and returned errors. No database, route, or generation-consumer changes.

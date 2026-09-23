@@ -1,6 +1,7 @@
 """Discovery contract tests: HTTP is synthetic; no database or real credentials."""
 import asyncio
 from dataclasses import asdict
+from urllib.parse import unquote
 
 import httpx
 import pytest
@@ -286,3 +287,38 @@ async def test_nonstandard_json_numbers_cannot_authorize_complete_result(discove
 async def test_malformed_terminal_cursor_cannot_authorize_complete_result(discovery, provider, body):
     result, _ = await scan(discovery, provider, [body])
     assert result.status == "failed" and result.error_code == "malformed"
+
+
+@pytest.mark.parametrize(("credential", "echo"), [
+    ("synthetic%41key", "synthetic%41key"),
+    ("synthetic%41key", "synthetic%2541key"),
+    (SECRET, "synthetic%2Ddiscovery%2Dsecret"),
+])
+@pytest.mark.parametrize("field", ["identity", "cursor", "metadata"])
+async def test_raw_and_encoded_credential_echoes_never_escape(discovery, credential, echo, field):
+    requests = []
+    row = {"name": "models/safe-model"}
+    payload = {"models": [row]}
+    if field == "identity":
+        row["name"] = "models/" + echo
+    elif field == "cursor":
+        payload["nextPageToken"] = echo
+    else:
+        row.update(displayName="Display " + echo, baseModelId="Base " + echo,
+                   supportedGenerationMethods=["Method " + echo])
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json=payload)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        result = await discovery.discover_models("gemini", credential, client=client)
+    assert len(requests) == 1
+    assert all(credential not in str(request.url) and credential not in unquote(str(request.url))
+               for request in requests)
+    serialized = repr(asdict(result))
+    assert credential not in serialized and credential not in unquote(serialized)
+    if field == "metadata":
+        assert result.status == "complete" and result.models[0].remote_model_id == "safe-model"
+    else:
+        assert result.status == "failed" and result.error_code == "malformed"
