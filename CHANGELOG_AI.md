@@ -1,3 +1,8 @@
+- **First historical Alembic link repair (2026-09-23, Task 9D1)**:
+  - Reconstructed only four prerequisite tables in `202da08bcdd8` from frozen Git schema definitions; preserved published revision identity and ancestry. Existing schemas are inspected before changes and unknown partial structures fail closed.
+  - Made `20260822_sync_schema` validate existing columns and add only missing equivalents without overwriting rows or rebuilding populated tables. Both revisions refuse ambiguous downgrades and require online schema inspection.
+  - Added isolated first-link tests and a frozen SQL fixture for blank/pre-sync/startup-created/mismatched states, data/FK preservation, direct-operation idempotence, and offline MySQL DDL compilation. Updated the knowledge base. No current ORM imports, real database, secrets, network traffic, stamp, or full-chain deployment claim.
+
 - **Safe legacy Function default remap (2026-09-23, Task 9B3C1)**:
   - Review fix: provider rows are locked in stable ID order before Function rows, matching canonical Function PUT and avoiding lock-order inversion without changing provider revisions. Exact Python checks reject case-only legacy, catalog, key, and listing-edge SQL matches under case-insensitive collation.
   - Added explicit caller-transactional remap from archival provider/remote identity to an existing eligible canonical catalog ID. Unresolved choices retain their provider/model ID and receive a visible fixed configuration error; already-canonical choices stay intact, and successful remaps clear only a migration-specific error.
