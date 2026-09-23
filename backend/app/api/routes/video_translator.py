@@ -805,6 +805,7 @@ async def start_translation_pipeline(
         async with lock:
             start_job_heartbeat(job_id)
             current_stage = "EXTRACTING_AUDIO"
+            should_launch_render = False
             try:
                 async with async_session_factory() as bg_session:
                     job_res = await bg_session.execute(select(VideoTranslationJob).where(VideoTranslationJob.id == job_id))
@@ -1010,6 +1011,7 @@ async def start_translation_pipeline(
                         target_language=b_job.target_language,
                         source_language=b_job.source_language,
                         llm_provider_id=b_job.llm_provider_id or "gemini",
+                        sessions=async_session_factory,
                     )
 
                     now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -1207,8 +1209,6 @@ async def start_translation_pipeline(
                     if auto_confirm_translation:
                         for db_seg in created_segment_rows:
                             db_seg.status = "confirmed"
-
-                    should_launch_render = False
 
                     if voice_review_required:
                         b_job.status = TranslationJobStatus.NEEDS_REVIEW.value

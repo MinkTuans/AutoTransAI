@@ -15,6 +15,8 @@ import re
 import shutil
 from pathlib import Path
 from typing import Callable, Optional, Dict, Any, List, Tuple
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import get_settings
 from app.core import get_logger
@@ -23,7 +25,9 @@ from app.media.ffprobe import probe_duration_async, get_video_metadata_async
 from app.media.ffmpeg_process import run_ffmpeg_with_progress_async, FFmpegExecutionError
 from app.providers.registry import get_registry
 from app.providers.request_target import resolve_request_target
-from app.services.ai_routing import RouteTarget
+from app.services.ai_routing import RouteTarget, RouteConfigurationError, UnsupportedModalityError, build_route, invoke_route
+from app.models import APIKey, CatalogModel, CatalogRefreshRun
+from app.models.settings import AIFunctionConfig
 from app.models.video_translator import (
     VideoAsset,
     VideoTranslationJob,
@@ -659,12 +663,13 @@ async def speech_to_text_and_detect_language(
     stt_model_id: Optional[str] = None,
     db: Optional[AsyncSession] = None,
     on_status_update: Optional[Callable[[str], None]] = None,
+    *,
+    sessions: async_sessionmaker[AsyncSession] | None = None,
+    data_dir: Path | None = None,
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
-    Perform Speech-to-Text and Language Detection on extracted audio track.
-    Strictly uses primary STT provider (Gemini AI Studio by default).
-    OpenAI Whisper fallback occurs ONLY if ENABLE_OPENAI_FALLBACK is True.
-    Raises RuntimeError on failure — NO placeholder fallbacks permitted.
+    Transcribe audio through Studio's canonical STT route when initialized.
+    Legacy callers without a session factory retain the original provider path.
     """
     total_duration = await probe_duration_async(audio_path)
     if total_duration <= 0:
@@ -673,6 +678,40 @@ async def speech_to_text_and_detect_language(
     log_job_event(job_id, "STT", f"Starting Speech-to-Text (Audio duration: {total_duration:.1f}s, Primary Provider: {llm_provider_id})")
     if on_status_update:
         on_status_update(f"Đang phân tích audio ({audio_path.stat().st_size / (1024*1024):.1f}MB) với STT...")
+
+    if sessions is not None:
+        # Legacy installations have the schema but no canonical model, key,
+        # or refresh activity. Missing tables are migration errors: let the
+        # database exception surface rather than silently selecting .env keys.
+        async with sessions() as catalog_db:
+            catalog_model = await catalog_db.scalar(
+                select(CatalogModel.id).where(
+                    CatalogModel.source != "system", CatalogModel.provider_id.in_(("gemini", "openai"))
+                ).limit(1)
+            )
+            catalog_key = await catalog_db.scalar(
+                select(APIKey.id).where(APIKey.provider_id.in_(("gemini", "openai"))).limit(1)
+            )
+            refresh_run = await catalog_db.scalar(select(CatalogRefreshRun.id).limit(1))
+            initialized = any(value is not None for value in (catalog_model, catalog_key, refresh_run))
+            if initialized:
+                stt_default = await catalog_db.get(AIFunctionConfig, "stt")
+                if stt_default is None or not stt_default.model_id:
+                    raise RouteConfigurationError("STT default is not configured.")
+                route = await build_route(catalog_db, "STT")
+        if initialized:
+            async def transcribe(target: RouteTarget, secret: str | None):
+                if target.provider_id == "gemini":
+                    return await transcribe_audio_with_gemini(
+                        audio_path, job_id=job_id, route_target=target, api_key=secret,
+                    )
+                if target.provider_id == "openai":
+                    return await transcribe_audio_with_whisper(
+                        audio_path, job_id=job_id, route_target=target, api_key=secret,
+                    )
+                raise UnsupportedModalityError("No Studio STT adapter for this provider.")
+
+            return await invoke_route(route, transcribe, sessions, data_dir or get_settings().DATA_DIR)
 
     settings = get_settings()
     stt_errors = []
