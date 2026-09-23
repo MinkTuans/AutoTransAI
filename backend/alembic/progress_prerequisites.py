@@ -124,6 +124,9 @@ def _validate_table(inspector, table, additions, dialect):
     # provide SQLite's extra per-column primary_key flag.
     if inspector.get_pk_constraint(table.name)['constrained_columns'] != ['id']:
         _mismatch()
+    if dialect.name == 'sqlite':
+        load_python_file(str(Path(__file__).parent), 'historical_sqlite_pk.py').validate_primary_key(
+            inspector.bind, table, _mismatch)
     for expected in table.columns:
         if expected.name not in columns:
             _mismatch()

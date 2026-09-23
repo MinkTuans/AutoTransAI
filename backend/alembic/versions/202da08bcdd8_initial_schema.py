@@ -6,8 +6,10 @@ Create Date: 2026-08-21 21:26:15.781128
 
 """
 from typing import Sequence, Union
+from pathlib import Path
 
 from alembic import op
+from alembic.util import load_python_file
 import sqlalchemy as sa
 
 
@@ -130,6 +132,9 @@ def upgrade() -> None:
         columns = {c['name']: c for c in inspector.get_columns(table.name)}
         if inspector.get_pk_constraint(table.name)['constrained_columns'] != ['id']:
             _mismatch()
+        if bind.dialect.name == 'sqlite':
+            load_python_file(str(Path(__file__).parents[1]), 'historical_sqlite_pk.py').validate_primary_key(
+                bind, table, _mismatch)
         for expected in table.columns:
             actual = columns.get(expected.name)
             if actual is None:
