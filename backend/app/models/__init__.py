@@ -1,5 +1,7 @@
 """SQLAlchemy ORM models."""
 
+from app.models.api_key import APIKey
+from app.models.ai_catalog import CatalogModel, KeyModelAccess
 from app.models.project import Project
 from app.models.segment import Segment
 from app.models.job import Job
@@ -50,6 +52,9 @@ from app.models.settings import (
 )
 
 __all__ = [
+    "APIKey",
+    "CatalogModel",
+    "KeyModelAccess",
     "Project",
     "Segment",
     "Job",
@@ -85,5 +90,4 @@ __all__ = [
     "AIModel",
     "SocialAccount",
 ]
-
 

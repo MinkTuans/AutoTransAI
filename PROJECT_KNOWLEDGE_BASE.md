@@ -262,6 +262,7 @@ erDiagram
 - **`video_merge_assets`**: Uploaded video assets dedicated to merging with probed stream metadata.
 
 #### 6. System & AI Configuration
+- **Additive discovery domain (2026-09-23; legacy consumers remain active)**: `ai_catalog_models` has UUID identity and unique `(provider_id, remote_model_id)`, preserving exact provider identifiers; `api_keys` stores encrypted credentials with stable UUIDs and unique provider-scoped keyed fingerprints; `ai_key_model_access` is a many-to-many association. Both models and credentials reference `providers`; deleting credentials cascades only access rows, never catalog models. Alembic revision `20260923_ai_catalog` creates these three tables without rewriting legacy records. The earlier `20260918_add_fk` revision still requires repair before full-chain deployment.
 - **`ai_function_configs`**: Maps capability (`stt`, `translation`, `tts`, `video_generation`, `visual_gender`, `image_generation`) to primary provider, model ID, and fallback provider.
 - **`ai_models`**: Global catalog of registered AI models with capability tags and default flags.
 - **`system_settings`**: Global key-value system preferences.

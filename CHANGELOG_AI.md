@@ -1,3 +1,7 @@
+- **Canonical Catalog Schema (2026-09-23)**:
+  - Added `CatalogModel`, `APIKey`, and `KeyModelAccess` in `backend/app/models/ai_catalog.py`, `api_key.py`, and model exports; provider-scoped remote identity and credential-independent catalog lifetime.
+  - Added additive Alembic revision `20260923_ai_catalog` and isolated schema/migration tests in `backend/tests/test_ai_catalog_domain.py`. SQLite round-trip and offline MySQL DDL pass; no real DB migration or legacy rewrite performed. Updated knowledge base.
+
 - **Public Media Credential Isolation (2026-09-23)**:
   - Restricted `/media` and both `/api/storage` file routes to validated media in `STORAGE_ROOT` and legacy `DATA_DIR/translator/`; blocked secrets, database files, logs, dotfiles, traversal, and escaping symlinks.
   - Preserved serving of `.flv`, `.ts`, and `.3gp` formats accepted by video ingest and merger, and valid `STORAGE_ROOT` paths nested under `DATA_DIR` such as `DATA_DIR/storage`.
