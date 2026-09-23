@@ -1,3 +1,7 @@
+- **Unified ANALYZE timeline QC review fix (2026-09-23, Task 6E2A review)**:
+  - Corrected the QC gate to validate the `start_time`/`end_time` emitted by canonical STT; previously both defaulted to zero and blocked valid workflows at NEEDS_REVIEW. Preserved legacy `start`/`end` support and normalized those offsets before the shared timeline cleaner. Malformed timestamps now produce a safe QC issue.
+  - Added failing-first real AnalyzeStage steps → QC → TranslateStage progression and legacy-shape regressions; no schema/API/UI/provider changes. Updated the knowledge base.
+
 - **Unified ANALYZE/TRANSLATE catalog routing and checkpoint hydration (2026-09-23, Task 6E2A)**:
   - Unified stages now forward the canonical session factory to STT/translation while retaining a committed workflow step session for post-generation persistence. Function defaults that reference a catalog model from another provider activate canonical routing and fail visibly if unsupported; unrelated catalog rows preserve the unmigrated legacy hold.
   - Checkpoints persist allowlisted source/translated segments, transcript, speakers, glossary, voice selections, and audio clip references with bounded shape validation. Historical count-only snapshots remain readable; malformed checkpoints set a safe failed state rather than leaving a running task. Imported `Path` fixes video rehydration guard in the workflow loop.

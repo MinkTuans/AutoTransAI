@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 from typing import Any
 
@@ -51,8 +52,14 @@ class AnalyzeStage:
             issues.append("No source segments transcribed.")
 
         for i, seg in enumerate(ctx.source_segments):
-            start = seg.get("start", 0.0)
-            end = seg.get("end", 0.0)
+            try:
+                start = float(seg.get("start_time", seg.get("start")))
+                end = float(seg.get("end_time", seg.get("end")))
+                if not math.isfinite(start) or not math.isfinite(end):
+                    raise ValueError("non-finite timestamp")
+            except (TypeError, ValueError):
+                issues.append(f"Invalid timestamp value at segment index {i}.")
+                continue
             if start < 0 or end <= start:
                 issues.append(f"Invalid timestamp range at segment index {i}: start={start}, end={end}")
             if ctx.duration > 0 and end > ctx.duration + 5.0:
@@ -107,7 +114,15 @@ class AnalyzeStage:
 
     async def _validate_timeline(self, ctx: WorkflowContext) -> dict[str, Any]:
         from app.services.video_translator.translator_service import validate_and_clean_timeline_segments
-        validated_segments = validate_and_clean_timeline_segments(ctx.source_segments, ctx.duration)
+        segments = []
+        for segment in ctx.source_segments:
+            normalized = dict(segment)
+            if "start_time" not in normalized and "start" in normalized:
+                normalized["start_time"] = normalized["start"]
+            if "end_time" not in normalized and "end" in normalized:
+                normalized["end_time"] = normalized["end"]
+            segments.append(normalized)
+        validated_segments = validate_and_clean_timeline_segments(segments, ctx.duration)
         ctx.source_segments = validated_segments
         return {"validated_count": len(ctx.source_segments)}
 

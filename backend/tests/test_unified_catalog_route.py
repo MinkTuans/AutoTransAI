@@ -50,6 +50,56 @@ async def test_analyze_forwards_catalog_sessions_without_holding_step_db(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_real_analyze_steps_qc_then_translate_accept_stt_timeline_shape(monkeypatch, tmp_path):
+    import app.services.video_translator.translator_service as translator
+
+    audio = tmp_path / "speech.wav"
+    audio.write_bytes(b"synthetic")
+    stt_segments = [{"number": 1, "start_time": 0.0, "end_time": 1.0,
+                     "speaker_id": "Speaker 1", "text": "Hello John"}]
+    monkeypatch.setattr(translator, "speech_to_text_and_detect_language",
+                        AsyncMock(return_value=(stt_segments, "en")))
+    monkeypatch.setattr(translator, "translate_transcript_segments",
+                        AsyncMock(return_value=[{**stt_segments[0], "translated_text": "Xin chào Gioan"}]))
+    ctx = WorkflowContext(project_id="real-shape", audio_path=str(audio), duration=2.0)
+    analyze = AnalyzeStage()
+    for step in analyze.STEPS:
+        await analyze.execute_step(step, ctx, None)
+    assert (await analyze.run_qc(ctx))["passed"] is True
+    assert ctx.source_segments[0]["start_time"] == 0.0
+    assert ctx.source_segments[0]["end_time"] == 1.0
+    assert ctx.raw_transcript == "Hello John"
+    translate = TranslateStage()
+    await translate.execute_step("translate_transcript", ctx, None)
+    await translate.execute_step("validate_segment_ids", ctx, None)
+    assert (await translate.run_qc(ctx))["passed"] is True
+    assert ctx.translated_segments[0]["translated_text"] == "Xin chào Gioan"
+
+
+@pytest.mark.asyncio
+async def test_analyze_qc_preserves_legacy_timeline_and_rejects_bad_canonical_values():
+    stage = AnalyzeStage()
+    legacy = WorkflowContext(project_id="legacy", duration=2.0,
+                             source_segments=[{"start": 0.0, "end": 1.0, "text": "Hello"}])
+    assert (await stage.run_qc(legacy))["passed"] is True
+    malformed = WorkflowContext(project_id="bad", duration=2.0,
+                                source_segments=[{"start_time": "not-a-number", "end_time": 1.0}])
+    result = await stage.run_qc(malformed)
+    assert result["passed"] is False
+    assert result["issues"] == ["Invalid timestamp value at segment index 0."]
+
+
+@pytest.mark.asyncio
+async def test_analyze_timeline_normalization_preserves_legacy_start_end():
+    ctx = WorkflowContext(project_id="legacy", duration=5.0,
+                          source_segments=[{"number": 1, "start": 2.0, "end": 3.0,
+                                            "text": "Hello"}])
+    await AnalyzeStage()._validate_timeline(ctx)
+    assert ctx.source_segments[0]["start_time"] == 2.0
+    assert ctx.source_segments[0]["end_time"] == 3.0
+
+
+@pytest.mark.asyncio
 async def test_translate_forwards_catalog_sessions_with_preloaded_glossary(monkeypatch):
     import app.services.video_translator.translator_service as translator
     import app.workflow.stages.translate_stage as translate_module
