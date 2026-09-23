@@ -300,6 +300,8 @@ class ThumbnailService:
         sessions: async_sessionmaker[AsyncSession] | None = None,
         data_dir: Path | None = None,
         historical_selection_hint: bool = False,
+        historical_provider_id: str | None = None,
+        historical_model_id: str | None = None,
     ) -> VideoThumbnail:
         """
         Full End-to-End AI Auto Thumbnail Generation Workflow.
@@ -452,7 +454,8 @@ class ThumbnailService:
                 actual_model = selected_target.remote_model_id
             else:
                 registry = get_registry()
-                target_provider_id = provider_id or "pollinations"
+                target_provider_id = provider_id or historical_provider_id or "pollinations"
+                target_model_id = model_id or historical_model_id or "default"
                 img_provider: Optional[ImageProvider] = registry.get_image(target_provider_id)
                 if not img_provider:
                     img_provider = registry.get_image("pollinations") or registry.get_image("local_image")
@@ -462,7 +465,7 @@ class ThumbnailService:
                 for attempt in range(3):
                     gen_res = await img_provider.generate_image(
                         prompt=prompt, width=1280, height=720,
-                        aspect_ratio="16:9", model=model_id or "default",
+                        aspect_ratio="16:9", model=target_model_id,
                     )
                     if gen_res.success or img_provider.requires_api_key:
                         break
@@ -479,7 +482,7 @@ class ThumbnailService:
                 if not gen_res or not gen_res.success or not gen_res.metadata.get("image_bytes"):
                     raise _ThumbnailImageFailure(gen_res or GenerationResult(False))
                 actual_provider = img_provider.provider_id
-                actual_model = gen_res.metadata.get("model") or model_id or "default"
+                actual_model = gen_res.metadata.get("model") or target_model_id
 
             image_bytes = validate_image_bytes(gen_res.metadata["image_bytes"])
             with Image.open(BytesIO(image_bytes)) as decoded:

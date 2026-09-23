@@ -262,6 +262,8 @@ async def regenerate_thumbnail_endpoint(
             model_id=(record.model if req.provider_id is None and req.model_id is None
                       else req.model_id),
             historical_selection_hint=req.provider_id is None and req.model_id is None,
+            historical_provider_id=record.provider,
+            historical_model_id=record.model,
             sessions=async_session_factory,
             data_dir=settings.DATA_DIR,
         )

@@ -360,6 +360,90 @@ async def test_regenerate_partial_override_does_not_inherit_other_historical_fie
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("payload,expected_provider,expected_model", [
+    ({"provider_id": "pollinations"}, "pollinations", "legacy-model"),
+    ({"model_id": "new-model"}, "local_image", "new-model"),
+])
+async def test_legacy_regenerate_partial_override_retains_unsupplied_old_selection(
+    image_catalog, monkeypatch, payload, expected_provider, expected_model,
+):
+    from app.api.routes import thumbnail as route
+    from app.services import thumbnail_service
+
+    sessions, path = image_catalog
+    async with sessions.begin() as db:
+        db.add(VideoThumbnail(id="old", project_id="project", status="completed",
+                              provider="local_image", model="legacy-model"))
+    fake_analysis(monkeypatch)
+    monkeypatch.setattr(route, "async_session_factory", sessions)
+    monkeypatch.setattr(route.settings, "DATA_DIR", path)
+
+    class Adapter:
+        requires_api_key = False
+
+        def __init__(self, provider_id):
+            self.provider_id = provider_id
+
+        async def generate_image(self, prompt, *, model, **kwargs):
+            return GenerationResult(True, provider_id=self.provider_id,
+                                    metadata={"image_bytes": png(), "model": model})
+
+    fake_registry(monkeypatch, {name: Adapter(name) for name in ("pollinations", "local_image")})
+
+    async def upload_file(*, local_path, object_key, content_type, is_public):
+        return object_key, "/public/legacy-regenerate.png"
+
+    monkeypatch.setattr(thumbnail_service.storage_service, "upload_file", upload_file)
+    async with sessions() as db:
+        result = await route.regenerate_thumbnail_endpoint(
+            "old", route.RegenerateThumbnailRequest(**payload), db=db,
+        )
+    assert result["success"] is True
+    assert result["thumbnail"]["provider"] == expected_provider
+    assert result["thumbnail"]["model"] == expected_model
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [
+    {"provider_id": "openai"}, {"model_id": "image-default"},
+])
+async def test_canonical_regenerate_partial_override_ignores_historical_selection(
+    image_catalog, monkeypatch, payload,
+):
+    from app.api.routes import thumbnail as route
+    from app.services import thumbnail_service
+
+    sessions, path = image_catalog
+    async with sessions.begin() as db:
+        selected = await add_keyed_model(db, path, "openai", "image-default", "synthetic-openai")
+        db.add(AIFunctionConfig(function_id="image_generation", function_name="Image",
+                                capability="IMAGE_GENERATION", primary_provider_id="openai", model_id=selected.id))
+        db.add(VideoThumbnail(id="old", project_id="project", status="completed",
+                              provider="fal", model="fal-ai/old"))
+    fake_analysis(monkeypatch)
+    monkeypatch.setattr(route, "async_session_factory", sessions)
+    monkeypatch.setattr(route.settings, "DATA_DIR", path)
+
+    class Adapter:
+        async def generate_image(self, prompt, *, route_target, api_key, **kwargs):
+            return GenerationResult(True, provider_id="openai", metadata={"image_bytes": png()})
+
+    fake_registry(monkeypatch, {"openai": Adapter()})
+
+    async def upload_file(*, local_path, object_key, content_type, is_public):
+        return object_key, "/public/canonical-regenerate.png"
+
+    monkeypatch.setattr(thumbnail_service.storage_service, "upload_file", upload_file)
+    async with sessions() as db:
+        result = await route.regenerate_thumbnail_endpoint(
+            "old", route.RegenerateThumbnailRequest(**payload), db=db,
+        )
+    assert result["success"] is True, result["thumbnail"]["error_message"]
+    assert result["thumbnail"]["provider"] == "openai"
+    assert result["thumbnail"]["model"] == "image-default"
+
+
+@pytest.mark.asyncio
 async def test_thumbnail_target_id_cannot_escape_storage_path(image_catalog, monkeypatch):
     sessions, path = image_catalog
     fake_analysis(monkeypatch)
