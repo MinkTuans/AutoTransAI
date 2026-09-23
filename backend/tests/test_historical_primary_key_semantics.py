@@ -181,6 +181,38 @@ def test_binary_pk_index_does_not_hide_nocase_column_comparison(db, link, table)
     assert_rejected(db, link)
 
 
+@pytest.mark.parametrize('link,table', [
+    (INITIAL, 'video_translation_jobs'),
+    (PROGRESS[0], 'youtube_publications'),
+    (PROGRESS[1], 'workflow_stage_executions'),
+])
+@pytest.mark.parametrize('collation', ['binary', 'BiNaRy'])
+@pytest.mark.parametrize('form', ['column', 'table'])
+def test_binary_collation_spelling_preserves_compatible_identity(db, link, table, collation, form):
+    declaration = f'id VARCHAR(36) NOT NULL PRIMARY KEY COLLATE {collation}'
+    table_pk = None
+    if form == 'table':
+        declaration = 'id VARCHAR(36) NOT NULL'
+        table_pk = f'PRIMARY KEY (id COLLATE {collation})'
+    fixture_schema(db, link, table, declaration, table_pk)
+    before = snapshot(db)
+    upgrade(db, link)
+    after = snapshot(db)
+    for name, rows in before.items():
+        assert [{key: row[key] for key in rows[0]} for row in after[name]] == rows
+    assert db.execute(sa.text(f'SELECT id FROM {table} WHERE id = :id'),
+                      {'id': table.upper()}).first() is None
+    with pytest.raises(IntegrityError):
+        db.exec_driver_sql(f'INSERT INTO {table} SELECT * FROM {table}')
+    assert snapshot(db) == after
+    schema = db.exec_driver_sql('SELECT name, sql FROM sqlite_master ORDER BY name').all()
+    statements = record_sql(db)
+    upgrade(db, link)
+    assert_no_writes(statements)
+    assert snapshot(db) == after
+    assert db.exec_driver_sql('SELECT name, sql FROM sqlite_master ORDER BY name').all() == schema
+
+
 @pytest.mark.parametrize('link', [INITIAL, *PROGRESS])
 def test_mysql_reflection_path_never_uses_sqlite_queries(db, link, monkeypatch):
     fixture_schema(db, PROGRESS[0], 'projects', 'id VARCHAR(36) NOT NULL PRIMARY KEY')

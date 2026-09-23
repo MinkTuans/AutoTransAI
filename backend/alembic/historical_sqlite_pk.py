@@ -33,7 +33,11 @@ def validate_primary_key(bind, table, mismatch):
         keys = bind.execute(sa.text(
             'SELECT name, "desc", coll FROM pragma_index_xinfo(:name) WHERE key = 1'),
             {'name': primary[0]['name']}).all()
-        if keys != [('id', 0, 'BINARY')]:
+        # SQLite preserves declared collation spelling in index_xinfo even
+        # though collation names are case-insensitive. Keep name/order exact.
+        normalized = [(name, order, coll.lower() if isinstance(coll, str) else coll)
+                      for name, order, coll in keys]
+        if normalized != [('id', 0, 'binary')]:
             mismatch()
     ddl = bind.execute(sa.text(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = :table"),
