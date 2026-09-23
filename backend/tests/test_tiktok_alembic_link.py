@@ -35,7 +35,9 @@ def fixture_schema(db, startup=False, replace=None):
         sql = sql.replace(" DEFAULT 'TikTok'", '').replace(' DEFAULT 1', '')
         sql = sql.replace('DATETIME', 'DATETIME NOT NULL')
     if replace:
-        sql = sql.replace(*replace)
+        replacements = [replace] if isinstance(replace[0], str) else replace
+        for old, new in replacements:
+            sql = sql.replace(old, new)
     for statement in sql.split(';'):
         if statement.strip():
             db.exec_driver_sql(statement)
@@ -98,6 +100,51 @@ def test_populated_compatible_schema_preserves_every_value_without_writes(db, st
     tiktok_link(db)  # Direct operation replay, not version-table stamping.
     assert snapshot(db) == before
     assert_no_writes(statements)
+
+
+@pytest.mark.parametrize('startup', [False, True], ids=['historical', 'startup-created'])
+@pytest.mark.parametrize('replace', [
+    ('id VARCHAR(36)', 'id VARCHAR(36) COLLATE NOCASE'),
+    ('PRIMARY KEY', 'PRIMARY KEY DESC'),
+    ('PRIMARY KEY', 'PRIMARY KEY ON CONFLICT REPLACE'),
+    ('PRIMARY KEY', 'PRIMARY KEY ON CONFLICT IGNORE'),
+    ('PRIMARY KEY', 'PRIMARY KEY ON CONFLICT FAIL'),
+    ('PRIMARY KEY', 'PRIMARY KEY ON CONFLICT ROLLBACK'),
+    ((' PRIMARY KEY', ''), ('\n);', ',\n PRIMARY KEY (id) ON CONFLICT REPLACE\n);')),
+    ((' PRIMARY KEY', ''), ('\n);', ',\n PRIMARY KEY (id COLLATE NOCASE)\n);')),
+    ((' PRIMARY KEY', ''), ('\n);', ',\n PRIMARY KEY (id DESC)\n);')),
+    ('PRIMARY KEY', 'PRIMARY KEY on /* policy */ conflict -- policy\n replace'),
+])
+def test_incompatible_primary_key_preserves_populated_schema_without_writes(db, startup, replace):
+    prerequisites(db)
+    fixture_schema(db, startup, replace)
+    populate(db)
+    assert_rejected_without_writes(db)
+
+
+@pytest.mark.parametrize('startup', [False, True], ids=['historical', 'startup-created'])
+@pytest.mark.parametrize('replace', [
+    ('PRIMARY KEY', 'PRIMARY KEY ASC ON CONFLICT ABORT'),
+    ((' PRIMARY KEY', ''), ('\n);', ',\n PRIMARY KEY (id)\n);')),
+    ((' PRIMARY KEY', ''), ('\n);', ',\n PRIMARY KEY (id ASC) ON CONFLICT ABORT\n);')),
+    ('PRIMARY KEY', 'CONSTRAINT "ON CONFLICT REPLACE" PRIMARY KEY'),
+    ('PRIMARY KEY', 'PRIMARY KEY /* ON CONFLICT REPLACE */'),
+    ('PRIMARY KEY', 'PRIMARY KEY -- ON CONFLICT REPLACE\n'),
+])
+def test_equivalent_primary_key_syntax_keeps_rows_and_duplicate_id_aborts(db, startup, replace):
+    prerequisites(db)
+    fixture_schema(db, startup, replace)
+    populate(db)
+    before = snapshot(db)
+    statements = record_sql(db)
+    tiktok_link(db)
+    assert snapshot(db) == before
+    assert_no_writes(statements)
+    with pytest.raises(IntegrityError):
+        db.exec_driver_sql("INSERT INTO tiktok_accounts SELECT id, 'different-open-id', "
+                           "display_name, avatar_url, credentials_json, is_active, created_at, updated_at "
+                           "FROM tiktok_accounts WHERE id = 'account-1'")
+    assert snapshot(db) == before
 
 
 @pytest.mark.parametrize('replace', [

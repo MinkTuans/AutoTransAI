@@ -5,6 +5,8 @@ Revises: 20260908_workflow_progress
 Create Date: 2026-09-15 12:30:00.000000
 
 """
+import re
+
 from alembic import op
 import sqlalchemy as sa
 
@@ -35,6 +37,32 @@ def _table():
 def _mismatch():
     raise RuntimeError('Historical schema mismatch: inspect the TikTok table and index '
                        'definitions and reconcile the schema from a backup before retrying.')
+
+
+def _validate_sqlite_primary_key(bind, indexes):
+    primary = [index for index in indexes if index['origin'] == 'pk']
+    if len(primary) != 1 or primary[0]['unique'] != 1 or primary[0]['partial'] != 0:
+        _mismatch()
+    keys = bind.execute(sa.text(
+        'SELECT name, "desc", coll FROM pragma_index_xinfo(:name) WHERE key = 1'),
+        {'name': primary[0]['name']}).all()
+    if keys != [('id', 0, 'BINARY')]:
+        _mismatch()
+    # SQLite reflection omits ON CONFLICT. Both frozen profiles use ABORT for
+    # every constraint; explicit ABORT is equivalent, all other policies differ.
+    ddl = bind.execute(sa.text(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tiktok_accounts'"
+    )).scalar_one()
+    # Scan only conflict-clause keywords in this already-valid table DDL. Keep
+    # quoted strings/identifiers as opaque tokens and discard SQL comments, so
+    # their contents cannot impersonate or conceal an active conflict clause.
+    tokens = [token.upper() for token in re.findall(
+        r'''--[^\r\n]*|/\*.*?\*/|'(?:''|[^'])*'|"(?:""|[^"])*"|`(?:``|[^`])*`|\[[^\]]*\]|[A-Za-z_][A-Za-z_0-9$]*|\S''',
+        ddl, re.DOTALL) if not token.startswith(('--', '/*'))]
+    for offset in range(len(tokens) - 1):
+        if tokens[offset:offset + 2] == ['ON', 'CONFLICT']:
+            if tokens[offset + 2:offset + 3] != ['ABORT']:
+                _mismatch()
 
 
 def _validate_existing(bind, inspector, table):
@@ -68,6 +96,7 @@ def _validate_existing(bind, inspector, table):
     if bind.dialect.name == 'sqlite':
         # Reflection skips expression indexes; inventory first so none are hidden.
         indexes = bind.exec_driver_sql('PRAGMA index_list(tiktok_accounts)').mappings().all()
+        _validate_sqlite_primary_key(bind, indexes)
         ordinary = [index for index in indexes if index['origin'] != 'pk']
         if (len(ordinary) != 1 or ordinary[0]['name'] != 'ix_tiktok_accounts_open_id'
                 or ordinary[0]['unique'] != 1 or ordinary[0]['partial'] != 0):
