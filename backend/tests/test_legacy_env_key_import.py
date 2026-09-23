@@ -181,3 +181,24 @@ async def test_unreadable_json_never_falls_back_to_env(sessions, tmp_path, monke
         result = await run_import(db, json_path, env_path, Fernet.generate_key())
         assert (await db.scalars(select(APIKey))).all() == []
     assert result["status"] == "invalid_source"
+
+
+@pytest.mark.parametrize("master_key", [None, "not-a-fernet-key"])
+@pytest.mark.parametrize("json_present", [False, True])
+async def test_missing_or_invalid_master_key_never_creates_key_file_or_rows(
+    sessions, tmp_path, master_key, json_present,
+):
+    json_path, env_path = paths(tmp_path, "OPENAI_API_KEY=synthetic-env\n")
+    if json_present:
+        json_path.write_text(json.dumps({"openai": [{
+            "key_id": "legacy-id", "provider_id": "openai", "api_key": "synthetic-json",
+        }]}))
+    original_env = env_path.read_bytes()
+    original_json = json_path.read_bytes() if json_present else None
+    async with sessions() as db:
+        result = await run_import(db, json_path, env_path, master_key)
+        assert (await db.scalars(select(APIKey))).all() == []
+    assert result["status"] == "invalid_master_key"
+    assert env_path.read_bytes() == original_env
+    assert (json_path.read_bytes() if json_present else None) == original_json
+    assert not (tmp_path / ".api_key_master_key").exists()

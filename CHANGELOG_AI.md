@@ -1097,3 +1097,4 @@
   - Added opt-in, explicit-path fallback when legacy JSON is truly missing. Valid JSON remains authoritative; invalid or unreadable JSON fails closed.
   - Parsed bounded legacy dotenv variables without interpolation, rejected ambiguous/malformed input, and reused encrypted disabled-key mutation with per-provider deduplication, safe defaults, and caller-owned transaction semantics.
   - Added disposable SQLite and synthetic source tests; no schema, API, provider, model/default, startup, source-file, or runtime cutover change. Updated the knowledge base.
+  - Review fix round 1: both importer entrypoints now reject missing or invalid explicit master keys with a fixed safe status before any source read or database access. Added disposable regressions proving no source changes, canonical rows, or generated master-key file.

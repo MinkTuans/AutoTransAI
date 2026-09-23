@@ -8,7 +8,9 @@ from pathlib import Path
 from dotenv.parser import parse_stream
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.legacy_json_key_import import _import_parsed_keys, _parse as _parse_json, _result
+from app.services.legacy_json_key_import import (
+    _import_parsed_keys, _parse as _parse_json, _result, _valid_explicit_master_key,
+)
 from app.services.legacy_migration_inventory import ENV_PROVIDERS, MAX_ENTRIES, _read_file
 
 
@@ -59,6 +61,8 @@ async def import_legacy_env_fallback_keys(
     db: AsyncSession, *, json_path: Path, env_path: Path, master_key: bytes | str,
 ) -> dict[str, object]:
     """Use JSON whenever present; only a missing JSON file permits dotenv fallback."""
+    if not _valid_explicit_master_key(master_key):
+        return _result("invalid_master_key")
     json_path = Path(json_path)
     env_path = Path(env_path)
     json_data, json_error = _read_file(json_path, "json")

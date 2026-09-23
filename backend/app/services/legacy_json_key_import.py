@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 
+from cryptography.fernet import Fernet
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +26,16 @@ _MAX_COUNTER = 2**31 - 1
 
 def _result(status: str, counts: dict[str, int] | None = None) -> dict[str, object]:
     return {"status": status, "counts": counts if counts is not None else dict.fromkeys(_COUNT_NAMES, 0)}
+
+
+def _valid_explicit_master_key(master_key: bytes | str) -> bool:
+    if not isinstance(master_key, (bytes, str)):
+        return False
+    try:
+        Fernet(master_key.encode("utf-8") if isinstance(master_key, str) else master_key)
+        return True
+    except (TypeError, ValueError, UnicodeError):
+        return False
 
 
 def _metadata(entry: dict[str, object]) -> tuple[dict[str, object], bool]:
@@ -82,6 +93,8 @@ async def import_legacy_json_keys(
     db: AsyncSession, *, json_path: Path, master_key: bytes | str,
 ) -> dict[str, object]:
     """Read only the named JSON file; flush encrypted, disabled rows without committing."""
+    if not _valid_explicit_master_key(master_key):
+        return _result("invalid_master_key")
     data, error = _read_file(Path(json_path), "json")
     if error:
         return _result("invalid_source")

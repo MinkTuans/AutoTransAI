@@ -156,3 +156,15 @@ async def test_caller_rollback_removes_flushed_import_and_database_has_no_plaint
         assert (await db.scalars(select(APIKey))).all() == []
     assert secret.encode() not in (tmp_path / "keys.sqlite").read_bytes()
     assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("master_key", [None, "not-a-fernet-key"])
+async def test_missing_or_invalid_explicit_master_key_has_no_side_effects(sessions, tmp_path, master_key):
+    path = tmp_path / "api_keys.json"
+    original = write_json(path, {"openai": [entry("synthetic-secret")]})
+    async with sessions() as db:
+        result = await import_legacy_json_keys(db, json_path=path, master_key=master_key)
+        assert (await db.scalars(select(APIKey))).all() == []
+    assert result["status"] == "invalid_master_key"
+    assert path.read_bytes() == original
+    assert not (tmp_path / ".api_key_master_key").exists()
