@@ -495,11 +495,11 @@ class ThumbnailService:
             tmp_file = tmp_dir / f"thumb_{thumbnail_id}{ext}"
             timestamp = int(datetime.now(timezone.utc).timestamp())
             if project_id:
-                object_key = f"projects/{project_id}/thumbnails/thumbnail_{timestamp}{ext}"
+                object_key = f"projects/{project_id}/thumbnails/thumbnail_{timestamp}_{thumbnail_id}{ext}"
             elif job_id:
-                object_key = f"translator/jobs/{job_id}/thumbnails/thumbnail_{timestamp}{ext}"
+                object_key = f"translator/jobs/{job_id}/thumbnails/thumbnail_{timestamp}_{thumbnail_id}{ext}"
             else:
-                object_key = f"translator/assets/{asset_id}/thumbnails/thumbnail_{timestamp}{ext}"
+                object_key = f"translator/assets/{asset_id}/thumbnails/thumbnail_{timestamp}_{thumbnail_id}{ext}"
 
             try:
                 tmp_file.write_bytes(image_bytes)

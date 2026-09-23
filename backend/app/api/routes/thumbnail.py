@@ -257,8 +257,10 @@ async def regenerate_thumbnail_endpoint(
             asset_id=record.asset_id,
             selected_style=req.selected_style or record.selected_style,
             custom_instruction=req.custom_instruction if req.custom_instruction is not None else record.custom_instruction,
-            provider_id=req.provider_id or record.provider,
-            model_id=req.model_id or record.model,
+            provider_id=(record.provider if req.provider_id is None and req.model_id is None
+                         else req.provider_id),
+            model_id=(record.model if req.provider_id is None and req.model_id is None
+                      else req.model_id),
             historical_selection_hint=req.provider_id is None and req.model_id is None,
             sessions=async_session_factory,
             data_dir=settings.DATA_DIR,

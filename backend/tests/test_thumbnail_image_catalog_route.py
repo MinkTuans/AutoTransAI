@@ -204,6 +204,40 @@ async def test_canonical_image_rejects_explicit_override_without_invoking_adapte
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provider_hint,model_hint", [
+    ("openai", None), (None, "image-default"),
+])
+async def test_canonical_image_accepts_matching_partial_override(
+    image_catalog, monkeypatch, provider_hint, model_hint,
+):
+    sessions, path = image_catalog
+    async with sessions.begin() as db:
+        selected = await add_keyed_model(db, path, "openai", "image-default", "synthetic-openai")
+        db.add(AIFunctionConfig(function_id="image_generation", function_name="Image",
+                                capability="IMAGE_GENERATION", primary_provider_id="openai", model_id=selected.id))
+
+    class Adapter:
+        async def generate_image(self, prompt, *, route_target, api_key, **kwargs):
+            return GenerationResult(True, provider_id="openai", metadata={"image_bytes": png()})
+
+    fake_registry(monkeypatch, {"openai": Adapter()})
+    fake_analysis(monkeypatch)
+    from app.services import thumbnail_service
+
+    async def upload_file(*, local_path, object_key, content_type, is_public):
+        return object_key, "/public/partial.png"
+
+    monkeypatch.setattr(thumbnail_service.storage_service, "upload_file", upload_file)
+    async with sessions() as db:
+        record = await ThumbnailService.create_thumbnail(
+            db, project_id="project", provider_id=provider_hint, model_id=model_hint,
+            sessions=sessions, data_dir=path,
+        )
+    assert record.status == "completed"
+    assert record.provider == "openai" and record.model == "image-default"
+
+
+@pytest.mark.asyncio
 async def test_studio_legacy_pollinations_hint_does_not_override_catalog_default(image_catalog, monkeypatch):
     sessions, path = image_catalog
     async with sessions.begin() as db:
@@ -297,6 +331,35 @@ async def test_regenerate_endpoint_marks_only_implicit_old_selection_as_history(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("payload,expected_provider,expected_model", [
+    ({"provider_id": "openai"}, "openai", None),
+    ({"model_id": "new-default"}, None, "new-default"),
+])
+async def test_regenerate_partial_override_does_not_inherit_other_historical_field(
+    image_catalog, monkeypatch, payload, expected_provider, expected_model,
+):
+    from app.api.routes import thumbnail as route
+    sessions, _ = image_catalog
+    async with sessions.begin() as db:
+        db.add(VideoThumbnail(id="old", project_id="project", status="completed",
+                              provider="fal", model="fal-ai/old"))
+    forwarded = []
+
+    async def capture(**kwargs):
+        forwarded.append(kwargs)
+        return VideoThumbnail(id="new", project_id="project", status="provider_pending")
+
+    monkeypatch.setattr(route.ThumbnailService, "create_thumbnail", capture)
+    async with sessions() as db:
+        await route.regenerate_thumbnail_endpoint(
+            "old", route.RegenerateThumbnailRequest(**payload), db=db,
+        )
+    assert forwarded[0]["provider_id"] == expected_provider
+    assert forwarded[0]["model_id"] == expected_model
+    assert forwarded[0]["historical_selection_hint"] is False
+
+
+@pytest.mark.asyncio
 async def test_thumbnail_target_id_cannot_escape_storage_path(image_catalog, monkeypatch):
     sessions, path = image_catalog
     fake_analysis(monkeypatch)
@@ -318,6 +381,55 @@ async def test_existing_duplicate_in_progress_rows_still_block_new_launch(image_
     async with sessions() as db:
         with pytest.raises(ValueError, match="already in progress"):
             await ThumbnailService.create_thumbnail(db, project_id="project", sessions=sessions, data_dir=path)
+
+
+@pytest.mark.asyncio
+async def test_same_second_failed_regenerate_cannot_overwrite_active_object(image_catalog, monkeypatch):
+    from datetime import datetime, timezone
+    from app.services import thumbnail_service, storage_service as storage_module
+
+    sessions, path = image_catalog
+    async with sessions.begin() as db:
+        selected = await add_keyed_model(db, path, "openai", "image-default", "synthetic-openai")
+        db.add(AIFunctionConfig(function_id="image_generation", function_name="Image",
+                                capability="IMAGE_GENERATION", primary_provider_id="openai", model_id=selected.id))
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 9, 23, 12, 0, 0, tzinfo=tz or timezone.utc)
+
+    monkeypatch.setattr(thumbnail_service, "datetime", FixedDatetime)
+    monkeypatch.setattr(storage_module.settings, "STORAGE_ROOT", path / "storage")
+    original_upload = storage_module.LocalStorageService.upload_file
+    keys = []
+
+    async def upload_file(*, local_path, object_key, content_type, is_public):
+        keys.append(object_key)
+        result = await original_upload(local_path, object_key, content_type, is_public)
+        if len(keys) == 2:
+            raise RuntimeError("synthetic upload completion failure")
+        return result
+
+    monkeypatch.setattr(thumbnail_service.storage_service, "upload_file", upload_file)
+    images = [png(3, 2), png(4, 2)]
+
+    class Adapter:
+        async def generate_image(self, prompt, *, route_target, api_key, **kwargs):
+            return GenerationResult(True, provider_id="openai",
+                                    metadata={"image_bytes": images.pop(0)})
+
+    fake_registry(monkeypatch, {"openai": Adapter()})
+    fake_analysis(monkeypatch)
+    async with sessions() as db:
+        first = await ThumbnailService.create_thumbnail(db, project_id="project", sessions=sessions, data_dir=path)
+        first_key, first_url = first.r2_key, first.thumbnail_url
+        second = await ThumbnailService.create_thumbnail(db, project_id="project", sessions=sessions, data_dir=path)
+        await db.refresh(first)
+    assert first.is_active and first.thumbnail_url == first_url
+    assert second.status == "failed" and not second.is_active
+    assert len(keys) == 2 and keys[0] != keys[1]
+    assert (path / "storage" / first_key).read_bytes() == png(3, 2)
 
 
 @pytest.mark.asyncio
