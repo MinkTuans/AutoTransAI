@@ -169,3 +169,33 @@ async def test_gemini_validation_url_has_no_key(monkeypatch):
     monkeypatch.setattr(httpx.AsyncClient, "get", get)
     assert await GeminiLLMProvider().validate_configuration()
     assert calls == [("https://generativelanguage.googleapis.com/v1beta/models", {"headers": {"x-goog-api-key": "global-key"}})]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,classification", [
+    (401, "auth"),
+    (404, "model_unavailable"),
+    (400, "capability_mismatch"),
+    (429, "rate_limit"),
+])
+async def test_openai_stt_http_error_preserves_status_without_echoing_secret(
+    monkeypatch, tmp_path, status, classification, capsys
+):
+    audio = tmp_path / "speech.wav"
+    audio.write_bytes(b"RIFF synthetic audio")
+    monkeypatch.setattr(service, "probe_duration_async", AsyncMock(return_value=2.0))
+
+    async def post(client, url, **kwargs):
+        assert kwargs["headers"]["Authorization"] == "Bearer request-key"
+        assert kwargs["data"]["model"] == "remote-model"
+        return httpx.Response(status, text="provider response echoes request-key")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    with pytest.raises(PipelineError) as error:
+        await service.transcribe_audio_with_whisper(
+            audio, route_target=target("openai", "remote-model", "STT"), api_key="request-key"
+        )
+    assert error.value.http_status == status
+    assert classify_failure(error.value) == classification
+    assert "request-key" not in str(error.value.to_dict())
+    assert "request-key" not in capsys.readouterr().out

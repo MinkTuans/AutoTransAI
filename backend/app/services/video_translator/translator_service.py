@@ -273,6 +273,7 @@ async def transcribe_audio_with_whisper(
         raise ValueError("OPENAI_API_KEY chưa được cấu hình trong .env")
 
     import httpx
+    from app.core.pipeline_errors import classify_http_error
     total_duration = await probe_duration_async(audio_path)
     file_size_mb = audio_path.stat().st_size / (1024 * 1024)
 
@@ -336,9 +337,13 @@ async def transcribe_audio_with_whisper(
                     res = await client.post(url, headers=headers, files=files, data=data)
 
                 if res.status_code != 200:
-                    if res.status_code == 429:
-                        raise RuntimeError(f"OpenAI Whisper API HTTP 429 Quota Exceeded: Tài khoản OpenAI hết credit. Vui lòng nạp thêm credit hoặc sử dụng Gemini.")
-                    raise RuntimeError(f"OpenAI Whisper API HTTP {res.status_code}")
+                    raise classify_http_error(
+                        status_code=res.status_code,
+                        response_text="",
+                        provider="openai",
+                        model=remote_model,
+                        stage="STT",
+                    )
 
                 res_json = res.json()
                 detected_lang = res_json.get("language", detected_lang)
