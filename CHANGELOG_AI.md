@@ -1,3 +1,8 @@
+- **Transactional Catalog Refresh (2026-09-23)**:
+  - Added `ModelRefreshService` for additive key discovery and explicit all-key union refresh, protected retirement, credential-visible access replacement, public catalog separation, sanitized persisted run summaries, and visible retired-default errors.
+  - Added shared provider revision locking, credential rotation/enable methods, and stale snapshot rejection for concurrent key/provider/refresh changes. Discovery runs outside database sessions; failed reconciliation rolls back atomically. Historical model rows and Edge system entries are retained.
+  - Added revision `20260923_catalog_refresh`, updated ORM exports/provider/settings schemas, isolated SQLite behavioral/migration tests and offline MySQL DDL coverage. No production migration, real credentials, provider network calls, API/UI cutover, or capability classification. Updated knowledge base.
+
 - **Discovery Credential Echo Redaction (2026-09-23)**:
   - Fixed percent-escape handling in `backend/app/providers/discovery/adapters.py`: check both literal and decoded credential echoes before accepting IDs/cursors or returning display/metadata text.
   - Added nine synthetic HTTP regression cases in `backend/tests/test_model_discovery.py` spanning identities, cursor forwarding, names, metadata, and metadata lists. No API/database changes; updated knowledge base.

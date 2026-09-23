@@ -31,6 +31,7 @@ class CatalogModel(Base):
 
 
 class KeyModelAccess(Base):
+    """Credential-visible listing evidence, never verified generation entitlement."""
     __tablename__ = "ai_key_model_access"
     __table_args__ = (
         ForeignKeyConstraint(
@@ -47,3 +48,14 @@ class KeyModelAccess(Base):
     model_id: Mapped[str] = mapped_column(String(36), primary_key=True, index=True)
     provider_id: Mapped[str] = mapped_column(String(50))
     discovered_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class CatalogRefreshRun(Base):
+    __tablename__ = "ai_catalog_refresh_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    mode: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), default="running")
+    summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

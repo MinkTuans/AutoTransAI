@@ -18,11 +18,25 @@ from pathlib import Path
 from uuid import uuid4
 
 from cryptography.fernet import Fernet, InvalidToken
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.api_key import APIKey
+from app.models.provider import Provider
+
+
+async def lock_catalog_provider(session: AsyncSession, provider_id: str) -> None:
+    """UPDATE takes a SQLite write lock / MySQL row lock until caller commit.
+
+    Every credential mutation and catalog reconciliation uses this lock in provider
+    ID order. The increment also invalidates discovery staged before the mutation.
+    """
+    result = await session.execute(update(Provider).where(Provider.id == provider_id).values(
+        catalog_revision=Provider.catalog_revision + 1,
+    ).execution_options(synchronize_session=False))
+    if not result.rowcount:
+        raise CredentialValidationError("Credential provider is unavailable.")
 
 
 class CredentialError(Exception):
@@ -127,6 +141,7 @@ class CredentialService:
             raise CredentialValidationError("Credential must be nonempty and have no surrounding whitespace.")
         message = json.dumps([provider_id, secret], separators=(",", ":")).encode("utf-8")
         fingerprint = hmac.new(self._fingerprint_key, message, hashlib.sha256).hexdigest()
+        await lock_catalog_provider(self._session, provider_id)
         duplicate = await self._session.scalar(select(APIKey.id).where(
             APIKey.provider_id == provider_id, APIKey.fingerprint == fingerprint,
         ))
@@ -165,6 +180,44 @@ class CredentialService:
         row = await self._session.get(APIKey, key_id)
         if row is None:
             return False
+        await lock_catalog_provider(self._session, row.provider_id)
         await self._session.delete(row)
         await self._session.flush()
         return True
+
+    async def set_enabled(self, key_id: str, enabled: bool) -> CredentialDTO:
+        row = await self._session.get(APIKey, key_id)
+        if row is None:
+            raise CredentialNotFoundError("Credential does not exist.")
+        await lock_catalog_provider(self._session, row.provider_id)
+        await self._session.refresh(row)
+        row.enabled = bool(enabled)
+        row.revision += 1
+        await self._session.flush()
+        return _dto(row)
+
+    async def rotate(self, key_id: str, secret: str) -> CredentialDTO:
+        if not isinstance(secret, str) or not secret or secret != secret.strip():
+            raise CredentialValidationError("Credential must be nonempty and have no surrounding whitespace.")
+        row = await self._session.get(APIKey, key_id)
+        if row is None:
+            raise CredentialNotFoundError("Credential does not exist.")
+        await lock_catalog_provider(self._session, row.provider_id)
+        await self._session.refresh(row)
+        message = json.dumps([row.provider_id, secret], separators=(",", ":")).encode("utf-8")
+        fingerprint = hmac.new(self._fingerprint_key, message, hashlib.sha256).hexdigest()
+        if await self._session.scalar(select(APIKey.id).where(
+            APIKey.provider_id == row.provider_id, APIKey.fingerprint == fingerprint, APIKey.id != key_id,
+        )):
+            raise DuplicateCredentialError("Credential already exists for this provider.")
+        payload = json.dumps({"version": 1, "id": key_id, "provider_id": row.provider_id, "secret": secret}).encode("utf-8")
+        row.ciphertext = self._fernet.encrypt(payload).decode("ascii")
+        row.fingerprint = fingerprint
+        row.masked_key = "****" + (secret[-4:] if len(secret) > 8 else "")
+        row.revision += 1
+        # Old listing evidence cannot be attributed to the replacement credential.
+        from sqlalchemy import delete
+        from app.models.ai_catalog import KeyModelAccess
+        await self._session.execute(delete(KeyModelAccess).where(KeyModelAccess.key_id == key_id))
+        await self._session.flush()
+        return _dto(row)

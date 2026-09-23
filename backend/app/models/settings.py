@@ -37,6 +37,7 @@ class AIFunctionConfig(Base):
     capability: Mapped[str] = mapped_column(String(50))  # STT, LLM, TRANSLATION, TTS, VIDEO_GENERATION, IMAGE_GENERATION
     primary_provider_id: Mapped[str] = mapped_column(String(50))
     model_id: Mapped[str] = mapped_column(String(100), default="default")
+    configuration_error: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     fallback_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     fallback_provider_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(

@@ -28,7 +28,8 @@ class Provider(Base):
     supported: Mapped[bool] = mapped_column(Boolean, default=True)
     is_custom: Mapped[bool] = mapped_column(Boolean, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Shared optimistic token and row lock for credential mutations/catalog refresh.
+    catalog_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     website_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     doc_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     base_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-
