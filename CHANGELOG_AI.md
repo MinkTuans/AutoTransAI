@@ -34,6 +34,11 @@
   - Explicit compatibility gate keeps `.env` STT for schemas without Gemini/OpenAI non-system catalog models or keys. Keyless system rows, unrelated TTS rows, and unrelated global refresh history leave legacy STT available; activated catalogs with missing/invalid defaults fail visibly, and absent canonical tables surface migration errors.
   - Initialized the Studio render-launch flag before Phase 1 so an STT failure records the failed job state without a secondary unbound-variable exception. No database schema, REST API, UI, translation, TTS, Unified, or legacy workflow changes. Added isolated mocked catalog/HTTP and actual Studio background-entry tests; updated the knowledge base.
 
+- **Legacy Settings Read/Write Guard (2026-09-23, Task 7B2B)**:
+  - Removed implicit seeding from legacy Settings GETs; system defaults remain virtual, while Function/Model lists reflect persisted rows. The legacy eligible-provider list reads canonical enabled-key flags without bootstrapping the plaintext JSON key store.
+  - Guarded legacy Function PUT and colliding legacy Model DELETE against changing canonical catalog-ID defaults, including a locking read for concurrent canonical writes. Preserved unmigrated legacy updates, explicit seeder, legacy data, and unrelated system/social settings.
+  - Added disposable SQLite/synthetic/offline API regressions and updated the knowledge base. Fresh legacy lists may be empty and legacy-only keys may appear unconfigured until Task 9 import; Task 8 UI will use canonical endpoints.
+
 - **Canonical Function Default API (2026-09-23, Task 7B2A)**:
   - Added `PUT /api/ai/functions/{function_id}` with exact catalog-ID selection, provider/capability/access checks under the refresh provider lock, and the typed Function response used by canonical GET. It clears prior configuration error and leaves historical fallback columns untouched.
   - Review fix: split provider preflight from the write transaction and use current locking reads after the provider lock, so MySQL REPEATABLE READ cannot validate against an older snapshot. Added pre-lock change and MySQL `FOR UPDATE` compilation regressions.
