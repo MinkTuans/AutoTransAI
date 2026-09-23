@@ -34,6 +34,10 @@
   - Explicit compatibility gate keeps `.env` STT for schemas without Gemini/OpenAI non-system catalog models or keys. Keyless system rows, unrelated TTS rows, and unrelated global refresh history leave legacy STT available; activated catalogs with missing/invalid defaults fail visibly, and absent canonical tables surface migration errors.
   - Initialized the Studio render-launch flag before Phase 1 so an STT failure records the failed job state without a secondary unbound-variable exception. No database schema, REST API, UI, translation, TTS, Unified, or legacy workflow changes. Added isolated mocked catalog/HTTP and actual Studio background-entry tests; updated the knowledge base.
 
+- **Canonical Function Default API (2026-09-23, Task 7B2A)**:
+  - Added `PUT /api/ai/functions/{function_id}` with exact catalog-ID selection, provider/capability/access checks under the refresh provider lock, and the typed Function response used by canonical GET. It clears prior configuration error and leaves historical fallback columns untouched.
+  - Added isolated SQLite tests with synthetic credentials and an outbound socket guard for available, unavailable, public-catalog, keyless, malformed, secret-bearing, and retirement-at-lock-boundary cases. No legacy Settings route, UI, schema, provider traffic, real key, or production database change; updated the knowledge base.
+
 - **Canonical Key Pool and Refresh API (2026-09-23, Task 7B1)**:
   - Added typed masked key list/add/enable/disable/delete and explicit global model refresh under `/api/ai`; additive discovery follows a committed disabled key, and only a complete credential-scoped listing can activate an unchanged key. Deletion retains catalog rows until explicit complete refresh.
   - Added fixed secret-safe validation and unexpected-error responses for key routes, revision-guarded activation against concurrent rotation/disable, and outcome DTOs that preserve partial/stale/failed reasons without raw provider text.
