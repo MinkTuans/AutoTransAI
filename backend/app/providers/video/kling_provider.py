@@ -1,33 +1,29 @@
-"""
-Kling AI Video Provider implementation.
-
-Calls the official Kling AI API to generate videos from text prompts.
-Integrates KeyManager for multi-key failover rotation and detailed error tracking.
-"""
+"""Kling text-to-video with exact request-local model and credential."""
 
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
+
 import httpx
 
 from app.config import get_settings
-from app.core import get_logger
-from app.services.key_manager import get_key_manager
-from app.providers.base import (
-    VideoProvider,
-    GenerationResult,
-    QuotaInfo,
-    UsageEstimate,
+from app.providers.base import GenerationResult, QuotaInfo, UsageEstimate, VideoProvider
+from app.providers.request_target import resolve_request_target
+from app.providers.video.catalog_media import (
+    VideoBoundaryError, VideoRoutePending, download_video, request_json,
+    validated_video_path,
 )
+from app.services.ai_routing import RouteTarget, UnsupportedModalityError
+from app.services.key_manager import get_key_manager
 
-logger = get_logger(__name__)
 settings = get_settings()
+_ENDPOINT = "https://api.klingai.com/v1/videos/text2video"
+_MODELS = frozenset({"kling-v2-5-turbo", "kling-v2-6", "kling-v3"})
 
 
 class KlingVideoProvider(VideoProvider):
-    """Kling AI Video Generation Provider."""
-
     @property
     def provider_id(self) -> str:
         return "kling"
@@ -53,218 +49,128 @@ class KlingVideoProvider(VideoProvider):
         return [5, 10, 15]
 
     async def validate_configuration(self) -> bool:
-        key_mgr = get_key_manager()
-        active_key = await key_mgr.get_active_key(self.provider_id)
-        return active_key is not None
+        return await get_key_manager().get_active_key(self.provider_id) is not None
 
-    async def generate_video(
-        self,
-        prompt: str,
-        duration: int,
-        output_path: Path,
-    ) -> GenerationResult:
-        key_mgr = get_key_manager()
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        dur = min(duration, self.max_duration_seconds)
-        submit_url = "https://api.klingai.com/v1/videos/text2video"
-
-        payload = {
-            "model_name": "kling-v1",
-            "prompt": prompt,
-            "duration": str(dur),
-            "aspect_ratio": "16:9",
-        }
-
-        max_attempts = 3
-        last_error = ""
-        last_error_code = "GENERATION_FAILED"
-
-        for attempt in range(max_attempts):
-            key_entry = await key_mgr.get_active_key(self.provider_id)
-            if not key_entry:
-                msg = "Tất cả API Key của Kling AI đều hết dung lượng / invalid. Vui lòng chuyển sang 'Local AI & FFmpeg Generator' hoặc thêm API Key mới."
-                logger.error("No active API keys available for Kling AI", prompt_preview=prompt[:40])
-                return GenerationResult(
-                    success=False,
-                    error_message=msg,
-                    error_code="ALL_KEYS_EXHAUSTED",
-                    provider_id=self.provider_id,
-                    metadata={"key_action": "All keys exhausted or disabled"},
-                )
-
-            headers = {
-                "Authorization": f"Bearer {key_entry.api_key}",
-                "Content-Type": "application/json",
-            }
-
-            logger.info(
-                f"[VIDEO] Segment generation attempt {attempt + 1}/{max_attempts}",
-                provider="kling",
-                key_id=key_entry.key_id,
-                masked_key=key_entry.masked_key,
-            )
-
+    async def generate_video(self, prompt: str, duration: int, output_path: Path, *,
+                             route_target: RouteTarget | None = None,
+                             api_key: str | None = None) -> GenerationResult:
+        if route_target is not None:
+            model, secret = resolve_request_target(
+                route_target, api_key, provider_id=self.provider_id,
+                capabilities=("VIDEO_GENERATION",), legacy_model=None, legacy_key=None)
+            if model not in _MODELS:
+                raise UnsupportedModalityError("Video generation unsupported for this model.")
+            return await self._generate(prompt, duration, output_path, model, secret, canonical=True)
+        if api_key is not None:
+            raise ValueError("A request credential requires a route target.")
+        last = None
+        for _ in range(3):
             try:
-                async with httpx.AsyncClient(timeout=180.0) as client:
-                    # 1. Create text2video task
-                    res = await client.post(submit_url, json=payload, headers=headers)
-                    if res.status_code != 200:
-                        err_text = res.text
-                        if "balance" in err_text.lower() or res.status_code in (402, 403, 429):
-                            err_msg = f"HTTP {res.status_code} - Account balance empty / Rate Limit"
-                        else:
-                            err_msg = f"HTTP {res.status_code} - Kling AI API error: {res.text[:150]}"
+                key_entry = await get_key_manager().get_active_key(self.provider_id)
+            except Exception:
+                return GenerationResult(False, provider_id=self.provider_id,
+                                        error_code="PROVIDER_UNAVAILABLE",
+                                        error_message="Video generation failed: provider_unavailable")
+            if not key_entry:
+                break
+            last = await self._generate(prompt, duration, output_path, "kling-v1", key_entry.api_key,
+                                        canonical=False, key_id=key_entry.key_id)
+            if last.success or last.error_code not in ("HTTP_401", "HTTP_402", "HTTP_403", "HTTP_429"):
+                return last
+        return last or GenerationResult(False, provider_id=self.provider_id, error_code="NO_API_KEY",
+                                        error_message="No valid Kling API key configured.")
 
-                        action_text = await key_mgr.report_result(
-                            self.provider_id,
-                            key_entry.key_id,
-                            success=False,
-                            status_code=res.status_code,
-                            error_message=err_msg,
-                        )
-                        logger.error(
-                            "Kling AI HTTP submit error",
-                            key=key_entry.masked_key,
-                            status_code=res.status_code,
-                            action=action_text,
-                        )
-                        last_error = f"{err_msg} | Key: {key_entry.masked_key} | Action: {action_text}"
-                        last_error_code = f"HTTP_{res.status_code}"
-
-                        # If request parameters invalid (HTTP 400), break immediately without rotating key
-                        if res.status_code == 400:
+    async def _generate(self, prompt: str, duration: int, output_path: Path,
+                        model: str, secret: str, *, canonical: bool,
+                        key_id: str | None = None) -> GenerationResult:
+        submitted = False
+        accepted = False
+        try:
+            target_path = validated_video_path(output_path, settings.DATA_DIR)
+            headers = {"Authorization": f"Bearer {secret}", "Content-Type": "application/json"}
+            payload = {"model_name": model, "prompt": prompt,
+                       "duration": str(min(duration, 15)), "aspect_ratio": "16:9"}
+            async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
+                submitted = True
+                data = await request_json(client, "POST", _ENDPOINT, headers=headers, payload=payload)
+                if data.get("code") != 0:
+                    raise VideoBoundaryError("provider_unavailable", definitive=True)
+                accepted = True
+                task = data.get("data")
+                task_id = task.get("task_id") if isinstance(task, dict) else None
+                if not isinstance(task_id, str) or len(task_id) > 128 or not re.fullmatch(r"[A-Za-z0-9_-]+", task_id):
+                    raise VideoRoutePending("invalid_output")
+                async with asyncio.timeout(75.0):
+                    for _ in range(60):
+                        await asyncio.sleep(1.0)
+                        status = await request_json(client, "GET", f"{_ENDPOINT}/{task_id}", headers=headers)
+                        if status.get("code") != 0:
+                            raise VideoRoutePending("provider_unavailable")
+                        detail = status.get("data")
+                        if not isinstance(detail, dict):
+                            raise VideoRoutePending("invalid_output")
+                        state = detail.get("task_status")
+                        if state == "succeed":
+                            result = detail.get("task_result")
+                            videos = result.get("videos") if isinstance(result, dict) else None
+                            if not isinstance(videos, list) or not videos or not isinstance(videos[0], dict):
+                                raise VideoRoutePending("invalid_output")
+                            video_url = videos[0].get("url")
                             break
-                        continue
-
-                    data = res.json()
-                    if data.get("code") != 0:
-                        err_msg = f"Kling AI code {data.get('code')}: {data.get('message')}"
-                        action_text = await key_mgr.report_result(
-                            self.provider_id,
-                            key_entry.key_id,
-                            success=False,
-                            status_code=200,
-                            error_message=err_msg,
-                        )
-                        last_error = f"{err_msg} | Key: {key_entry.masked_key}"
-                        last_error_code = "API_ERROR"
-                        continue
-
-                    task_id = data.get("data", {}).get("task_id")
-                    if not task_id:
-                        last_error = f"Response missing task_id | Key: {key_entry.masked_key}"
-                        last_error_code = "MISSING_TASK_ID"
-                        continue
-
-                    # 2. Poll task status
-                    task_url = f"https://api.klingai.com/v1/videos/text2video/{task_id}"
-                    max_polls = 60
-                    video_url = None
-
-                    for _ in range(max_polls):
-                        await asyncio.sleep(4.0)
-                        poll_res = await client.get(task_url, headers=headers)
-                        if poll_res.status_code == 200:
-                            p_data = poll_res.json().get("data", {})
-                            status_str = p_data.get("task_status")
-                            if status_str == "succeed":
-                                videos = p_data.get("task_result", {}).get("videos", [])
-                                if videos:
-                                    video_url = videos[0].get("url")
-                                break
-                            elif status_str == "failed":
-                                fail_msg = p_data.get('task_status_msg') or 'Task failed'
-                                await key_mgr.report_result(
-                                    self.provider_id,
-                                    key_entry.key_id,
-                                    success=False,
-                                    status_code=200,
-                                    error_message=fail_msg,
-                                )
-                                last_error = f"Kling task failed: {fail_msg} | Key: {key_entry.masked_key}"
-                                last_error_code = "TASK_FAILED"
-                                break
-
-                    if not video_url:
-                        if not last_error:
-                            last_error = f"Kling AI task timed out | Key: {key_entry.masked_key}"
-                            last_error_code = "TIMEOUT_NO_URL"
-                        continue
-
-                    # 3. Download video file (streaming to avoid OOM)
-                    async with client.stream("GET", video_url) as resp:
-                        if resp.status_code != 200:
-                            last_error = f"Failed to download video file HTTP {resp.status_code}"
-                            last_error_code = "DOWNLOAD_FAILED"
-                            continue
-                        with open(output_path, "wb") as f:
-                            async for chunk in resp.aiter_bytes(chunk_size=8192):
-                                f.write(chunk)
-                    if not output_path.exists() or output_path.stat().st_size == 0:
-                        last_error = "Downloaded video file on disk is empty or 0 bytes"
-                        last_error_code = "FILE_WRITE_ERROR"
-                        continue
-
-                    # Success!
-                    await key_mgr.report_result(self.provider_id, key_entry.key_id, success=True)
-                    logger.info(
-                        "Kling AI video generated successfully",
-                        key=key_entry.masked_key,
-                        task_id=task_id,
-                        size=output_path.stat().st_size,
-                    )
-                    return GenerationResult(
-                        success=True,
-                        file_path=output_path,
-                        duration=float(dur),
-                        provider_id=self.provider_id,
-                        metadata={"key_used": key_entry.masked_key, "task_id": task_id},
-                    )
-
-            except Exception as e:
-                err_str = str(e)
-                action_text = await key_mgr.report_result(
-                    self.provider_id,
-                    key_entry.key_id,
-                    success=False,
-                    status_code=500,
-                    error_message=err_str,
-                )
-                logger.error("Kling AI attempt failed with exception", key=key_entry.masked_key, error=err_str)
-                last_error = f"Exception: {err_str} | Key: {key_entry.masked_key}"
-                last_error_code = "GENERATION_EXCEPTION"
-
-        return GenerationResult(
-            success=False,
-            error_message=last_error or "Kling AI video generation failed after retries",
-            error_code=last_error_code,
-            provider_id=self.provider_id,
-        )
+                        if state == "failed":
+                            raise VideoBoundaryError("job_failed", definitive=True)
+                        if state not in ("submitted", "processing"):
+                            raise VideoRoutePending("invalid_output")
+                    else:
+                        raise VideoRoutePending("timeout")
+                async with asyncio.timeout(120.0):
+                    size = await download_video(client, video_url, target_path)
+            if key_id is not None:
+                try:
+                    await get_key_manager().report_result(self.provider_id, key_id, success=True)
+                except Exception:
+                    pass  # Local accounting cannot turn a completed video into another billed attempt.
+            return GenerationResult(True, file_path=target_path, duration=float(min(duration, 15)),
+                                    provider_id=self.provider_id, metadata={"model": model, "size": size})
+        except VideoRoutePending:
+            raise
+        except asyncio.CancelledError:
+            if submitted:
+                raise VideoRoutePending() from None
+            raise
+        except (TimeoutError, httpx.TimeoutException):
+            if submitted:
+                raise VideoRoutePending("timeout") from None
+            raise
+        except VideoBoundaryError as error:
+            if submitted and not error.definitive and (accepted or error.status_code is None or error.status_code >= 500):
+                raise VideoRoutePending(error.code) from None
+            if canonical:
+                raise
+            if key_id is not None and error.status_code is not None:
+                try:
+                    await get_key_manager().report_result(self.provider_id, key_id, success=False,
+                                                          status_code=error.status_code,
+                                                          error_message=str(error))
+                except Exception:
+                    pass
+            return GenerationResult(False, provider_id=self.provider_id,
+                                    error_code=f"HTTP_{error.status_code}" if error.status_code else error.code.upper(),
+                                    error_message=str(error))
+        except Exception:
+            if submitted:
+                raise VideoRoutePending("provider_unavailable") from None
+            if canonical:
+                raise VideoBoundaryError("provider_unavailable") from None
+            return GenerationResult(False, provider_id=self.provider_id, error_code="PROVIDER_UNAVAILABLE",
+                                    error_message="Video generation failed: provider_unavailable")
 
     async def estimate_usage(self, duration: int) -> list[UsageEstimate]:
-        return [
-            UsageEstimate(
-                resource_type="video_seconds",
-                estimated_amount=float(duration),
-                unit="seconds",
-            )
-        ]
+        return [UsageEstimate("video_seconds", float(duration), "seconds")]
 
     async def get_quota(self) -> list[QuotaInfo]:
-        key_mgr = get_key_manager()
-        keys = await key_mgr.get_keys_for_provider(self.provider_id)
+        keys = await get_key_manager().get_keys_for_provider(self.provider_id)
         if not keys:
-            return [QuotaInfo(resource_type="video_seconds", used=0, limit=0, remaining=0, unit="seconds")]
-        
-        # Summary of local request stats across keys
-        tot_requests = sum(k.get("total_requests", 0) for k in keys)
-        tot_success = sum(k.get("successful_requests", 0) for k in keys)
-        return [
-            QuotaInfo(
-                resource_type="video_seconds",
-                used=tot_success * 5,
-                limit=None,
-                remaining=None,
-                unit="seconds",
-            )
-        ]
+            return [QuotaInfo("video_seconds", 0, 0, 0, "seconds")]
+        successes = sum(k.get("successful_requests", 0) for k in keys)
+        return [QuotaInfo("video_seconds", successes * 5, None, None, "seconds")]
