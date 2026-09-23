@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -135,6 +135,24 @@ def _safe_metadata(model: CatalogModel) -> dict:
     return safe
 
 
+def _view_context(keys, edges, configs):
+    key_counts = {}
+    for provider_id in keys.values():
+        key_counts[provider_id] = key_counts.get(provider_id, 0) + 1
+    access = {}
+    seen = {}
+    for edge in edges:
+        if keys.get(edge.key_id) == edge.provider_id:
+            access.setdefault(edge.model_id, set()).add(edge.key_id)
+        current = seen.get(edge.model_id)
+        if current is None or edge.discovered_at > current:
+            seen[edge.model_id] = edge.discovered_at
+    defaults = {}
+    for config in configs:
+        defaults.setdefault((config.model_id, config.primary_provider_id), []).append(config.function_id)
+    return key_counts, access, seen, defaults
+
+
 async def _inventory(db: AsyncSession):
     providers = {p.id: p for p in (await db.scalars(select(Provider))).all()}
     models = (await db.scalars(select(CatalogModel))).all()
@@ -146,28 +164,25 @@ async def _inventory(db: AsyncSession):
     return providers, models, keys, edges, configs
 
 
-def _model_view(model, providers, keys, edges, configs) -> ModelView:
+def _model_view(model, providers, context) -> ModelView:
+    key_counts, access, seen, defaults = context
     provider = providers[model.provider_id]
     active = provider.enabled and model.enabled and model.retired_at is None
-    linked = {edge.key_id for edge in edges if edge.model_id == model.id
-              and edge.provider_id == model.provider_id and keys.get(edge.key_id) == model.provider_id}
     public = model.provider_id in _PUBLIC_CATALOG_PROVIDERS
     keyless = any(_keyless_allowed(model, capability) for capability in CAPABILITIES)
     if public:
-        count = sum(pid == model.provider_id for pid in keys.values())
+        count = key_counts.get(model.provider_id, 0)
     else:
-        count = len(linked)
-    seen = max((edge.discovered_at for edge in edges if edge.model_id == model.id), default=None)
+        count = len(access.get(model.id, ()))
     return ModelView(
         id=model.id, provider_id=model.provider_id, provider_name=provider.name,
         remote_model_id=model.remote_model_id, display_name=model.display_name,
         source=model.source, status="retired" if model.retired_at else "disabled" if not active else "active",
-        enabled=model.enabled, retired_at=model.retired_at, last_seen=seen,
+        enabled=model.enabled, retired_at=model.retired_at, last_seen=seen.get(model.id),
         available_key_count=count if active else 0,
         access_scope="keyless" if keyless else "catalog_unverified" if public else "listing_unverified" if count else "none",
         capability=CapabilityView(**catalog_capability_summary(model)),
-        default_for=sorted(c.function_id for c in configs if c.model_id == model.id
-                           and c.primary_provider_id == model.provider_id),
+        default_for=sorted(defaults.get((model.id, model.provider_id), ())),
     )
 
 
@@ -193,22 +208,55 @@ async def list_models(provider_id: str | None = None, capability: str | None = N
                       q: str | None = Query(default=None, max_length=200),
                       page: int = Query(default=1, ge=1), limit: int = Query(default=25, ge=1, le=100),
                       db: AsyncSession = Depends(get_db)):
-    providers, models, keys, edges, configs = await _inventory(db)
+    providers = {p.id: p for p in (await db.scalars(select(Provider))).all()}
     if provider_id is not None and provider_id not in providers:
         raise HTTPException(status_code=404, detail="Provider not found.")
     if capability is not None and capability not in CAPABILITIES:
         raise HTTPException(status_code=422, detail="Unknown AI capability.")
-    views = [_model_view(m, providers, keys, edges, configs) for m in models
-             if m.provider_id in providers and (provider_id is None or m.provider_id == provider_id)]
-    if capability:
-        views = [m for m in views if capability not in m.capability.incompatible_capabilities]
-    if q and (term := q.strip().casefold()):
-        views = [m for m in views if any(term in value.casefold() for value in (
-            m.remote_model_id, m.display_name or "", m.provider_name, m.provider_id,
-            *m.capability.capabilities))]
-    views.sort(key=lambda m: (m.provider_id, m.remote_model_id, m.id))
-    return Envelope(data=ModelPage(items=views[(page - 1) * limit:page * limit],
-                                   page=page, limit=limit, total=len(views)))
+    query = select(CatalogModel).join(Provider, CatalogModel.provider_id == Provider.id)
+    if provider_id is not None:
+        query = query.where(CatalogModel.provider_id == provider_id)
+    query = query.order_by(CatalogModel.provider_id, CatalogModel.remote_model_id, CatalogModel.id)
+    start = (page - 1) * limit
+    term = q.strip().casefold() if q else ""
+    if not capability and not term:
+        count_query = select(func.count()).select_from(CatalogModel).join(
+            Provider, CatalogModel.provider_id == Provider.id)
+        if provider_id is not None:
+            count_query = count_query.where(CatalogModel.provider_id == provider_id)
+        total = await db.scalar(count_query) or 0
+        selected = (await db.scalars(query.offset(start).limit(limit))).all()
+    else:
+        result = await db.stream_scalars(query.execution_options(yield_per=100))
+        selected = []
+        total = 0
+        try:
+            async for model in result:
+                provider = providers[model.provider_id]
+                summary = catalog_capability_summary(model)
+                if capability and capability in summary["incompatible_capabilities"]:
+                    continue
+                if term and not any(term in value.casefold() for value in (
+                    model.remote_model_id, model.display_name or "", provider.name, provider.id,
+                    *summary["capabilities"])):
+                    continue
+                if start <= total < start + limit:
+                    selected.append(model)
+                total += 1
+        finally:
+            await result.close()
+    ids = [model.id for model in selected]
+    provider_ids = {model.provider_id for model in selected}
+    keys = {row.id: row.provider_id for row in (await db.execute(
+        select(APIKey.id, APIKey.provider_id).where(APIKey.enabled.is_(True),
+                                                   APIKey.provider_id.in_(provider_ids)))).all()}
+    edges = (await db.execute(select(KeyModelAccess.key_id, KeyModelAccess.model_id,
+                                     KeyModelAccess.provider_id, KeyModelAccess.discovered_at)
+                              .where(KeyModelAccess.model_id.in_(ids)))).all()
+    configs = (await db.scalars(select(AIFunctionConfig).where(AIFunctionConfig.model_id.in_(ids)))).all()
+    context = _view_context(keys, edges, configs)
+    return Envelope(data=ModelPage(items=[_model_view(model, providers, context) for model in selected],
+                                   page=page, limit=limit, total=total))
 
 
 @router.get("/models/{model_id}", response_model=Envelope[ModelDetail])
@@ -217,13 +265,14 @@ async def model_detail(model_id: str, db: AsyncSession = Depends(get_db)):
     model = next((m for m in models if m.id == model_id), None)
     if model is None or model.provider_id not in providers:
         raise HTTPException(status_code=404, detail="Model not found.")
-    return Envelope(data=ModelDetail(**_model_view(model, providers, keys, edges, configs).model_dump(),
+    return Envelope(data=ModelDetail(**_model_view(model, providers, _view_context(keys, edges, configs)).model_dump(),
                                      metadata=_safe_metadata(model)))
 
 
 @router.get("/functions", response_model=Envelope[list[FunctionView]])
 async def list_functions(db: AsyncSession = Depends(get_db)):
     providers, models, keys, edges, configs = await _inventory(db)
+    context = _view_context(keys, edges, configs)
     by_id = {m.id: m for m in models}
     rows = []
     for c in sorted(configs, key=lambda config: config.function_id):
@@ -240,7 +289,7 @@ async def list_functions(db: AsyncSession = Depends(get_db)):
             status = "disabled"
         elif c.capability not in CAPABILITIES or c.capability in catalog_capability_summary(model)["incompatible_capabilities"]:
             status = "incompatible"
-        elif _model_view(model, providers, keys, edges, configs).available_key_count == 0 and not _keyless_allowed(model, c.capability):
+        elif _model_view(model, providers, context).available_key_count == 0 and not _keyless_allowed(model, c.capability):
             status = "no_key"
         else:
             status = "ready"

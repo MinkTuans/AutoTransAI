@@ -4,7 +4,7 @@ from datetime import datetime
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event, select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.api.deps import get_db
 from app.main import app
@@ -202,3 +202,89 @@ async def test_function_error_text_is_restricted_to_known_codes(catalog_api):
     assert response.status_code == 200
     assert response.json()["data"][0]["configuration_error"] == "configuration_error"
     assert "synthetic-secret" not in response.text
+
+
+async def test_large_catalog_first_page_fetches_access_only_for_visible_models(catalog_api):
+    client, sessions = catalog_api
+    async with sessions.begin() as db:
+        db.add(Provider(id="openai", name="Open AI", provider_type="llm"))
+        await db.flush()
+        keys = [APIKey(id=f"key-{n}", provider_id="openai", ciphertext=f"cipher-{n}",
+                       fingerprint=f"finger-{n}", masked_key="****") for n in (1, 2)]
+        db.add_all(keys)
+        models = [CatalogModel(id=f"model-{n:04d}", provider_id="openai",
+                               remote_model_id=f"remote-{n:04d}") for n in range(600)]
+        db.add_all(models)
+        await db.flush()
+        db.add_all([KeyModelAccess(key_id=k.id, model_id=m.id, provider_id="openai")
+                    for m in models for k in keys])
+    statements = []
+    model_statements = []
+
+    def capture(_conn, _cursor, statement, _params, _context, _many):
+        if "ai_key_model_access" in statement and statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+        if "ai_catalog_models" in statement and statement.lstrip().upper().startswith("SELECT"):
+            model_statements.append(statement)
+
+    engine = sessions.kw["bind"]
+    event.listen(engine.sync_engine, "before_cursor_execute", capture)
+    try:
+        response = await client.get("/api/ai/models", params={"page": 1, "limit": 25})
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture)
+    assert response.status_code == 200
+    page = response.json()["data"]
+    assert page["total"] == 600
+    assert [m["id"] for m in page["items"]] == [f"model-{n:04d}" for n in range(25)]
+    assert all(m["available_key_count"] == 2 for m in page["items"])
+    assert statements and all(" IN (" in statement.upper() for statement in statements)
+    assert any("LIMIT" in statement.upper() for statement in model_statements)
+
+
+async def test_filtered_page_closes_stream_before_loading_page_access(catalog_api, monkeypatch):
+    client, sessions = catalog_api
+    async with sessions.begin() as db:
+        db.add(Provider(id="openai", name="Open AI", provider_type="llm"))
+        await db.flush()
+        db.add(APIKey(id="key", provider_id="openai", ciphertext="synthetic-cipher",
+                      fingerprint="synthetic-fingerprint", masked_key="****"))
+        models = [CatalogModel(id=f"model-{n:03d}", provider_id="openai",
+                               remote_model_id=f"remote-{n:03d}") for n in range(200)]
+        db.add_all(models)
+        await db.flush()
+        db.add_all([KeyModelAccess(key_id="key", model_id=m.id, provider_id="openai") for m in models])
+    closed = [False]
+    original_stream = AsyncSession.stream_scalars
+
+    async def tracked_stream(self, *args, **kwargs):
+        result = await original_stream(self, *args, **kwargs)
+
+        class TrackedResult:
+            def __aiter__(self):
+                return result.__aiter__()
+
+            async def close(self):
+                await result.close()
+                closed[0] = True
+
+        return TrackedResult()
+
+    monkeypatch.setattr(AsyncSession, "stream_scalars", tracked_stream)
+    access_queries = []
+
+    def capture(_conn, _cursor, statement, _params, _context, _many):
+        if "ai_key_model_access" in statement and statement.lstrip().upper().startswith("SELECT"):
+            access_queries.append((statement, closed[0]))
+
+    engine = sessions.kw["bind"]
+    event.listen(engine.sync_engine, "before_cursor_execute", capture)
+    try:
+        response = await client.get("/api/ai/models", params={"q": "remote-", "page": 2, "limit": 10})
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture)
+    assert response.status_code == 200
+    page = response.json()["data"]
+    assert page["total"] == 200
+    assert [m["id"] for m in page["items"]] == [f"model-{n:03d}" for n in range(10, 20)]
+    assert access_queries and all(was_closed and " IN (" in sql.upper() for sql, was_closed in access_queries)
