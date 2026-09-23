@@ -92,6 +92,11 @@ async def build_route(db: AsyncSession, capability: str, *, preferred_key_ids: t
         if selected is None or selected.provider_id != config.primary_provider_id or not available(selected):
             raise RouteConfigurationError("Configured AI model is unavailable, incompatible, or has no credential access.")
     ordered = sorted((m for m in usable.values() if available(m)), key=lambda m: (m.provider_id, m.remote_model_id, m.id))
+    if config and config.model_id == "default":
+        preferred = [m for m in ordered if m.provider_id == config.primary_provider_id]
+        if not preferred:
+            raise RouteConfigurationError("No compatible accessible model exists for the configured provider.")
+        selected = preferred[0]
     if selected:
         ordered.remove(selected)
         ordered = [selected] + sorted((m for m in ordered if m.provider_id == selected.provider_id),
@@ -102,7 +107,7 @@ async def build_route(db: AsyncSession, capability: str, *, preferred_key_ids: t
                     for m in ordered for key_id in ([None] if m.provider_id == "edge_tts" else access[m.id]))
     if not targets:
         raise RouteConfigurationError("No compatible AI model with credential access is available.")
-    return RoutePlan(capability, targets, selected.id if selected else None)
+    return RoutePlan(capability, targets, selected.id if selected and configured else None)
 
 
 def classify_failure(error: BaseException) -> str:

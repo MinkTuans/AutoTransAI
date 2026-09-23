@@ -84,6 +84,31 @@ def test_translation_only_catalog_annotation_does_not_imply_general_llm():
     assert not compatible("LLM", evidence)
 
 
+def test_partial_curated_annotations_leave_omitted_capabilities_unknown():
+    from app.services.capability_registry import compatible, model_evidence
+    model = CatalogModel(provider_id="openai", remote_model_id="partial", source="manual",
+                         capability_status="PARTIAL", capabilities=["TTS"])
+    evidence = model_evidence(model)
+    assert evidence.status == "PARTIAL"
+    assert compatible("TTS", evidence)
+    assert compatible("STT", evidence)
+    assert "STT" not in evidence.incompatible
+    model.capabilities = []
+    assert model_evidence(model).status == "FULL_UNKNOWN"
+
+
+@pytest.mark.asyncio
+async def test_partial_curated_model_remains_routable_for_unknown_function(routing_db):
+    from app.services.ai_routing import build_route
+    sessions, path = routing_db
+    async with sessions.begin() as db:
+        model = await add_model(db, "openai", "partial", caps=["TTS"], status="PARTIAL")
+        await add_key(db, path, "openai", [model], "synthetic-private")
+    async with sessions() as db:
+        route = await build_route(db, "STT")
+    assert route.targets[0].model_id == model.id
+
+
 def test_catalog_capability_summary_computes_from_persisted_evidence():
     from app.services.capability_registry import catalog_capability_summary
     model = CatalogModel(provider_id="gemini", remote_model_id="opaque", source="discovered",
@@ -141,6 +166,39 @@ async def test_provider_collision_and_deterministic_chain(routing_db):
         (await db.get(AIFunctionConfig, "stt")).primary_provider_id = "gemini"
     async with sessions() as db:
         with pytest.raises(RouteConfigurationError):
+            await build_route(db, "STT")
+
+
+@pytest.mark.asyncio
+async def test_default_sentinel_prefers_configured_provider(routing_db):
+    from app.services.ai_routing import build_route
+    sessions, path = routing_db
+    async with sessions.begin() as db:
+        preferred = await add_model(db, "openai", "speech", caps=["STT"], status="KNOWN")
+        other = await add_model(db, "gemini", "speech", caps=["STT"], status="KNOWN")
+        await add_key(db, path, "openai", [preferred], "synthetic-openai")
+        await add_key(db, path, "gemini", [other], "synthetic-gemini")
+        db.add(AIFunctionConfig(function_id="stt", function_name="STT", capability="STT",
+                                primary_provider_id="openai", model_id="default"))
+    async with sessions() as db:
+        route = await build_route(db, "STT")
+        config = await db.get(AIFunctionConfig, "stt")
+    assert [target.provider_id for target in route.targets] == ["openai", "gemini"]
+    assert route.configured_model_id is None
+    assert config.model_id == "default"
+
+
+@pytest.mark.asyncio
+async def test_default_sentinel_without_accessible_configured_provider_is_error(routing_db):
+    from app.services.ai_routing import build_route, RouteConfigurationError
+    sessions, path = routing_db
+    async with sessions.begin() as db:
+        other = await add_model(db, "gemini", "speech", caps=["STT"], status="KNOWN")
+        await add_key(db, path, "gemini", [other], "synthetic-gemini")
+        db.add(AIFunctionConfig(function_id="stt", function_name="STT", capability="STT",
+                                primary_provider_id="openai", model_id="default"))
+    async with sessions() as db:
+        with pytest.raises(RouteConfigurationError, match="configured provider"):
             await build_route(db, "STT")
 
 

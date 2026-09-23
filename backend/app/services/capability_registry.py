@@ -76,7 +76,9 @@ def model_evidence(model) -> CapabilityEvidence:
         if "LLM" in positive:
             positive.add("TRANSLATION")
         positive = frozenset(positive)
-        return CapabilityEvidence(positive, "KNOWN", CAPABILITIES - positive)
+        complete = model.capability_status in ("KNOWN", "COMPLETE")
+        return CapabilityEvidence(positive, "KNOWN" if complete else "PARTIAL" if positive else "FULL_UNKNOWN",
+                                  CAPABILITIES - positive if complete else frozenset())
     return classify(model.provider_id, model.discovery_metadata, remote_model_id=model.remote_model_id)
 
 
