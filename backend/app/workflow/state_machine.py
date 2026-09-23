@@ -32,6 +32,7 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
     },
     WorkflowStatus.GENERATING_VIDEO.value: {
         WorkflowStatus.VIDEO_COMPLETED.value,
+        WorkflowStatus.PROVIDER_PENDING.value,
         WorkflowStatus.FAILED.value,
         WorkflowStatus.CANCELLED.value,
     },
@@ -56,6 +57,7 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
         WorkflowStatus.PRECHECKED.value,  # Resume path
     },
     WorkflowStatus.COMPLETED.value: set(),  # Terminal state
+    WorkflowStatus.PROVIDER_PENDING.value: set(),  # Requires manual reconciliation
 }
 
 
@@ -96,6 +98,7 @@ def is_terminal_state(status: str) -> bool:
     return status in {
         WorkflowStatus.COMPLETED.value,
         WorkflowStatus.CANCELLED.value,
+        WorkflowStatus.PROVIDER_PENDING.value,
     }
 
 

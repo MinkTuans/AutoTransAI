@@ -19,6 +19,7 @@ class SegmentStatus(str, enum.Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     RETRYING = "retrying"
+    PROVIDER_PENDING = "provider_pending"
 
 
 class Segment(Base):

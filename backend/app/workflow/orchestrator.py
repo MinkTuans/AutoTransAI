@@ -43,10 +43,12 @@ from app.services.file_manager import (
     get_project_dir,
 )
 from app.services.manifest import update_manifest, update_segment_in_manifest
+from app.services.ai_routing import RoutePending
 from app.workflow.state_machine import validate_transition, is_resumable_state
 
 logger = get_logger(__name__)
 settings = get_settings()
+PENDING_VIDEO_MESSAGE = "Video provider task may still be running; manual reconciliation required before retry."
 
 
 class WorkflowOrchestrator:
@@ -138,6 +140,8 @@ class WorkflowOrchestrator:
         """
         try:
             project = await self._get_project()
+            if project.workflow_status == WorkflowStatus.PROVIDER_PENDING.value:
+                return
             ensure_project_structure(self.project_id)
 
             # Start audio generation
@@ -184,6 +188,9 @@ class WorkflowOrchestrator:
                 "mode": "audio_video",
             })
 
+        except RoutePending:
+            # The accepted/uncertain task was persisted by the segment handler.
+            return
         except WorkflowError as e:
             logger.error(
                 "Workflow failed",
@@ -390,6 +397,8 @@ class WorkflowOrchestrator:
         self, segment: Segment, provider: VideoProvider
     ) -> None:
         """Generate video for a single segment with idempotency and retry."""
+        if segment.video_status == SegmentStatus.PROVIDER_PENDING.value:
+            raise RoutePending(PENDING_VIDEO_MESSAGE)
         # IDEMPOTENCY: Skip completed segments
         if segment.video_status == SegmentStatus.COMPLETED.value:
             video_path = get_segment_video_path(self.project_id, segment.segment_number)
@@ -461,6 +470,30 @@ class WorkflowOrchestrator:
                 logger.error("Video generation failed", segment=segment.segment_number, error=err_msg)
                 raise WorkflowError(err_msg, code="VIDEO_GENERATION_FAILED")
 
+        except RoutePending:
+            segment.video_status = SegmentStatus.PROVIDER_PENDING.value
+            segment.video_error_message = PENDING_VIDEO_MESSAGE
+            project = await self._get_project()
+            validate_transition(project.workflow_status, WorkflowStatus.PROVIDER_PENDING.value)
+            project.workflow_status = WorkflowStatus.PROVIDER_PENDING.value
+            project.error_message = PENDING_VIDEO_MESSAGE
+            await self.session.commit()
+
+            update_segment_in_manifest(self.project_id, segment.segment_number, {
+                "video_status": SegmentStatus.PROVIDER_PENDING.value,
+                "video_error": PENDING_VIDEO_MESSAGE,
+            })
+            update_manifest(self.project_id, {
+                "workflow_status": WorkflowStatus.PROVIDER_PENDING.value,
+                "error": PENDING_VIDEO_MESSAGE,
+            })
+            await self._emit_progress({
+                "type": "status_change",
+                "status": WorkflowStatus.PROVIDER_PENDING.value,
+                "project_id": self.project_id,
+                "message": PENDING_VIDEO_MESSAGE,
+            })
+            raise
         except Exception as e:
             err_msg = str(e)
             segment.video_status = SegmentStatus.FAILED.value

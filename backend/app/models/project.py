@@ -28,6 +28,7 @@ class WorkflowStatus(str, enum.Enum):
     GENERATING_AUDIO = "generating_audio"
     AUDIO_COMPLETED = "audio_completed"
     GENERATING_VIDEO = "generating_video"
+    PROVIDER_PENDING = "provider_pending"
     VIDEO_COMPLETED = "video_completed"
     SYNCING = "syncing"
     MERGING = "merging"
