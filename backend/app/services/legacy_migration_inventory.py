@@ -42,9 +42,13 @@ def _read_file(path: Path | None, kind: str) -> tuple[bytes | None, str | None]:
             return None, f"{kind}_symlink_refused"
         if not stat.S_ISREG(mode):
             return None, f"{kind}_not_regular"
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        # NONBLOCK prevents a pathname swap to a FIFO from hanging in open().
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
         try:
-            if os.fstat(fd).st_size > MAX_FILE_BYTES:
+            opened = os.fstat(fd)
+            if not stat.S_ISREG(opened.st_mode):
+                return None, f"{kind}_not_regular"
+            if opened.st_size > MAX_FILE_BYTES:
                 return None, f"{kind}_file_too_large"
             data = os.read(fd, MAX_FILE_BYTES + 1)
         finally:
@@ -95,7 +99,7 @@ def _json_keys(data: bytes | None, counts: dict[str, int], issues: set[str]) -> 
         counts["duplicate_json_keys"] = duplicates
         counts["key_provider_mismatches"] = mismatches
         return keys
-    except (UnicodeError, ValueError, TypeError):
+    except (UnicodeError, ValueError, TypeError, RecursionError):
         issues.add("invalid_json")
         return {}
 
@@ -199,7 +203,9 @@ async def inventory_legacy_migration(
         source = "invalid_json"
     elif env_data is not None and env_error is None and "invalid_env" not in issues:
         source = "env"
-        counts["effective_keys"] = counts["env_keys"]
+        # KeyManager's env bootstrap retains only the first occurrence of each
+        # value within a provider; keep env_keys as the raw source count.
+        counts["effective_keys"] = sum(len(set(values)) for values in env_keys.values())
     else:
         source = "none"
 

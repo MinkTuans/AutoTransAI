@@ -1,5 +1,6 @@
 """Dry-run inventory against disposable data only."""
 import json
+import os
 
 import pytest
 from sqlalchemy import event
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.models import APIKey, CatalogModel, Provider
 from app.models.settings import AIModel, AIFunctionConfig
 from app.services.legacy_migration_inventory import inventory_legacy_migration
+from app.services import legacy_migration_inventory as inventory_module
 
 
 @pytest.fixture
@@ -118,7 +120,7 @@ async def test_env_bootstrap_counts_supported_indexed_keys(inventory_db, tmp_pat
         result = await inventory_legacy_migration(db, json_path=tmp_path / "missing.json", env_path=env)
     assert result["key_source"] == "env"
     assert result["counts"]["env_keys"] == 3
-    assert result["counts"]["effective_keys"] == 3
+    assert result["counts"]["effective_keys"] == 2
     assert result["counts"]["duplicate_env_keys"] == 1
     assert result["issues"] == ["duplicate_env_keys"]
 
@@ -151,3 +153,60 @@ async def test_empty_existing_json_is_authoritative_over_env(inventory_db, tmp_p
     assert result["key_source"] == "json"
     assert result["counts"]["effective_keys"] == 0
     assert result["counts"]["source_disagreements"] == 1
+
+
+async def test_deep_json_reports_code_without_secret_or_exception(inventory_db, tmp_path, caplog):
+    sessions, _ = inventory_db
+    secret = "synthetic-deep-secret"
+    path = tmp_path / "api_keys.json"
+    path.write_text('{"openai":' + "[" * 10000 + '"' + secret + '"' + "]" * 10000 + "}")
+    async with sessions() as db:
+        result = await inventory_legacy_migration(db, json_path=path)
+    assert result["key_source"] == "invalid_json"
+    assert result["issues"] == ["invalid_json"]
+    assert result["counts"]["json_keys"] == 0
+    assert secret not in str(result) + caplog.text
+
+
+async def test_file_open_uses_nonblocking_flag_if_path_becomes_fifo(inventory_db, tmp_path, monkeypatch):
+    sessions, _ = inventory_db
+    path = tmp_path / "api_keys.json"
+    path.write_text("{}")
+    real_open = os.open
+
+    def open_after_race(target, flags):
+        if target == path:
+            assert flags & os.O_NONBLOCK
+            return real_open(path, flags)
+        return real_open(target, flags)
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(inventory_module.os, "open", open_after_race)
+        async with sessions() as db:
+            result = await inventory_legacy_migration(db, json_path=path)
+    assert result["key_source"] == "json"
+
+
+async def test_opened_fifo_is_refused_after_regular_path_check(inventory_db, tmp_path, monkeypatch):
+    sessions, _ = inventory_db
+    path = tmp_path / "api_keys.json"
+    path.write_text("{}")
+    fifo = tmp_path / "replacement.fifo"
+    os.mkfifo(fifo)
+    fifo_fd = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+    real_open = os.open
+
+    def opened_replacement(target, flags):
+        if target == path:
+            return os.dup(fifo_fd)
+        return real_open(target, flags)
+
+    try:
+        with monkeypatch.context() as patcher:
+            patcher.setattr(inventory_module.os, "open", opened_replacement)
+            async with sessions() as db:
+                result = await inventory_legacy_migration(db, json_path=path)
+    finally:
+        os.close(fifo_fd)
+    assert result["key_source"] == "invalid_json"
+    assert result["issues"] == ["json_not_regular"]
