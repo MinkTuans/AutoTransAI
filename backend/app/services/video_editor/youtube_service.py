@@ -10,10 +10,13 @@ import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import get_settings
 from app.core import get_logger
 from app.core.job_logger import log_job_event
+from app.services.ai_routing import classify_failure
+from app.services.video_editor.catalog_llm import InvalidEditorOutput, generate_catalog_json
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -139,6 +142,9 @@ class YouTubePublishingService:
         video_name: str = "",
         episode_num: int = 1,
         model_name: Optional[str] = None,
+        *,
+        sessions: async_sessionmaker[AsyncSession] | None = None,
+        data_dir: Path | None = None,
     ) -> Dict[str, Any]:
         """
         Generate SEO-optimized YouTube Title, Description, Hashtags, Tags, and Category ID using Gemini AI Studio,
@@ -175,8 +181,8 @@ class YouTubePublishingService:
         # Default tags parsed as list
         base_tags = merge_youtube_tags(default_tags if yt_enabled else [], [])
 
-        # If Gemini API key is missing or AI SEO is disabled, return default rendered metadata
-        if not settings.GEMINI_API_KEY or not ai_seo_enabled:
+        # Explicitly disabled AI SEO always returns user-controlled defaults.
+        if not ai_seo_enabled:
             return {
                 "title": rendered_title or f"Video {episode_num}",
                 "description": rendered_desc,
@@ -184,17 +190,7 @@ class YouTubePublishingService:
                 "category_id": "22",
             }
 
-        import httpx
-        from app.services.model_resolver import AIModelResolver
-        from app.providers.llm.gemini_provider import strip_gemini_model_prefix
-
-        if not model_name:
-            res_model = await AIModelResolver.resolve_llm_model(None)
-            model_name = res_model.get("model_id")
-
-        target_model = strip_gemini_model_prefix(model_name)
-
-        prompt = (
+        prompt_prefix = (
             "Bạn là một chuyên gia SEO YouTube hàng đầu.\n"
             f"Dự án đã có các giá trị SEO mặc định. Bạn chỉ được tạo nội dung bổ sung, KHÔNG được xóa hay thay thế các giá trị mặc định của người dùng.\n"
             f"Hãy sinh thêm nội dung SEO bổ sung bằng ngôn ngữ {target_language} dựa trên nội dung transcript video bên dưới.\n"
@@ -203,7 +199,10 @@ class YouTubePublishingService:
             "2. Additional Description (Mô tả bổ sung): Tóm tắt nội dung hấp dẫn 100-200 từ, kèm 3-5 hashtag.\n"
             "3. Additional Tags (Từ khóa bổ sung): Mảng 5-10 từ khóa liên quan đến nội dung video. DO NOT remove, replace, or modify default tags. Only provide additional relevant tags.\n"
             "4. Category ID: '22' (People & Blogs), '27' (Education), '24' (Entertainment).\n\n"
-            f"NỘI DUNG TRANSCRIPT:\n{transcript_text[:3000]}\n\n"
+            "NỘI DUNG TRANSCRIPT:\n"
+        )
+        prompt_suffix = (
+            "\n\n"
             "Trả về JSON thuần túy (không markdown):\n"
             "{\n"
             '  "title": "Tiêu đề gợi ý...",\n'
@@ -213,26 +212,60 @@ class YouTubePublishingService:
             "}"
         )
 
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.3, "responseMimeType": "application/json"}
-        }
+        def validate(parsed: dict) -> dict:
+            title = parsed.get("title")
+            description = parsed.get("description")
+            tags = parsed.get("tags")
+            category = parsed.get("category_id")
+            if (not isinstance(title, str) or len(title) > 200
+                    or not isinstance(description, str) or len(description) > 4000
+                    or not isinstance(tags, list) or len(tags) > 20
+                    or any(not isinstance(tag, str) or len(tag) > 100 for tag in tags)
+                    or not isinstance(category, str) or category not in ("22", "24", "27")):
+                raise InvalidEditorOutput() from None
+            return {"title": title, "description": description, "tags": tags, "category_id": category}
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={settings.GEMINI_API_KEY}"
-        ai_res = {}
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                res = await client.post(url, json=payload)
-                if res.status_code == 200:
-                    data = res.json()
-                    parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                    if parts:
-                        raw_text = parts[0].get("text", "").strip()
-                        json_str = re.sub(r"^```json\s*", "", raw_text, flags=re.MULTILINE)
-                        json_str = re.sub(r"```$", "", json_str, flags=re.MULTILINE).strip()
-                        ai_res = json.loads(json_str)
-            except Exception as ex:
-                logger.warning("Gemini YouTube SEO generation exception", error=str(ex), model=target_model)
+        ai_res = await generate_catalog_json(
+            sessions=sessions, data_dir=data_dir, prompt_prefix=prompt_prefix,
+            transcript=transcript_text, prompt_suffix=prompt_suffix, validate=validate,
+        )
+
+        if ai_res is None:
+            if not settings.GEMINI_API_KEY:
+                return {"title": rendered_title or f"Video {episode_num}", "description": rendered_desc,
+                        "tags": base_tags, "category_id": "22"}
+
+            import httpx
+            from app.services.model_resolver import AIModelResolver
+            from app.providers.llm.gemini_provider import strip_gemini_model_prefix
+
+            if not model_name:
+                res_model = await AIModelResolver.resolve_llm_model(None)
+                model_name = res_model.get("model_id")
+
+            target_model = strip_gemini_model_prefix(model_name)
+            prompt = prompt_prefix + transcript_text[:3000] + prompt_suffix
+
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.3, "responseMimeType": "application/json"}
+            }
+
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent"
+            ai_res = {}
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                try:
+                    res = await client.post(url, json=payload, headers={"x-goog-api-key": settings.GEMINI_API_KEY})
+                    if res.status_code == 200:
+                        data = res.json()
+                        parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                        if parts:
+                            raw_text = parts[0].get("text", "").strip()
+                            json_str = re.sub(r"^```json\s*", "", raw_text, flags=re.MULTILINE)
+                            json_str = re.sub(r"```$", "", json_str, flags=re.MULTILINE).strip()
+                            ai_res = json.loads(json_str)
+                except Exception as ex:
+                    logger.warning("Gemini YouTube SEO generation exception", code=classify_failure(ex))
 
         ai_desc = ai_res.get("description", "") if ai_allow_desc else ""
         ai_tags = ai_res.get("tags", []) if ai_allow_tags else []

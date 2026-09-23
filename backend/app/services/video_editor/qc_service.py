@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import get_settings
 from app.core import get_logger
@@ -16,6 +18,8 @@ from app.core.job_logger import log_job_event
 from app.media.ffprobe import probe_duration_async, get_video_metadata_async
 from app.media.ffmpeg_process import run_ffmpeg_with_progress_async
 from app.models.video_editor import QCStatusEnum
+from app.services.ai_routing import classify_failure
+from app.services.video_editor.catalog_llm import InvalidEditorOutput, generate_catalog_json
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -75,8 +79,45 @@ class AIQCService:
         transcript_text: str,
         job_id: str = "VT-QC",
         model_name: Optional[str] = None,
+        *,
+        sessions: async_sessionmaker[AsyncSession] | None = None,
+        data_dir: Path | None = None,
     ) -> Dict[str, Any]:
         """Audit translated transcript for profanity, content safety, and translation accuracy using Gemini AI Studio."""
+        prompt_prefix = (
+            "Bạn là một chuyên gia Kiểm định Chất lượng Nội dung Video (AI Quality Control Auditor).\n"
+            "Hãy đánh giá bản chép lời/bản dịch bên dưới về 3 yếu tố:\n"
+            "1. An toàn nội dung (Content Safety - không vi phạm bản quyền, không ngôn từ kích động/độc hại).\n"
+            "2. Chất lượng bản dịch (Translation Quality - câu từ tự nhiên, không bị dịch méo nghĩa).\n"
+            "3. Liệt kê danh sách các lỗi hoặc từ ngữ nghi vấn (nếu có).\n\n"
+            "VĂN BẢN KIỂM ĐỊNH:\n"
+        )
+        prompt_suffix = (
+            "\n\n"
+            "Trả về JSON thuần túy (không markdown) với cấu trúc:\n"
+            "{\n"
+            '  "content_safety_score": 95.0,\n'
+            '  "translation_quality_score": 90.0,\n'
+            '  "issues": ["Từ X bị lặp nguyên văn", "Câu Y dịch chưa xuôi"]\n'
+            "}"
+        )
+
+        def validate(parsed: dict) -> dict:
+            scores = (parsed.get("content_safety_score"), parsed.get("translation_quality_score"))
+            issues = parsed.get("issues")
+            if any(type(score) not in (int, float) or not math.isfinite(score) or not 0 <= score <= 100
+                   for score in scores) or not isinstance(issues, list) or len(issues) > 50 or any(
+                       not isinstance(item, str) or len(item) > 500 for item in issues
+                   ):
+                raise InvalidEditorOutput() from None
+            return {"content_safety_score": scores[0], "translation_quality_score": scores[1], "issues": issues}
+
+        catalog_result = await generate_catalog_json(
+            sessions=sessions, data_dir=data_dir, prompt_prefix=prompt_prefix,
+            transcript=transcript_text, prompt_suffix=prompt_suffix, validate=validate,
+        )
+        if catalog_result is not None:
+            return catalog_result
         if not settings.GEMINI_API_KEY:
             return {"safety_score": 100.0, "quality_score": 100.0, "issues": []}
 
@@ -89,31 +130,17 @@ class AIQCService:
             model_name = res_model.get("model_id")
 
         target_model = strip_gemini_model_prefix(model_name)
-
-        prompt = (
-            "Bạn là một chuyên gia Kiểm định Chất lượng Nội dung Video (AI Quality Control Auditor).\n"
-            "Hãy đánh giá bản chép lời/bản dịch bên dưới về 3 yếu tố:\n"
-            "1. An toàn nội dung (Content Safety - không vi phạm bản quyền, không ngôn từ kích động/độc hại).\n"
-            "2. Chất lượng bản dịch (Translation Quality - câu từ tự nhiên, không bị dịch méo nghĩa).\n"
-            "3. Liệt kê danh sách các lỗi hoặc từ ngữ nghi vấn (nếu có).\n\n"
-            f"VĂN BẢN KIỂM ĐỊNH:\n{transcript_text[:4000]}\n\n"
-            "Trả về JSON thuần túy (không markdown) với cấu trúc:\n"
-            "{\n"
-            '  "content_safety_score": 95.0,\n'
-            '  "translation_quality_score": 90.0,\n'
-            '  "issues": ["Từ X bị lặp nguyên văn", "Câu Y dịch chưa xuôi"]\n'
-            "}"
-        )
+        prompt = prompt_prefix + transcript_text[:4000] + prompt_suffix
 
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json"}
         }
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={settings.GEMINI_API_KEY}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent"
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
-                res = await client.post(url, json=payload)
+                res = await client.post(url, json=payload, headers={"x-goog-api-key": settings.GEMINI_API_KEY})
                 if res.status_code == 200:
                     data = res.json()
                     parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
@@ -123,7 +150,7 @@ class AIQCService:
                         json_str = re.sub(r"```$", "", json_str, flags=re.MULTILINE).strip()
                         return json.loads(json_str)
             except Exception as ex:
-                logger.warning("Gemini QC audit exception", error=str(ex), model=target_model)
+                logger.warning("Gemini QC audit exception", code=classify_failure(ex))
 
         return {"content_safety_score": 95.0, "translation_quality_score": 95.0, "issues": []}
 
@@ -134,6 +161,9 @@ class AIQCService:
         source_duration: float,
         transcript_text: str = "",
         job_id: str = "VT-QC",
+        *,
+        sessions: async_sessionmaker[AsyncSession] | None = None,
+        data_dir: Path | None = None,
     ) -> Dict[str, Any]:
         """
         Run complete AI Quality Control Audit Suite (Audio LUFS, Drift, Black frames, Gemini Audit).
@@ -155,7 +185,9 @@ class AIQCService:
         sync_drift_ms = abs(out_dur - source_duration) * 1000.0 if out_dur > 0 else 0.0
         
         # 4. Gemini Content Safety & Translation Audit
-        gemini_audit = await cls.audit_content_with_gemini(transcript_text, job_id=job_id)
+        gemini_audit = await cls.audit_content_with_gemini(
+            transcript_text, job_id=job_id, sessions=sessions, data_dir=data_dir,
+        )
         content_safety_score = float(gemini_audit.get("content_safety_score", 100.0))
         translation_quality_score = float(gemini_audit.get("translation_quality_score", 100.0))
         issues = gemini_audit.get("issues", [])

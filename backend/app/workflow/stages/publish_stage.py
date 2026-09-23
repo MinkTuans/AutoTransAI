@@ -8,6 +8,7 @@ from typing import Any
 
 from app.workflow.workflow_context import WorkflowContext
 from app.config import get_settings
+from app.database import async_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ class PublishStage:
         seo = await YouTubePublishingService.generate_youtube_seo_metadata(
             transcript_text=ctx.raw_transcript or "",
             target_language=ctx.target_language,
+            sessions=async_session_factory,
         )
         ctx.seo_metadata = seo
         return seo

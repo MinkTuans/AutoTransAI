@@ -4,6 +4,7 @@ Video Editing Automation, AI Quality Control (AI QC), and YouTube Upload API Rou
 
 from __future__ import annotations
 
+import json
 import uuid
 from pathlib import Path
 from typing import Optional, List
@@ -150,6 +151,7 @@ async def run_ai_qc_endpoint(
         source_duration=source_dur,
         transcript_text=transcript_text,
         job_id=job_id,
+        sessions=async_session_factory,
     )
 
     # Save QCReport to database
@@ -314,6 +316,7 @@ async def generate_youtube_seo_endpoint(
         project_name=project_name,
         video_name=video_name,
         episode_num=episode_num,
+        sessions=async_session_factory,
     )
 
     return {"success": True, "data": seo_data}
