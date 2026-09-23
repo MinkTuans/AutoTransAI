@@ -1,3 +1,7 @@
+- **Dynamic Settings Model Catalog (2026-09-23, Task 8A)**:
+  - Replaced the Models tab's legacy custom-model CRUD surface with a read-only canonical catalog: dynamic provider groups, server search/pagination, status/capability/access/default badges, and a safe detail dialog. Existing Provider, Function, Social, and System tabs remain unchanged.
+  - Added `aiApi` read methods and mocked DOM tests using Vite-5-compatible Vitest 2, React Testing Library, and jsdom. No backend, database, provider, key, or runtime configuration changes. Updated the knowledge base.
+
 - **Unified ANALYZE timeline QC review fix (2026-09-23, Task 6E2A review)**:
   - Corrected the QC gate to validate the `start_time`/`end_time` emitted by canonical STT; previously both defaulted to zero and blocked valid workflows at NEEDS_REVIEW. Preserved legacy `start`/`end` support and normalized those offsets before the shared timeline cleaner. Malformed timestamps now produce a safe QC issue.
   - Added failing-first real AnalyzeStage steps → QC → TranslateStage progression and legacy-shape regressions; no schema/API/UI/provider changes. Updated the knowledge base.

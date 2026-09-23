@@ -73,6 +73,12 @@ export const settingsApi = {
   testStorage: (data) => api.post('/settings/storage/test', data).then(res => res.data),
 };
 
+export const aiApi = {
+  listProviders: () => api.get('/ai/providers').then(res => res.data),
+  listModels: (params) => api.get('/ai/models', { params }).then(res => res.data),
+  getModel: (modelId) => api.get(`/ai/models/${encodeURIComponent(modelId)}`).then(res => res.data),
+};
+
 export const systemApi = {
 
   health: () => api.get('/system/health').then(res => res.data),
@@ -216,5 +222,4 @@ export const videoMergerApi = {
   retryJob: (jobId) => api.post(`/video-merger/jobs/${jobId}/retry`).then(res => res.data),
   deleteJob: (jobId) => api.delete(`/video-merger/jobs/${jobId}`).then(res => res.data),
 };
-
 

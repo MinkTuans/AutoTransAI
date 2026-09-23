@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { providersApi, settingsApi, systemApi, tiktokApi, youtubeApi } from '../api';
 import { LoadingSpinner, ButtonSpinner, LoadingOverlay, SkeletonLoader } from '../components/LoadingSpinner';
+import ModelCatalog from '../components/settings/ModelCatalog';
 
 
 export default function Settings() {
@@ -38,24 +39,6 @@ export default function Settings() {
   // 3. AI Models State
   const [modelsList, setModelsList] = useState([]);
   const [customModelInputMode, setCustomModelInputMode] = useState({});
-  const [showAddModelModal, setShowAddModelModal] = useState(false);
-  const [newModelData, setNewModelData] = useState({
-    id: '',
-    provider_id: 'gemini',
-    model_name: '',
-    capabilities: ['LLM'],
-    is_default: false,
-    description: '',
-  });
-  const [showEditModelModal, setShowEditModelModal] = useState(false);
-  const [editingModelData, setEditingModelData] = useState({
-    id: '',
-    provider_id: 'gemini',
-    model_name: '',
-    capabilities: ['LLM'],
-    is_default: false,
-    description: '',
-  });
 
 
   // 4. Social Accounts State
@@ -430,67 +413,6 @@ export default function Settings() {
     }
   };
 
-  // Handler: Add Custom Model
-  const handleAddCustomModel = async (e) => {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      const res = await settingsApi.addModel(newModelData);
-      if (res.success) {
-        setMessage({ type: 'success', text: 'Custom model added to catalog' });
-        setShowAddModelModal(false);
-        fetchModels();
-      }
-    } catch (err) {
-      setMessage({ type: 'danger', text: err.response?.data?.detail || 'Failed adding model' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleOpenEditModelModal = (model) => {
-    setEditingModelData({
-      id: model.id,
-      provider_id: model.provider_id || 'gemini',
-      model_name: model.model_name || '',
-      capabilities: Array.isArray(model.capabilities) ? [...model.capabilities] : ['LLM'],
-      is_default: !!model.is_default,
-      description: model.description || '',
-    });
-    setShowEditModelModal(true);
-  };
-
-  const handleUpdateCustomModel = async (e) => {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      const res = await settingsApi.updateModel(editingModelData.id, editingModelData);
-      if (res.success) {
-        setMessage({ type: 'success', text: `Đã cập nhật model '${editingModelData.id}' thành công!` });
-        setShowEditModelModal(false);
-        fetchModels();
-      }
-    } catch (err) {
-      setMessage({ type: 'danger', text: err.response?.data?.detail || 'Thất bại khi cập nhật model' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDeleteModel = async (modelId) => {
-    if (!window.confirm(`Bạn có chắc chắn muốn xóa model '${modelId}'?`)) return;
-    try {
-      const res = await settingsApi.deleteModel(modelId);
-      if (res.success) {
-        setMessage({ type: 'success', text: `Đã xóa model '${modelId}' thành công!` });
-        fetchModels();
-      }
-    } catch (err) {
-      setMessage({ type: 'danger', text: err.response?.data?.detail || 'Thất bại khi xóa model' });
-    }
-  };
-
-
   // Handler: Add Social Account
   const handleAddSocialAccount = async (e) => {
     e.preventDefault();
@@ -549,17 +471,6 @@ export default function Settings() {
       }
     } else {
       setShowAddProviderModal(false);
-    }
-  };
-
-  const closeAddModelModalSafely = () => {
-    const isDirty = newModelData.id || newModelData.model_name;
-    if (isDirty) {
-      if (window.confirm('⚠️ Bạn có thông tin Custom Model đang nhập chưa lưu! Bạn có chắc chắn muốn đóng và thoát không?')) {
-        setShowAddModelModal(false);
-      }
-    } else {
-      setShowAddModelModal(false);
     }
   };
 
@@ -920,79 +831,7 @@ export default function Settings() {
       )}
 
       {/* TAB 3: AI MODELS CATALOG */}
-      {activeTab === 'models' && (
-        <div className="card">
-          <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <h3 style={{ margin: 0, fontSize: '1.1rem' }}>🧠 AI Models Catalog</h3>
-              <p style={{ margin: 0, fontSize: '0.85rem', color: '#94a3b8' }}>
-                System supported & user defined custom AI models for LLM, STT, TTS and Video.
-              </p>
-            </div>
-            <button className="btn btn-primary" style={{ fontSize: '0.8rem' }} onClick={() => setShowAddModelModal(true)}>
-              + Add Custom Model
-            </button>
-          </div>
-          <div className="card-body">
-            {modelsList.length === 0 ? (
-              <div style={{ padding: '1rem 0' }}>
-                <LoadingSpinner size="sm" label="Đang tải danh mục AI Models Catalog..." />
-                <SkeletonLoader type="table" rows={8} columns={7} />
-              </div>
-            ) : (
-              <table className="table" style={{ width: '100%', fontSize: '0.85rem' }}>
-              <thead>
-                <tr>
-                  <th>Model ID</th>
-                  <th>Provider</th>
-                  <th>Model Name</th>
-                  <th>Capabilities</th>
-                  <th>Default</th>
-                  <th>Custom Model</th>
-                  <th style={{ textAlign: 'right' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {modelsList.map(m => (
-                  <tr key={m.id}>
-                    <td style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{m.id}</td>
-                    <td><span className="badge badge-info">{m.provider_id}</span></td>
-                    <td>{m.model_name}</td>
-                    <td>
-                      {(m.capabilities || []).map(c => (
-                        <span key={c} className="badge badge-neutral" style={{ marginRight: '0.2rem', fontSize: '0.65rem' }}>{c}</span>
-                      ))}
-                    </td>
-                    <td>{m.is_default ? <span className="badge badge-success">Default</span> : '-'}</td>
-                    <td>{m.is_custom ? <span className="badge badge-warning">Custom</span> : <span className="badge badge-neutral">System</span>}</td>
-                    <td style={{ textAlign: 'right', verticalAlign: 'middle' }}>
-                      <div style={{ display: 'inline-flex', gap: '0.3rem', justifyContent: 'flex-end', alignItems: 'center' }}>
-                        <button
-                          className="btn btn-secondary"
-                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
-                          onClick={() => handleOpenEditModelModal(m)}
-                          title="Chỉnh sửa Model"
-                        >
-                          ✏️ Sửa
-                        </button>
-                        <button
-                          className="btn btn-danger"
-                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
-                          onClick={() => handleDeleteModel(m.id)}
-                          title="Xóa Model"
-                        >
-                          🗑️ Xóa
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            )}
-          </div>
-        </div>
-      )}
+      {activeTab === 'models' && <ModelCatalog />}
 
       {/* TAB 4: SOCIAL ACCOUNTS */}
       {activeTab === 'social' && (
@@ -1266,156 +1105,6 @@ export default function Settings() {
                   <button type="button" className="btn btn-secondary" onClick={closeAddProviderModalSafely}>Cancel</button>
                   <button type="submit" className="btn btn-primary" disabled={saving}>
                     {saving ? <><ButtonSpinner /> Đang thêm...</> : 'Add Provider'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: ADD CUSTOM MODEL */}
-      {showAddModelModal && (
-        <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) closeAddModelModalSafely(); }}>
-          <div className="modal-dialog">
-            <div className="modal-header">
-              <h3>Add Custom Model</h3>
-              <button type="button" className="modal-close-btn" onClick={closeAddModelModalSafely}>&times;</button>
-            </div>
-            <div className="modal-body">
-              <form onSubmit={handleAddCustomModel}>
-                <div className="form-group">
-                  <label className="form-label">Model ID</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="e.g. gemini-2.5-pro-custom"
-                    value={newModelData.id}
-                    onChange={(e) => setNewModelData({ ...newModelData, id: e.target.value })}
-                    required
-                  />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Provider</label>
-                  <select
-                    className="form-control"
-                    value={newModelData.provider_id}
-                    onChange={(e) => setNewModelData({ ...newModelData, provider_id: e.target.value })}
-                  >
-                    <option value="gemini">Gemini</option>
-                    <option value="openai">OpenAI</option>
-                    <option value="kling">Kling</option>
-                    <option value="fal">fal.ai</option>
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Model Name</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="e.g. Gemini Custom Fine-Tuned"
-                    value={newModelData.model_name}
-                    onChange={(e) => setNewModelData({ ...newModelData, model_name: e.target.value })}
-                    required
-                  />
-                </div>
-                <div className="modal-footer">
-                  <button type="button" className="btn btn-secondary" onClick={closeAddModelModalSafely}>Cancel</button>
-                  <button type="submit" className="btn btn-primary" disabled={saving}>
-                    {saving ? <><ButtonSpinner /> Đang thêm...</> : 'Add Model'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: EDIT MODEL */}
-      {showEditModelModal && (
-        <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setShowEditModelModal(false); }}>
-          <div className="modal-dialog">
-            <div className="modal-header">
-              <h3>Chỉnh Sửa AI Model — {editingModelData.id}</h3>
-              <button type="button" className="modal-close-btn" onClick={() => setShowEditModelModal(false)}>&times;</button>
-            </div>
-            <div className="modal-body">
-              <form onSubmit={handleUpdateCustomModel}>
-                <div className="form-group">
-                  <label className="form-label">Model ID</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    value={editingModelData.id}
-                    disabled
-                    style={{ opacity: 0.7, cursor: 'not-allowed', fontFamily: 'monospace' }}
-                  />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Provider</label>
-                  <select
-                    className="form-control"
-                    value={editingModelData.provider_id}
-                    onChange={(e) => setEditingModelData({ ...editingModelData, provider_id: e.target.value })}
-                  >
-                    <option value="gemini">Gemini</option>
-                    <option value="openai">OpenAI</option>
-                    <option value="edge_tts">Edge TTS</option>
-                    <option value="google_cloud_tts">Google Cloud TTS</option>
-                    <option value="elevenlabs">ElevenLabs</option>
-                    <option value="kling">Kling AI</option>
-                    <option value="fal">fal.ai</option>
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Model Display Name</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="Tên hiển thị model..."
-                    value={editingModelData.model_name}
-                    onChange={(e) => setEditingModelData({ ...editingModelData, model_name: e.target.value })}
-                    required
-                  />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Capabilities</label>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', marginTop: '0.3rem' }}>
-                    {['STT', 'LLM', 'TRANSLATION', 'TTS', 'VIDEO_GENERATION', 'IMAGE_GENERATION'].map(cap => {
-                      const checked = (editingModelData.capabilities || []).includes(cap);
-                      return (
-                        <label key={cap} style={{ fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer' }}>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={(e) => {
-                              const currentCaps = editingModelData.capabilities || [];
-                              const updatedCaps = e.target.checked
-                                ? [...currentCaps, cap]
-                                : currentCaps.filter(c => c !== cap);
-                              setEditingModelData({ ...editingModelData, capabilities: updatedCaps });
-                            }}
-                          />
-                          {cap}
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-                <div className="form-group">
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem' }}>
-                    <input
-                      type="checkbox"
-                      checked={editingModelData.is_default}
-                      onChange={(e) => setEditingModelData({ ...editingModelData, is_default: e.target.checked })}
-                    />
-                    Đặt làm model mặc định của Provider
-                  </label>
-                </div>
-                <div className="modal-footer">
-                  <button type="button" className="btn btn-secondary" onClick={() => setShowEditModelModal(false)}>Hủy</button>
-                  <button type="submit" className="btn btn-primary" disabled={saving}>
-                    {saving ? <><ButtonSpinner /> Đang lưu...</> : 'Lưu Thay Đổi'}
                   </button>
                 </div>
               </form>
