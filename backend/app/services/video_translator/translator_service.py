@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import math
 import re
 import shutil
 from pathlib import Path
@@ -680,9 +681,10 @@ async def speech_to_text_and_detect_language(
         on_status_update(f"Đang phân tích audio ({audio_path.stat().st_size / (1024*1024):.1f}MB) với STT...")
 
     if sessions is not None:
-        # Legacy installations have the schema but no canonical model, key,
-        # or refresh activity. Missing tables are migration errors: let the
-        # database exception surface rather than silently selecting .env keys.
+        # Legacy installations have the schema but no STT provider model/key.
+        # A global refresh row alone does not activate STT. Missing tables are
+        # migration errors; let the database exception surface instead of
+        # silently selecting .env keys.
         async with sessions() as catalog_db:
             catalog_model = await catalog_db.scalar(
                 select(CatalogModel.id).where(
@@ -692,8 +694,9 @@ async def speech_to_text_and_detect_language(
             catalog_key = await catalog_db.scalar(
                 select(APIKey.id).where(APIKey.provider_id.in_(("gemini", "openai"))).limit(1)
             )
-            refresh_run = await catalog_db.scalar(select(CatalogRefreshRun.id).limit(1))
-            initialized = any(value is not None for value in (catalog_model, catalog_key, refresh_run))
+            # Check the canonical schema even when this table does not decide STT readiness.
+            await catalog_db.scalar(select(CatalogRefreshRun.id).limit(1))
+            initialized = catalog_model is not None or catalog_key is not None
             if initialized:
                 stt_default = await catalog_db.get(AIFunctionConfig, "stt")
                 if stt_default is None or not stt_default.model_id:
@@ -711,7 +714,14 @@ async def speech_to_text_and_detect_language(
                     )
                 raise UnsupportedModalityError("No Studio STT adapter for this provider.")
 
-            return await invoke_route(route, transcribe, sessions, data_dir or get_settings().DATA_DIR)
+            # invoke_route's timeout wraps the complete adapter, including all
+            # sequential chunks. Allow each 85-second Gemini chunk stride
+            # room for provider HTTP (up to 180s on OpenAI), extraction, and
+            # probing, while retaining a finite six-hour ceiling per attempt.
+            chunks = max(1, math.ceil(max(0.0, min(total_duration, 21600.0) - 5.0) / 85.0))
+            route_timeout = min(21600.0, 60.0 + chunks * 300.0)
+            return await invoke_route(route, transcribe, sessions, data_dir or get_settings().DATA_DIR,
+                                      timeout=route_timeout)
 
     settings = get_settings()
     stt_errors = []

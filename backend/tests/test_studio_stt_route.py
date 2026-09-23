@@ -15,7 +15,7 @@ from app.models import APIKey, CatalogModel, CatalogRefreshRun, KeyModelAccess, 
 from app.models.settings import AIFunctionConfig
 from app.models.video_translator import VideoAsset, VideoTranslationJob
 from app.services.credential_service import CredentialService
-from app.services.ai_routing import RouteConfigurationError, RouteExhausted
+from app.services.ai_routing import RouteConfigurationError, RouteExhausted, invoke_route as canonical_invoke_route
 from app.services.video_translator import translator_service as service
 
 
@@ -290,6 +290,78 @@ async def test_unrelated_tts_catalog_and_key_keep_legacy_stt(studio_catalog, mon
     ))
     result = await service.speech_to_text_and_detect_language(audio, sessions=sessions, data_dir=path)
     assert result[0][0]["text"] == "legacy"
+
+
+@pytest.mark.asyncio
+async def test_global_refresh_without_stt_state_keeps_legacy_stt(studio_catalog, monkeypatch, tmp_path):
+    sessions, path = studio_catalog
+    async with sessions.begin() as db:
+        await add_target(db, path, "elevenlabs", "voice-model", "tts-only-key", capabilities=("TTS",))
+        db.add(CatalogRefreshRun(mode="refresh", status="completed", summary={}))
+    audio = mock_audio(monkeypatch, tmp_path)
+    legacy = AsyncMock(return_value=([{"text": "legacy"}], "English"))
+    monkeypatch.setattr(service, "transcribe_audio_with_gemini", legacy)
+    monkeypatch.setattr(service, "get_settings", lambda: SimpleNamespace(
+        GEMINI_API_KEY="legacy-key", OPENAI_API_KEY="", DEFAULT_LLM_PROVIDER="gemini",
+        ENABLE_OPENAI_FALLBACK=False,
+    ))
+    result = await service.speech_to_text_and_detect_language(audio, sessions=sessions, data_dir=path)
+    assert result[0][0]["text"] == "legacy"
+
+
+@pytest.mark.asyncio
+async def test_studio_route_budget_allows_valid_call_past_thirty_seconds(studio_catalog, monkeypatch, tmp_path):
+    sessions, path = studio_catalog
+    async with sessions.begin() as db:
+        selected = await add_target(db, path, "openai", "speech", "request-key")
+        db.add(AIFunctionConfig(function_id="stt", function_name="STT", capability="STT",
+                                primary_provider_id="openai", model_id=selected.id))
+    audio = mock_audio(monkeypatch, tmp_path)
+    calls = []
+
+    async def post(client, url, **kwargs):
+        calls.append(kwargs["data"]["model"])
+        return httpx.Response(200, json=response_for(url))
+
+    async def simulated_wait_for(operation, timeout):
+        if timeout <= 31:
+            operation.close()
+            raise asyncio.TimeoutError()
+        return await operation
+
+    async def invoke_with_clock(route, transport, sessions, data_dir, **kwargs):
+        return await canonical_invoke_route(route, transport, sessions, data_dir,
+                                            wait_for=simulated_wait_for, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    monkeypatch.setattr(service, "invoke_route", invoke_with_clock)
+    result = await service.speech_to_text_and_detect_language(audio, sessions=sessions, data_dir=path)
+    assert result[0][0]["text"] == "Hi"
+    assert calls == ["speech"]
+
+
+@pytest.mark.asyncio
+async def test_studio_route_budget_scales_with_chunks_and_has_cap(studio_catalog, monkeypatch, tmp_path):
+    sessions, path = studio_catalog
+    async with sessions.begin() as db:
+        selected = await add_target(db, path, "openai", "speech", "request-key")
+        db.add(AIFunctionConfig(function_id="stt", function_name="STT", capability="STT",
+                                primary_provider_id="openai", model_id=selected.id))
+    audio = mock_audio(monkeypatch, tmp_path)
+    durations = iter((2.0, 181.0, 100000.0))
+    monkeypatch.setattr(service, "probe_duration_async", AsyncMock(side_effect=lambda _: next(durations)))
+    budgets = []
+
+    async def record_budget(route, transport, sessions, data_dir, *, timeout):
+        budgets.append(timeout)
+        return ([{"text": "Hi"}], "English")
+
+    monkeypatch.setattr(service, "invoke_route", record_budget)
+    for _ in range(3):
+        await service.speech_to_text_and_detect_language(audio, sessions=sessions, data_dir=path)
+    assert budgets[0] > 180
+    assert budgets[1] > budgets[0]
+    assert budgets[2] == 21600.0
 
 
 @pytest.mark.asyncio
