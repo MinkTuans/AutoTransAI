@@ -1,3 +1,8 @@
+- **Bounded Provider Model Discovery (2026-09-23)**:
+  - Added read-only Gemini/OpenAI/Anthropic/ElevenLabs/Fal list adapters under `backend/app/providers/discovery/` and `backend/app/services/model_discovery_service.py`, with complete/partial/unsupported/failed results and explicit credential-visible versus public catalog scope.
+  - Preserves exact remote identities (only Gemini `models/` is stripped), deduplicates IDs, allowlists provider metadata, bounds pages/rows/bytes/time, rejects unsafe pagination/malformed JSON/redirects, and keeps secrets out of URLs and returned errors. No database, route, or generation-consumer changes.
+  - Added mocked HTTP coverage in `backend/tests/test_model_discovery.py`; updated knowledge base. Kling/Google Cloud TTS remain unsupported for generic model discovery; Edge remains outside key scans.
+
 - **Catalog Access Provider Integrity (2026-09-23)**:
   - Fixed cross-provider access associations with non-null provider identity and composite foreign keys in `ai_catalog.py`, `api_key.py`, and additive revision `20260923_ai_catalog`.
   - Added validated, idempotent `grant_model_access` in `catalog_access_service.py`. Expanded ORM-created and migration-created SQLite regressions plus offline MySQL checks; 32 focused tests pass. Key deletion still retains catalog models. Updated knowledge base; no real database migration performed.
