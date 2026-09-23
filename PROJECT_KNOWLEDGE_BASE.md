@@ -371,8 +371,8 @@ The frontend is a single-page React 18 application built with Vite and designed 
 5. **`Settings.jsx` (Cài đặt)**:
    - 5 Configuration Tabs:
      - **Providers**: Multi-API key manager with priority, cooldown status, and key testing.
-     - **AI Functions**: Global mapping of capabilities (STT, Translation, TTS, Video Gen, Visual Gender, Image Gen) to primary and fallback models.
-     - **AI Models**: Read-only canonical Model Catalog using `/api/ai/providers` and paginated `/api/ai/models`; dynamic provider filters, server search, status/capability/access/default badges, and safe detail metadata. Legacy custom-model add/edit/delete controls are not exposed in this tab. The AI Functions and Providers tabs retain their existing legacy behavior until the next UI slices.
+     - **AI Functions**: Read-only canonical Function inventory from `/api/ai/functions`, showing exact configured provider/model IDs and invalid/default statuses. A capability-filtered Model Picker uses server search/pagination and writes only `{model_id: CatalogModel.id}` through canonical PUT; no primary/fallback selectors or manual model input remain in this tab.
+     - **AI Models**: Read-only canonical Model Catalog using `/api/ai/providers` and paginated `/api/ai/models`; dynamic provider filters, server search, status/capability/access/default badges, and safe detail metadata. Legacy custom-model add/edit/delete controls are not exposed in this tab. The Providers tab retains its existing legacy behavior until Task 8C.
      - **Social Accounts**: YouTube and TikTok OAuth connect buttons and active account list.
      - **System**: Storage configuration, processing concurrency, sync strategies, and default languages.
 
@@ -383,6 +383,7 @@ The frontend is a single-page React 18 application built with Vite and designed 
 - **`Navbar.jsx`**: Top navigation pill bar (Studio, Ghép Video, Dự án, Cài đặt).
 - **`LoadingSpinner.jsx`**: Consistent loading indicators and skeleton screens.
 - **`settings/ModelCatalog.jsx`**: The focused AI Models tab view; details use an allowlist for provider metadata and never render credentials. Frontend DOM regressions use Vitest 2, React Testing Library, and jsdom with mocked canonical API responses.
+- **`settings/FunctionRouting.jsx`**: The focused AI Functions tab view and accessible Model Picker. The UI gates inactive/incompatible/no-key rows, leaves fully unknown capability selectable, and relies on canonical PUT for final authority. Failed writes retain the previous default and show a fixed safe error. The catalog detail dialog is shared with the Models tab.
 
 ---
 

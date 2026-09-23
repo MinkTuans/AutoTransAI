@@ -127,4 +127,16 @@ describe('ModelCatalog', () => {
     expect(await screen.findByText('No models found for this view.')).toBeTruthy();
     expect(screen.getByText('Fal Studio has no catalog models yet.')).toBeTruthy();
   });
+
+  it('does not call a provider empty when only the search has no matches', async () => {
+    aiApi.listModels.mockImplementation(async ({ q }) => q ? page([]) : page([falModel]));
+    render(<ModelCatalog />);
+    await screen.findByText('Film Maker');
+    fireEvent.click(screen.getByRole('button', { name: /Fal Studio/ }));
+    fireEvent.change(screen.getByRole('searchbox', { name: /Search models/ }),
+      { target: { value: 'not-a-match' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    expect(await screen.findByText('No models found for this view.')).toBeTruthy();
+    expect(screen.queryByText('Fal Studio has no catalog models yet.')).toBeNull();
+  });
 });

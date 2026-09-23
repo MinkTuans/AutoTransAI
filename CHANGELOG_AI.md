@@ -1,3 +1,7 @@
+- **Canonical Function Model Picker (2026-09-23, Task 8B)**:
+  - Replaced the Function tab's legacy primary/fallback selects and manual model input with a canonical Function inventory and capability-filtered searchable/paginated Model Picker. Exact catalog IDs are written through canonical PUT only; invalid current defaults stay visible, unsafe candidates cannot be selected in the UI, and failed writes preserve the previous default.
+  - Shared the safe Model Catalog detail dialog, fixed filtered-empty provider wording, added mocked component and Settings integration tests, and updated the knowledge base. Other Settings tabs, backend, database, providers, credentials, and legacy fallback columns were not changed.
+
 - **Dynamic Settings Model Catalog (2026-09-23, Task 8A)**:
   - Replaced the Models tab's legacy custom-model CRUD surface with a read-only canonical catalog: dynamic provider groups, server search/pagination, status/capability/access/default badges, and a safe detail dialog. Existing Provider, Function, Social, and System tabs remain unchanged.
   - Added `aiApi` read methods and mocked DOM tests using Vite-5-compatible Vitest 2, React Testing Library, and jsdom. No backend, database, provider, key, or runtime configuration changes. Updated the knowledge base.

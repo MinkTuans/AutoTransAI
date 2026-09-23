@@ -29,7 +29,7 @@ function scopeLabel(model) {
   return 'Listing only';
 }
 
-function ModelDetail({ modelId, onClose }) {
+export function ModelDetail({ modelId, onClose }) {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -155,7 +155,7 @@ export default function ModelCatalog() {
         <button className="btn btn-secondary" type="button" onClick={() => setRetry(value => value + 1)}>Retry models</button>
       </div> : result.items.length === 0 ? <div className="catalog-empty">
         <p>No models found for this view.</p>
-        {selectedProvider && <p>{selectedProvider.name} has no catalog models yet.</p>}
+        {selectedProvider && !search && <p>{selectedProvider.name} has no catalog models yet.</p>}
       </div> : <>
         <div className="catalog-table-wrap"><table className="table catalog-table">
           <thead><tr><th>Model</th><th>Provider</th><th>Status</th><th>Capability</th><th>Access</th><th>Default for</th><th></th></tr></thead>

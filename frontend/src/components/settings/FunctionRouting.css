@@ -1,0 +1,11 @@
+.function-routing .card-header h3 { margin: 0; font-size: 1.1rem; }
+.function-routing .card-header p { margin: 0.35rem 0 0; color: var(--text-secondary); font-size: 0.85rem; }
+.function-routing-table { width: 100%; min-width: 710px; font-size: 0.85rem; }
+.function-routing-table td { vertical-align: middle; }
+.function-routing-table code { font-family: var(--mono); overflow-wrap: anywhere; }
+.function-routing-table small { display: block; margin-top: 0.25rem; color: var(--text-muted); }
+.function-picker { width: min(1100px, 95vw); max-width: 95vw; }
+.function-picker .modal-body { max-height: 75vh; overflow-y: auto; }
+.function-picker-note { color: var(--text-secondary); font-size: 0.85rem; }
+.function-picker-actions { white-space: nowrap; }
+.function-picker-actions .btn { margin: 0.1rem; }

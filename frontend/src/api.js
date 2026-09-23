@@ -77,6 +77,8 @@ export const aiApi = {
   listProviders: () => api.get('/ai/providers').then(res => res.data),
   listModels: (params) => api.get('/ai/models', { params }).then(res => res.data),
   getModel: (modelId) => api.get(`/ai/models/${encodeURIComponent(modelId)}`).then(res => res.data),
+  listFunctions: () => api.get('/ai/functions').then(res => res.data),
+  updateFunction: (functionId, body) => api.put(`/ai/functions/${encodeURIComponent(functionId)}`, body).then(res => res.data),
 };
 
 export const systemApi = {
@@ -222,4 +224,3 @@ export const videoMergerApi = {
   retryJob: (jobId) => api.post(`/video-merger/jobs/${jobId}/retry`).then(res => res.data),
   deleteJob: (jobId) => api.delete(`/video-merger/jobs/${jobId}`).then(res => res.data),
 };
-

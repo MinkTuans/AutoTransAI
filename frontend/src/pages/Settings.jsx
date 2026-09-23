@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { providersApi, settingsApi, systemApi, tiktokApi, youtubeApi } from '../api';
 import { LoadingSpinner, ButtonSpinner, LoadingOverlay, SkeletonLoader } from '../components/LoadingSpinner';
 import ModelCatalog from '../components/settings/ModelCatalog';
+import FunctionRouting from '../components/settings/FunctionRouting';
 
 
 export default function Settings() {
@@ -32,14 +33,6 @@ export default function Settings() {
     capabilities: ['LLM'],
     api_key: '',
   });
-
-  // 2. AI Functions State
-  const [functionsList, setFunctionsList] = useState([]);
-
-  // 3. AI Models State
-  const [modelsList, setModelsList] = useState([]);
-  const [customModelInputMode, setCustomModelInputMode] = useState({});
-
 
   // 4. Social Accounts State
   const [socialAccounts, setSocialAccounts] = useState([]);
@@ -98,22 +91,6 @@ export default function Settings() {
       })
       .catch(err => console.error('Failed fetching keys:', err))
       .finally(() => setKeysLoading(false));
-  };
-
-  const fetchFunctions = () => {
-    return settingsApi.getFunctions()
-      .then(res => {
-        if (res.success) setFunctionsList(res.data);
-      })
-      .catch(err => console.error('Failed fetching AI functions:', err));
-  };
-
-  const fetchModels = () => {
-    return settingsApi.getModels()
-      .then(res => {
-        if (res.success) setModelsList(res.data);
-      })
-      .catch(err => console.error('Failed fetching AI models:', err));
   };
 
   const fetchSocialAccounts = async () => {
@@ -238,8 +215,6 @@ export default function Settings() {
     setLoading(true);
     Promise.all([
       fetchProviders(),
-      fetchFunctions(),
-      fetchModels(),
       fetchSocialAccounts(),
       fetchSystemSettings(),
     ]).finally(() => setLoading(false));
@@ -354,33 +329,6 @@ export default function Settings() {
     } finally {
       setSaving(false);
     }
-  };
-
-  // Handler: Update Function Config
-  const handleUpdateFunctionConfig = async (fnId, keyOrObj, value) => {
-    try {
-      const payload = typeof keyOrObj === 'object' ? keyOrObj : { [keyOrObj]: value };
-      const res = await settingsApi.updateFunction(fnId, payload);
-      if (res.success) {
-        setMessage({ type: 'success', text: `Cấu hình AI Function đã được cập nhật thành công!` });
-        fetchFunctions();
-      }
-    } catch (err) {
-      setMessage({ type: 'danger', text: 'Thất bại khi cập nhật cấu hình AI Function' });
-    }
-  };
-
-  const handlePrimaryProviderChange = (fn, newProviderId) => {
-    const matchingModels = modelsList.filter(m => m.provider_id === newProviderId);
-    let defaultModelId = fn.model_id;
-    if (matchingModels.length > 0) {
-      const defaultModel = matchingModels.find(m => m.is_default) || matchingModels[0];
-      defaultModelId = defaultModel.id;
-    }
-    handleUpdateFunctionConfig(fn.function_id, {
-      primary_provider_id: newProviderId,
-      model_id: defaultModelId,
-    });
   };
 
   // Handler: Save System Settings
@@ -685,150 +633,7 @@ export default function Settings() {
       )}
 
       {/* TAB 2: AI FUNCTION CONFIGURATION */}
-      {activeTab === 'functions' && (
-        <div className="card">
-          <div className="card-header">
-            <h3 style={{ margin: 0, fontSize: '1.1rem' }}>⚡ AI Function Configuration & Routing</h3>
-            <p style={{ margin: 0, fontSize: '0.85rem', color: '#94a3b8' }}>
-              Map system functions to compatible providers. STT is currently set to <strong>Gemini AI Studio</strong>.
-            </p>
-          </div>
-          <div className="card-body">
-            {/* Banner Notice for STT Gemini Requirement */}
-            <div className="alert alert-info" style={{ marginBottom: '1.5rem', fontSize: '0.85rem', display: 'block' }}>
-              <p style={{ margin: 0, lineHeight: 1.55 }}>
-                <strong>Speech-to-Text Policy:</strong> High-precision audio transcription uses <strong>Google Gemini</strong>. When Gemini STT fallback is disabled, any Gemini API error stops the pipeline immediately with a clear error, without calling OpenAI/Whisper.
-              </p>
-            </div>
-
-            {functionsList.length === 0 ? (
-              <div style={{ padding: '1rem 0' }}>
-                <LoadingSpinner size="sm" label="Đang tải danh sách AI Function Config..." />
-                <SkeletonLoader type="table" rows={5} columns={6} />
-              </div>
-            ) : (
-              <table className="table" style={{ width: '100%', fontSize: '0.9rem' }}>
-              <thead>
-                <tr>
-                  <th>AI Function</th>
-                  <th>Capability</th>
-                  <th>Primary Provider</th>
-                  <th>Model</th>
-                  <th>Fallback Enabled</th>
-                  <th>Fallback Provider</th>
-                </tr>
-              </thead>
-              <tbody>
-                {functionsList.map(fn => (
-                  <tr key={fn.function_id}>
-                    <td style={{ fontWeight: '600' }}>{fn.function_name}</td>
-                    <td><span className="badge badge-neutral">{fn.capability}</span></td>
-                    <td>
-                      <select
-                        className="form-control"
-                        style={{ padding: '0.3rem', fontSize: '0.85rem' }}
-                        value={fn.primary_provider_id}
-                        onChange={(e) => handlePrimaryProviderChange(fn, e.target.value)}
-                      >
-                        {(fn.eligible_providers || []).map(p => (
-                          <option key={p.id} value={p.id}>
-                            {p.name} {p.configured ? '✅' : '⚠️ (Key missing)'}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td>
-                      {(() => {
-                        const providerModels = modelsList.filter(m => m.provider_id === fn.primary_provider_id);
-                        const hasCurrentInList = providerModels.some(m => m.id === fn.model_id);
-                        const isCustomManual = customModelInputMode[fn.function_id];
-
-                        if (isCustomManual || providerModels.length === 0) {
-                          return (
-                            <div style={{ display: 'flex', gap: '0.25rem' }}>
-                              <input
-                                type="text"
-                                className="form-control"
-                                style={{ padding: '0.3rem', fontSize: '0.85rem' }}
-                                value={fn.model_id}
-                                onChange={(e) => handleUpdateFunctionConfig(fn.function_id, 'model_id', e.target.value)}
-                                placeholder="Tên model custom..."
-                              />
-                              {providerModels.length > 0 && (
-                                <button
-                                  type="button"
-                                  className="btn btn-secondary"
-                                  style={{ padding: '0.2rem 0.4rem', fontSize: '0.75rem' }}
-                                  onClick={() => setCustomModelInputMode(prev => ({ ...prev, [fn.function_id]: false }))}
-                                  title="Chọn từ Danh mục Model"
-                                >
-                                  📋
-                                </button>
-                              )}
-                            </div>
-                          );
-                        }
-
-                        return (
-                          <select
-                            className="form-control"
-                            style={{ padding: '0.3rem', fontSize: '0.85rem' }}
-                            value={fn.model_id}
-                            onChange={(e) => {
-                              if (e.target.value === '__custom__') {
-                                setCustomModelInputMode(prev => ({ ...prev, [fn.function_id]: true }));
-                              } else {
-                                handleUpdateFunctionConfig(fn.function_id, 'model_id', e.target.value);
-                              }
-                            }}
-                          >
-                            {!hasCurrentInList && fn.model_id && (
-                              <option value={fn.model_id}>
-                                {fn.model_id} (Hiện tại)
-                              </option>
-                            )}
-                            {providerModels.map(m => (
-                              <option key={m.id} value={m.id}>
-                                {m.model_name} ({m.id}) {m.is_default ? '⭐' : ''}
-                              </option>
-                            ))}
-                            <option value="__custom__">✏️ Nhập model ID khác...</option>
-                          </select>
-                        );
-                      })()}
-                    </td>
-                    <td>
-                      <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={fn.fallback_enabled}
-                          onChange={(e) => handleUpdateFunctionConfig(fn.function_id, 'fallback_enabled', e.target.checked)}
-                        />
-                        {fn.fallback_enabled ? 'Enabled' : 'Disabled'}
-                      </label>
-                    </td>
-                    <td>
-                      <select
-                        className="form-control"
-                        style={{ padding: '0.3rem', fontSize: '0.85rem' }}
-                        value={fn.fallback_provider_id || ''}
-                        disabled={!fn.fallback_enabled}
-                        onChange={(e) => handleUpdateFunctionConfig(fn.function_id, 'fallback_provider_id', e.target.value)}
-                      >
-                        <option value="">-- None --</option>
-                        {(fn.eligible_providers || []).map(p => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
-                      </select>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            )}
-          </div>
-        </div>
-      )}
+      {activeTab === 'functions' && <FunctionRouting />}
 
       {/* TAB 3: AI MODELS CATALOG */}
       {activeTab === 'models' && <ModelCatalog />}
