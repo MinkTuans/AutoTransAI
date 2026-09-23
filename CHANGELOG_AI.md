@@ -1,3 +1,7 @@
+- **Disabled legacy JSON key import checkpoint (2026-09-23, Task 9B3B1)**:
+  - Added explicit-path, bounded, fail-closed import into encrypted canonical credentials. Imported keys remain disabled; duplicate, missing/keyless provider, and normalized metadata counts are aggregate only. Legacy JSON and `.env` remain untouched.
+  - Added synthetic disposable SQLite coverage for malformed sources, duplicates, idempotence, metadata, rollback, and plaintext absence. No schema/API/configuration change, provider calls, production database access, or runtime cutover. Updated the knowledge base.
+
 - **Canonical key rotation domain (2026-09-23, Task 9B2A)**:
   - Added additive `20260923_key_rotation_domain` revision for positive priority, separate runtime status, cooldown, allowlisted last error code, and local usage counters. The revision joins the two catalog heads; SQLite migration triggers preserve existing key-model references, while offline MySQL emits checks.
   - Masked credential reads now expose safe rotation metadata. Priority-only PATCH validates positive integers and takes the provider revision lock without enabling or disabling a key. Runtime routes order eligible same-model keys by preference, priority, usage and ID, and recheck status/cooldown before transport.

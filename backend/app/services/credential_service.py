@@ -152,8 +152,7 @@ class CredentialService:
     async def create(self, provider_id: str, secret: str, *, enabled: bool = True) -> CredentialDTO:
         if not isinstance(secret, str) or not secret or secret != secret.strip():
             raise CredentialValidationError("Credential must be nonempty and have no surrounding whitespace.")
-        message = json.dumps([provider_id, secret], separators=(",", ":")).encode("utf-8")
-        fingerprint = hmac.new(self._fingerprint_key, message, hashlib.sha256).hexdigest()
+        fingerprint = self._fingerprint(provider_id, secret)
         await lock_catalog_provider(self._session, provider_id)
         duplicate = await self._session.scalar(select(APIKey.id).where(
             APIKey.provider_id == provider_id, APIKey.fingerprint == fingerprint,
@@ -177,6 +176,10 @@ class CredentialService:
             # commit a first-write savepoint independently of the caller's rollback.
             raise CredentialValidationError("Credential conflicts with an existing entry or its provider is unavailable.") from None
         return _dto(row)
+
+    def _fingerprint(self, provider_id: str, secret: str) -> str:
+        message = json.dumps([provider_id, secret], separators=(",", ":")).encode("utf-8")
+        return hmac.new(self._fingerprint_key, message, hashlib.sha256).hexdigest()
 
     async def list_keys(self, provider_id: str | None = None) -> list[CredentialDTO]:
         query = select(APIKey).order_by(APIKey.created_at, APIKey.id)
