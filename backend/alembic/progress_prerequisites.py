@@ -106,7 +106,6 @@ def _validate_column(actual, expected, dialect):
                      and actual_type == 'TINYINT(1)')
     if ((actual_type != expected.type.compile(dialect=dialect) and not boolean_alias)
             or actual['nullable'] != expected.nullable
-            or bool(actual.get('primary_key')) != expected.primary_key
             or actual.get('computed') or actual.get('identity')):
         _mismatch()
     # ead6ad9 startup-created progress has no server default; migration-created
@@ -121,6 +120,8 @@ def _validate_column(actual, expected, dialect):
 
 def _validate_table(inspector, table, additions, dialect):
     columns = {column['name']: column for column in inspector.get_columns(table.name)}
+    # PK membership is a table constraint. MySQL column reflection does not
+    # provide SQLite's extra per-column primary_key flag.
     if inspector.get_pk_constraint(table.name)['constrained_columns'] != ['id']:
         _mismatch()
     for expected in table.columns:
@@ -177,6 +178,21 @@ def upgrade_group(group):
     if ({projects.name, *(t.name for t in (*youtube, *workflow))} & views
             or projects.name not in existing):
         _mismatch()
+    for table in (*youtube, *workflow):
+        if table.name not in existing:
+            # Let the dialect resolve relation identifiers, including views
+            # and case-insensitive aliases that exact-name inventory misses.
+            if inspector.has_table(table.name):
+                _mismatch()
+            if bind.dialect.name == 'sqlite':
+                # SQLite table/view/index names share a database-wide namespace.
+                # Preflight all groups, including indexes created after tables.
+                for name in (table.name, *(index.name for index in table.indexes)):
+                    if bind.execute(sa.text(
+                            "SELECT 1 FROM sqlite_master WHERE name = :name COLLATE NOCASE "
+                            "AND type IN ('table', 'view', 'index') LIMIT 1"),
+                            {'name': name}).first():
+                        _mismatch()
     _validate_table(inspector, projects, [], bind.dialect)
     for tables in groups.values():
         names = {table.name for table in tables}

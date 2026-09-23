@@ -8,7 +8,9 @@ from alembic.operations import Operations
 from sqlalchemy.dialects import mysql
 from sqlalchemy.exc import IntegrityError
 
-from tests.test_first_alembic_link import db, isolated, revision, traverse as first_link
+from tests.test_first_alembic_link import (
+    db, fixture_schema as first_link_fixture, isolated, revision, traverse as first_link,
+)
 
 
 NAMES = ('20260908_add_youtube_progress', '20260908_workflow_progress')
@@ -188,6 +190,58 @@ def test_unknown_partial_table_or_view_fails_before_any_creation(db, target, kin
     statements = record_sql(db)
     with pytest.raises(RuntimeError, match='Historical schema mismatch'):
         progress_links(db)
+    assert_no_writes(statements)
+
+
+@pytest.mark.parametrize('kind', ['TABLE', 'VIEW'])
+def test_case_insensitive_relation_collision_is_rejected_before_any_write(db, kind):
+    first_link_fixture(db)
+    first_link(db)
+    db.exec_driver_sql(f"CREATE {kind} YouTube_Publications AS SELECT 'private-fixture' AS id")
+    before = snapshot(db)
+    schema = db.exec_driver_sql('SELECT name, sql FROM sqlite_master ORDER BY name').all()
+    statements = record_sql(db)
+    with pytest.raises(RuntimeError, match='Historical schema mismatch'):
+        progress_links(db)
+    assert snapshot(db) == before
+    assert db.exec_driver_sql('SELECT name, sql FROM sqlite_master ORDER BY name').all() == schema
+    assert_no_writes(statements)
+
+
+@pytest.mark.parametrize('index_name', [
+    'ix_youtube_publications_job_id', 'IX_YouTube_Publications_Job_ID',
+    'ix_workflow_executions_project_id',
+    'ix_workflow_stage_executions_workflow_execution_id',
+])
+def test_global_sqlite_index_collision_is_rejected_before_any_write(db, index_name):
+    first_link_fixture(db)
+    first_link(db)
+    db.exec_driver_sql(f'CREATE INDEX {index_name} ON projects(title)')
+    before = snapshot(db)
+    schema = db.exec_driver_sql('SELECT name, sql FROM sqlite_master ORDER BY name').all()
+    statements = record_sql(db)
+    with pytest.raises(RuntimeError, match='Historical schema mismatch'):
+        progress_links(db)
+    assert snapshot(db) == before
+    assert db.exec_driver_sql('SELECT name, sql FROM sqlite_master ORDER BY name').all() == schema
+    assert_no_writes(statements)
+
+
+def test_reflected_columns_without_sqlite_only_primary_key_flag_are_validated(db, monkeypatch):
+    fixture_schema(db, startup=True)
+    inspector_type = sa.engine.reflection.Inspector
+    get_columns = inspector_type.get_columns
+
+    def portable_columns(self, *args, **kwargs):
+        # MySQL exposes PK membership through get_pk_constraint, not columns.
+        return [{key: value for key, value in column.items() if key != 'primary_key'}
+                for column in get_columns(self, *args, **kwargs)]
+
+    monkeypatch.setattr(inspector_type, 'get_columns', portable_columns)
+    before = snapshot(db)
+    statements = record_sql(db)
+    progress_links(db)
+    assert snapshot(db) == before
     assert_no_writes(statements)
 
 

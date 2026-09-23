@@ -1,4 +1,5 @@
 - **Historical YouTube/workflow progress links (2026-09-23, Task 9D2)**:
+  - Review fix: preflight relation names through dialect-aware lookup and SQLite's shared table/view/index namespace before any creation, including mixed-case collisions. Validate primary keys through the portable table-constraint reflection API so MySQL-shaped column metadata is accepted. Added no-write/no-data-change regressions.
   - Repaired the two `20260908` revisions with frozen migration-owned prerequisites from `eec0ef5`, preserving revision ancestry and adding only missing progress columns. Both groups are validated before writes; invalid/partial schemas and ambiguous downgrades fail closed.
   - Added independent historical SQL fixtures and regression coverage for blank/startup-created/populated schemas, unchanged rows, foreign-key enforcement, invalid columns/FKs/views, partial progress, replay, and offline MySQL DDL compilation. Updated the knowledge base.
   - Proven scope is disposable SQLite from initial through workflow progress on supported fixtures only. No configured database, real credentials, network, stamp, upgrade-head, live MySQL, or production compatibility claim.
