@@ -168,6 +168,7 @@ Configuration is loaded centrally via `shared.config.load_root_env()` and parsed
 |---|---|---|---|
 | `DATABASE_URL` | str | `mysql+aiomysql://root:210606@127.0.0.1:3306/autotransai` | Primary DB connection string (Laragon MySQL) |
 | `STORAGE_DRIVER` | str | `local` | Storage driver (`local`) |
+| `DATA_DIR` | Path | `./data` | Credential, encryption-key, and fallback database directory; must resolve outside `STORAGE_ROOT` |
 | `STORAGE_ROOT` | Path | `./storage` | Base path for project media files |
 | `DEFAULT_LLM_PROVIDER` | str | `gemini` | Default text processing provider |
 | `ENABLE_OPENAI_FALLBACK` | bool | `false` | Enable automatic OpenAI fallback |
@@ -294,7 +295,7 @@ erDiagram
   - Social accounts management and local storage test.
 - **`routes/projects.py`**: Project management, batch deletion, settings synchronization, and pre-flight estimation.
 - **`routes/providers.py`**: Provider listing, custom provider creation, API key pool CRUD, key validation, and voice listing.
-- **`routes/storage.py`**: Local file streaming (`/api/storage/files/{path}`) and Unicode-safe download (`/api/storage/download`).
+- **`routes/storage.py`**: Local media streaming (`/api/storage/files/{path}`), Unicode-safe download (`/api/storage/download`), and shared media path validation for `/media`.
 - **`routes/system.py`**: Health check (`/api/system/health`), list interrupted jobs, and allowlisted browser launcher (`/api/system/open-browser`).
 - **`routers/youtube.py`**: Google OAuth 2.0 flow, channel listing, disconnect, and background video publishing.
 - **`routers/tiktok.py`**: TikTok PKCE OAuth flow, account listing, and account disconnection.
@@ -529,8 +530,8 @@ storage/
 ### Path Resolution & Storage Contract
 - **Root Resolution**: `STORAGE_ROOT` is strictly resolved to `<PROJECT_ROOT>/storage`. Backend modules must use `settings.PROJECTS_DIR` and `settings.STORAGE_ROOT` instead of relative `Path("storage")` or `os.getcwd()` to prevent directory divergence.
 - **V2 Translation Migration**: All job workspaces, uploads, logs, and assets operate under `storage/translator/` rather than `data/translator/`.
-- **Media Access**: Served via `GET /api/storage/files/{file_path:path}` and `GET /api/storage/download?path=...`.
-- **Security Boundary**: All file accesses undergo strict path traversal validation using `Path.is_relative_to()`. File paths outside `storage` or `data` roots are hard-blocked.
+- **Media Access**: `GET /media/{path}`, `GET /api/storage/files/{file_path:path}`, and `GET /api/storage/download?path=...` share one resolver. Public files come from `STORAGE_ROOT` or legacy `DATA_DIR/translator/` media paths; the application credential store, fallback SQLite database, and local encryption key stay in `DATA_DIR` outside the public media roots.
+- **Security Boundary**: Public routes accept only known media extensions and resolved paths within those roots. Dotfiles, JSON, databases, logs, path traversal, and symlinks escaping the allowed roots are blocked. Root-level files in `DATA_DIR` are no longer downloadable, including legacy media placed there directly; such files need migration into `STORAGE_ROOT` or `DATA_DIR/translator/`.
 - **Multi-Directory Cleanup Contract**: When a project or translation job is deleted (`DELETE /api/projects/{id}`), `FileCleanupService` deletes the active directory in `storage/` AND proactively purges legacy orphan directories (`backend/storage/projects/{id}` and `data/translator/jobs/{id}`).
 - **Migration Tooling**: Administrative script `backend/scripts/migrate_storage.py` provides non-destructive consolidation with `--dry-run` safety and `--rollback` support via `storage/migration_manifest.json`.
 

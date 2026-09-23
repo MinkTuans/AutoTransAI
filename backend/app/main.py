@@ -15,12 +15,8 @@ if sys.platform == "win32":
         pass
 
 from contextlib import asynccontextmanager
-from pathlib import Path
-
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.core import setup_logging, get_logger
@@ -163,7 +159,7 @@ app.include_router(tiktok.router, prefix="/api")
 
 # Mount Static Files for local media serving
 settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/media", StaticFiles(directory=settings.DATA_DIR), name="media")
+app.mount("/media", storage.MediaFiles(data_dir=settings.DATA_DIR, storage_root=settings.STORAGE_ROOT), name="media")
 
 
 
@@ -174,4 +170,3 @@ async def root():
         "version": "0.1.0",
         "status": "running",
     }
-

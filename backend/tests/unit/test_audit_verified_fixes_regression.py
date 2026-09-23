@@ -25,9 +25,6 @@ from app.models.video_translator import VideoTranslationJob, VideoTranslationSeg
 from app.services.video_translator.voice_assignment_service import assign_project_voices
 from app.services.video_translator.character_mapping_service import map_and_persist
 from app.services.video_source.service import VideoSourceService
-from app.config import get_settings
-
-settings = get_settings()
 
 
 @pytest_asyncio.fixture
@@ -222,8 +219,8 @@ async def test_confirmed_character_identity_persistence(async_db: AsyncSession):
 # TEST 4 — Unicode Download Headers
 # ==============================================================================
 
-def test_unicode_filename_download_endpoint():
-    dummy_dir = settings.DATA_DIR
+def test_unicode_filename_download_endpoint(tmp_path):
+    dummy_dir = tmp_path / "translator" / "jobs" / "unicode-test"
     dummy_dir.mkdir(parents=True, exist_ok=True)
     unicode_file = dummy_dir / "test_unicode_source.mp4"
     unicode_file.write_bytes(b"dummy video content 12345")
@@ -233,18 +230,17 @@ def test_unicode_filename_download_endpoint():
     chinese_filename = "未日临先锋圣母_哔哩哔哩_bilibili.mp4"
     vietnamese_filename = "Bản_dịch_tiếng_Việt_gốc.mp4"
 
-    # Test Chinese filename download
-    resp_zh = client.get(f"/api/storage/download?path={unicode_file.name}&filename={chinese_filename}")
-    assert resp_zh.status_code == 200
-    assert len(resp_zh.content) > 0
-    assert "content-disposition" in resp_zh.headers
+    with patch("app.api.routes.storage.settings.DATA_DIR", tmp_path):
+        # Test Chinese filename download
+        resp_zh = client.get(f"/api/storage/download?path=translator/jobs/unicode-test/{unicode_file.name}&filename={chinese_filename}")
+        assert resp_zh.status_code == 200
+        assert len(resp_zh.content) > 0
+        assert "content-disposition" in resp_zh.headers
 
-    # Test Vietnamese filename download
-    resp_vi = client.get(f"/api/storage/download?path={unicode_file.name}&filename={vietnamese_filename}")
-    assert resp_vi.status_code == 200
-    assert len(resp_vi.content) > 0
-
-    unicode_file.unlink(missing_ok=True)
+        # Test Vietnamese filename download
+        resp_vi = client.get(f"/api/storage/download?path=translator/jobs/unicode-test/{unicode_file.name}&filename={vietnamese_filename}")
+        assert resp_vi.status_code == 200
+        assert len(resp_vi.content) > 0
 
 
 # ==============================================================================

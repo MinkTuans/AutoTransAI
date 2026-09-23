@@ -10,6 +10,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from typing import Literal, Optional
+from pydantic import model_validator
 
 # Ensure project root is in sys.path for `shared` import
 _project_root = Path(__file__).resolve().parent.parent.parent
@@ -43,6 +44,12 @@ class Settings(BaseSettings):
     STORAGE_ROOT: Path = ROOT_DIR / "storage"
     STORAGE_DRIVER: str = "local"
     DB_FILENAME: str = "workflow.db"
+
+    @model_validator(mode="after")
+    def keep_credentials_outside_media(self) -> "Settings":
+        if self.DATA_DIR.resolve().is_relative_to(self.STORAGE_ROOT.resolve()):
+            raise ValueError("DATA_DIR must be outside STORAGE_ROOT")
+        return self
 
     @property
     def DB_URL(self) -> str:

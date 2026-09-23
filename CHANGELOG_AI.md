@@ -1,3 +1,8 @@
+- **Public Media Credential Isolation (2026-09-23)**:
+  - Restricted `/media` and both `/api/storage` file routes to validated media in `STORAGE_ROOT` and legacy `DATA_DIR/translator/`; blocked secrets, database files, logs, dotfiles, traversal, and escaping symlinks.
+  - Enforced `DATA_DIR` outside `STORAGE_ROOT` at configuration load, keeping credential, SQLite, and encryption-key storage separate. Root-level `DATA_DIR` media URLs now require migration to an allowed media root.
+  - Added isolated HTTP regression tests for all three routes and adapted Unicode download coverage to a temporary legacy translator path. Updated `PROJECT_KNOWLEDGE_BASE.md`.
+
 - **Storage Consolidation & Unified File Management Overhaul (2026-09-18)**:
   - **Summary**: Resolved dual storage directory divergence (`AutoTransAI/storage` vs `AutoTransAI/backend/storage`) and fragmented `data/translator` paths. Unified all media, project structures, and job assets into a Single Source of Truth under `AutoTransAI/storage/`. Implemented multi-directory CRUD cleanup contracts to eliminate orphan project directories, corrected security path validations, and added a safe, reversible migration script for legacy data.
   - **Path Resolver Standardization (STOR-001)**:
