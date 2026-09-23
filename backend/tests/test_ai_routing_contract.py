@@ -28,6 +28,7 @@ async def routing_db(tmp_path):
 async def add_model(db, provider, remote, *, caps=None, status="FULL_UNKNOWN", metadata=None):
     model = CatalogModel(provider_id=provider, remote_model_id=remote,
                          capabilities=caps or [], capability_status=status,
+                         source="manual" if status != "FULL_UNKNOWN" else "discovered",
                          discovery_metadata=metadata)
     db.add(model)
     await db.flush()
@@ -94,6 +95,8 @@ def test_catalog_capability_summary_computes_from_persisted_evidence():
     assert "STT" in summary["unknown_capabilities"]
     assert summary["incompatible_capabilities"] == []
     assert "discovery_metadata" not in summary
+    model.capability_status = "KNOWN"
+    assert catalog_capability_summary(model) == summary
 
 
 @pytest.mark.asyncio

@@ -71,7 +71,7 @@ def compatible(capability: str, evidence: CapabilityEvidence) -> bool:
 
 def model_evidence(model) -> CapabilityEvidence:
     """An explicit complete annotation wins; discovery fields stay per-capability."""
-    if model.capability_status != "FULL_UNKNOWN":
+    if model.source != "discovered" and model.capability_status != "FULL_UNKNOWN":
         positive = set(model.capabilities or ())
         if "LLM" in positive:
             positive.add("TRANSLATION")
