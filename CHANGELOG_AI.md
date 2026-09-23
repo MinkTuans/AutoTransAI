@@ -1093,3 +1093,7 @@
 - Canonical route attempts now record allowlisted outcomes and request/success/failure counts on the original enabled credential under the provider lock and a revision check. Rotation, deletion, and disable during transport cannot attribute an old result to a replacement.
 - HTTP 429 starts a bounded cooldown and advances to another key/target; confirmed HTTP 401 invalidates, explicit insufficient quota exhausts, and ambiguous HTTP 403 or invalid parameters preserve credential eligibility. Timeout/provider unavailability retain bounded retry with a fresh pre-transport check.
 - Accepted pending jobs never fall back. Completed provider success returns even when result accounting fails, with a constant diagnostic and no resubmission. Added disposable SQLite and synthetic transport regressions, updated the knowledge base, and left schema, API, UI, legacy import, and live provider paths unchanged.
+- **Explicit `.env` key fallback checkpoint (2026-09-23, Task 9B3B2)**:
+  - Added opt-in, explicit-path fallback when legacy JSON is truly missing. Valid JSON remains authoritative; invalid or unreadable JSON fails closed.
+  - Parsed bounded legacy dotenv variables without interpolation, rejected ambiguous/malformed input, and reused encrypted disabled-key mutation with per-provider deduplication, safe defaults, and caller-owned transaction semantics.
+  - Added disposable SQLite and synthetic source tests; no schema, API, provider, model/default, startup, source-file, or runtime cutover change. Updated the knowledge base.

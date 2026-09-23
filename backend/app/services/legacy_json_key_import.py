@@ -92,6 +92,15 @@ async def import_legacy_json_keys(
     except ValueError:
         return _result("invalid_source")
 
+    return await _import_parsed_keys(db, entries, source_path=Path(json_path), master_key=master_key)
+
+
+async def _import_parsed_keys(
+    db: AsyncSession, entries: list[tuple[str, str, dict[str, object]]],
+    *, source_path: Path, master_key: bytes | str,
+) -> dict[str, object]:
+    """Shared disabled-key mutation; callers validate every source entry first."""
+
     counts = dict.fromkeys(_COUNT_NAMES, 0)
     prepared = []
     seen: set[tuple[str, str]] = set()
@@ -119,7 +128,7 @@ async def import_legacy_json_keys(
 
     if not eligible:
         return _result("imported", counts)
-    service = await CredentialService.open(db, Path(json_path).parent, master_key=master_key)
+    service = await CredentialService.open(db, source_path.parent, master_key=master_key)
     for provider, secret, metadata in eligible:
         fingerprint = service._fingerprint(provider, secret)
         with db.no_autoflush:

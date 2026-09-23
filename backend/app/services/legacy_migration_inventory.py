@@ -36,8 +36,10 @@ COUNT_NAMES = (
 def _read_file(path: Path | None, kind: str) -> tuple[bytes | None, str | None]:
     if path is None:
         return None, None
+    observed = False
     try:
         mode = path.lstat().st_mode
+        observed = True
         if stat.S_ISLNK(mode):
             return None, f"{kind}_symlink_refused"
         if not stat.S_ISREG(mode):
@@ -57,7 +59,8 @@ def _read_file(path: Path | None, kind: str) -> tuple[bytes | None, str | None]:
             return None, f"{kind}_file_too_large"
         return data, None
     except FileNotFoundError:
-        return None, None
+        # A file disappearing after lstat is not a truly missing source.
+        return (None, f"{kind}_read_error") if observed else (None, None)
     except OSError:
         return None, f"{kind}_read_error"
 
