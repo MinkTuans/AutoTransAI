@@ -220,3 +220,68 @@ it('does not let an old refresh completion replace a later provider view', async
   } } }));
   expect(screen.queryByText(/Cập nhật Models: complete/)).toBeNull();
 });
+
+it('reconciles a completed add after A→B→A without replacing the new draft or accepting an older list', async () => {
+  let finishAdd;
+  let finishOldList;
+  let acmeLoads = 0;
+  aiApi.listProviders.mockResolvedValue({ success: true, data: [providers[0], {
+    ...providers[0], id: 'beta', name: 'Beta Voice', enabled_key_count: 1,
+  }] });
+  aiApi.listKeys.mockImplementation(id => {
+    if (id === 'beta') return Promise.resolve({ success: true, data: [{
+      ...key, id: 'beta-key', provider_id: 'beta', masked_key: '****BETA',
+    }] });
+    acmeLoads += 1;
+    if (acmeLoads === 1) return Promise.resolve({ success: true, data: [key] });
+    if (acmeLoads === 2) return new Promise(resolve => { finishOldList = resolve; });
+    return Promise.resolve({ success: true, data: [key, {
+      ...key, id: 'new-key', masked_key: '****NEW2', enabled: false,
+    }] });
+  });
+  aiApi.addKey.mockReturnValue(new Promise(resolve => { finishAdd = resolve; }));
+  render(<KeyPool />);
+  await screen.findByText('****ABCD');
+  fireEvent.click(screen.getByRole('button', { name: /Thêm Key/ }));
+  fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'synthetic-old-secret' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Lưu Key' }));
+  fireEvent.click(screen.getByRole('button', { name: /Beta Voice/ }));
+  await screen.findByText('****BETA');
+  fireEvent.click(screen.getByRole('button', { name: /Acme Voice/ }));
+  await screen.findByText('Đang tải Key Pool…');
+  fireEvent.click(screen.getByRole('button', { name: /Thêm Key/ }));
+  fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'synthetic-new-draft' } });
+  await act(async () => finishAdd({ success: true, data: { key: {
+    ...key, id: 'new-key', masked_key: '****NEW2', enabled: false,
+  }, discovery: { status: 'partial', access_scope: 'unknown', error_code: 'rate_limited', verified_for_generation: false } } }));
+  expect(await screen.findByText('****NEW2')).toBeTruthy();
+  expect(screen.getByLabelText('API Key').value).toBe('synthetic-new-draft');
+  expect(screen.queryByText(/Đã thêm Key/)).toBeNull();
+  await act(async () => finishOldList({ success: true, data: [key] }));
+  expect(screen.getByText('****NEW2')).toBeTruthy();
+});
+
+it('reconciles a completed toggle after A→B→A without showing its old notice', async () => {
+  let finishToggle;
+  let acmeEnabled = true;
+  aiApi.listProviders.mockResolvedValue({ success: true, data: [providers[0], {
+    ...providers[0], id: 'beta', name: 'Beta Voice', enabled_key_count: 1,
+  }] });
+  aiApi.listKeys.mockImplementation(async id => ({ success: true, data: id === 'beta'
+    ? [{ ...key, id: 'beta-key', provider_id: 'beta', masked_key: '****BETA' }]
+    : [{ ...key, enabled: acmeEnabled }] }));
+  aiApi.setKeyEnabled.mockReturnValue(new Promise(resolve => { finishToggle = resolve; }));
+  render(<KeyPool />);
+  await screen.findByText('****ABCD');
+  fireEvent.click(screen.getByRole('button', { name: 'Tắt Key' }));
+  fireEvent.click(screen.getByRole('button', { name: /Beta Voice/ }));
+  await screen.findByText('****BETA');
+  fireEvent.click(screen.getByRole('button', { name: /Acme Voice/ }));
+  await screen.findByText('****ABCD');
+  acmeEnabled = false;
+  await act(async () => finishToggle({ success: true, data: {
+    key: { ...key, enabled: false }, discovery: { status: 'disabled' },
+  } }));
+  expect(await screen.findByRole('button', { name: 'Bật Key' })).toBeTruthy();
+  expect(screen.queryByText('Key đã tắt.')).toBeNull();
+});

@@ -17,10 +17,16 @@ export default function KeyPool() {
   const [error, setError] = useState('');
   const [refresh, setRefresh] = useState(null);
   const selectionGeneration = useRef(0);
+  const selectedIdRef = useRef(null);
+  const keysRequestSequence = useRef(0);
   const selected = providers.find(provider => provider.id === selectedId);
   const isCurrent = generation => generation === selectionGeneration.current;
 
-  useEffect(() => () => { selectionGeneration.current += 1; }, []);
+  useEffect(() => () => {
+    selectionGeneration.current += 1;
+    keysRequestSequence.current += 1;
+    selectedIdRef.current = null;
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -28,6 +34,7 @@ export default function KeyPool() {
       if (!active) return;
       if (!response?.success || !Array.isArray(response.data)) throw new Error('Invalid provider response');
       setProviders(response.data);
+      selectedIdRef.current = response.data[0]?.id || null;
       setSelectedId(response.data[0]?.id || null);
       setProviderLoad('ready');
     }).catch(() => { if (active) setProviderLoad('error'); });
@@ -36,31 +43,34 @@ export default function KeyPool() {
 
   useEffect(() => {
     if (!selected || selected.keyless) {
+      keysRequestSequence.current += 1;
       setKeys([]);
       setKeysLoad('idle');
       return;
     }
     let active = true;
+    const request = ++keysRequestSequence.current;
     setKeys([]);
     setKeysLoad('loading');
     aiApi.listKeys(selected.id).then(response => {
-      if (!active) return;
+      if (!active || request !== keysRequestSequence.current) return;
       if (!response?.success || !Array.isArray(response.data)) throw new Error('Invalid keys response');
       setKeys(response.data);
       setKeysLoad('ready');
-    }).catch(() => { if (active) setKeysLoad('error'); });
+    }).catch(() => { if (active && request === keysRequestSequence.current) setKeysLoad('error'); });
     return () => { active = false; };
   }, [selectedId, selected?.keyless]);
 
   async function reloadKeys(providerId, generation) {
+    const request = ++keysRequestSequence.current;
     try {
       const response = await aiApi.listKeys(providerId);
-      if (!isCurrent(generation)) return;
+      if (!isCurrent(generation) || request !== keysRequestSequence.current) return;
       if (!response?.success || !Array.isArray(response.data)) throw new Error('Invalid keys response');
       setKeys(response.data);
       setKeysLoad('ready');
     } catch {
-      if (isCurrent(generation)) {
+      if (isCurrent(generation) && request === keysRequestSequence.current) {
         setKeys([]);
         setKeysLoad('error');
       }
@@ -91,11 +101,14 @@ export default function KeyPool() {
       if (isCurrent(generation)) {
         setInput('');
         setBusy(false);
+      } else if (selectedIdRef.current === providerId) {
+        await reloadKeys(providerId, selectionGeneration.current);
       }
     }
   }
 
   async function toggleKey(key) {
+    const providerId = key.provider_id;
     const generation = selectionGeneration.current;
     setBusy(true);
     setError('');
@@ -113,11 +126,13 @@ export default function KeyPool() {
       if (isCurrent(generation)) setError('Không thể cập nhật API Key. Vui lòng thử lại.');
     } finally {
       if (isCurrent(generation)) setBusy(false);
+      else if (selectedIdRef.current === providerId) await reloadKeys(providerId, selectionGeneration.current);
     }
   }
 
   async function removeKey(key) {
     if (!window.confirm('Xóa API Key này? Models trong catalog vẫn được giữ đến lần cập nhật Models complete tiếp theo.')) return;
+    const providerId = key.provider_id;
     const generation = selectionGeneration.current;
     setBusy(true);
     setError('');
@@ -132,6 +147,7 @@ export default function KeyPool() {
       if (isCurrent(generation)) setError('Không thể xóa API Key. Vui lòng thử lại.');
     } finally {
       if (isCurrent(generation)) setBusy(false);
+      else if (selectedIdRef.current === providerId) await reloadKeys(providerId, selectionGeneration.current);
     }
   }
 
@@ -167,6 +183,8 @@ export default function KeyPool() {
             onClick={() => {
               if (provider.id === selectedId) return;
               selectionGeneration.current += 1;
+              keysRequestSequence.current += 1;
+              selectedIdRef.current = provider.id;
               setSelectedId(provider.id);
               setAdding(false);
               setInput('');
