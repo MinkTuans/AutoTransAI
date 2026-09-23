@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from fastapi import BackgroundTasks
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import Base
@@ -13,6 +14,7 @@ from app.models import CatalogModel, KeyModelAccess, Project, Provider
 from app.models.segment import Segment
 from app.models.settings import AIFunctionConfig
 from app.providers.base import GenerationResult
+from app.providers.video.boundary_errors import VideoBoundaryError
 from app.core.exceptions import WorkflowError
 from app.services.ai_routing import RoutePending, RoutePlan, build_route
 from app.services.file_manager import get_segment_video_path
@@ -79,7 +81,7 @@ async def test_canonical_video_uses_exact_model_key_then_falls_back(video_case, 
         async def generate_video(self, _prompt, _duration, output, *, route_target, api_key):
             calls.append((self.provider_id, route_target.remote_model_id, api_key))
             if self.provider_id == "fal":
-                raise ValueError("unsupported synthetic model")
+                raise VideoBoundaryError("capability_mismatch", status_code=422, definitive=True)
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_bytes(b"synthetic-video")
             return GenerationResult(True, file_path=output, provider_id=self.provider_id)
@@ -329,6 +331,7 @@ async def test_two_concurrent_catalog_calls_keep_model_and_key_local(video_case,
     full = await build_route(db, "VIDEO_GENERATION")
     routes = [RoutePlan("VIDEO_GENERATION", (next(t for t in full.targets if t.model_id == model.id),), model.id)
               for model in (fal, kling)]
+    await db.commit()
     calls = []
 
     class Adapter:
@@ -342,12 +345,13 @@ async def test_two_concurrent_catalog_calls_keep_model_and_key_local(video_case,
             return GenerationResult(True, file_path=output)
 
     async with sessions() as other_db:
+        other_segment = await other_db.get(Segment, segments[1].id)
         callers = [WorkflowOrchestrator(db, first.id), WorkflowOrchestrator(other_db, second.id)]
         for caller in callers:
             monkeypatch.setattr(caller._registry, "get_video", lambda name: Adapter(name))
         outputs = await asyncio.gather(*(
             caller._generate_catalog_video(segment, route, get_segment_video_path(caller.project_id, 1))
-            for caller, segment, route in zip(callers, segments, routes)
+            for caller, segment, route in zip(callers, [segments[0], other_segment], routes)
         ))
     assert {item[:3] for item in calls} == {("fal", fal.id, "fal-secret"),
                                                ("kling", kling.id, "kling-secret")}
@@ -433,3 +437,157 @@ async def test_precheck_endpoint_uses_catalog_instead_of_stale_video_provider(vi
     assert result["data"]["can_start"]
     await db.refresh(project)
     assert project.workflow_status == "prechecked"
+
+
+@pytest.mark.asyncio
+async def test_restart_after_submission_sees_durable_pending_guard(video_case, monkeypatch):
+    db, sessions, path = video_case
+    model = await add_model(db, path / "data", "fal", "fal-ai/hunyuan-video", "secret")
+    configure(db, model)
+    project = Project(id="restart-project", workflow_status="generating_video", workflow_mode="audio_video")
+    segment = Segment(project_id=project.id, segment_number=1, text_content="story")
+    db.add_all([project, segment])
+    await db.commit()
+    calls = 0
+
+    class Crash(BaseException):
+        pass
+
+    class Adapter:
+        async def generate_video(self, *_args, **_kwargs):
+            nonlocal calls
+            calls += 1
+            async with sessions() as observer:
+                saved = await observer.get(Segment, segment.id)
+                assert saved.video_status == "provider_pending"
+            raise Crash()
+
+    first = WorkflowOrchestrator(db, project.id)
+    monkeypatch.setattr(first._registry, "get_video", lambda _name: Adapter())
+    with pytest.raises(Crash):
+        await first._generate_all_video()
+    async with sessions() as resumed_db:
+        saved_project = await resumed_db.get(Project, project.id)
+        saved_project.workflow_status = "interrupted"
+        await resumed_db.commit()
+        from app.api.routes import projects as projects_module
+        monkeypatch.setattr(projects_module, "async_session_factory", sessions)
+        background = BackgroundTasks()
+        await projects_module.resume_workflow(project.id, background, resumed_db)
+        await background()
+        saved_project = await resumed_db.get(Project, project.id)
+        await resumed_db.refresh(saved_project)
+        assert saved_project.workflow_status == "provider_pending"
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_persistent_post_submit_commit_error_cannot_clear_pending_guard(video_case, monkeypatch):
+    db, sessions, path = video_case
+    model = await add_model(db, path / "data", "fal", "fal-ai/hunyuan-video", "secret")
+    configure(db, model)
+    project = Project(id="commit-error-project", workflow_status="generating_video", workflow_mode="audio_video")
+    segment = Segment(project_id=project.id, segment_number=1, text_content="story")
+    db.add_all([project, segment])
+    await db.commit()
+    project_id = project.id
+    segment_id = segment.id
+    calls = 0
+
+    class Adapter:
+        async def generate_video(self, _prompt, _duration, output, *, route_target, api_key):
+            nonlocal calls
+            calls += 1
+            output.write_bytes(b"delivered")
+            return GenerationResult(True, file_path=output)
+
+    orchestrator = WorkflowOrchestrator(db, project.id)
+    monkeypatch.setattr(orchestrator._registry, "get_video", lambda _name: Adapter())
+    original_commit = db.commit
+    async def failed_after_submission():
+        if calls:
+            raise OSError("persistent database outage")
+        await original_commit()
+    monkeypatch.setattr(db, "commit", failed_after_submission)
+    with pytest.raises((RoutePending, OSError)):
+        await orchestrator._generate_all_video()
+    await db.rollback()  # Simulate the failed worker releasing its connection.
+    async with sessions() as recovered_db:
+        saved = await recovered_db.get(Segment, segment_id)
+        assert saved.video_status == "provider_pending"
+        resumed = WorkflowOrchestrator(recovered_db, project_id)
+        monkeypatch.setattr(resumed._registry, "get_video", lambda _name: Adapter())
+        with pytest.raises(RoutePending):
+            await resumed._generate_all_video()
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_pre_submit_guard_commit_prevents_provider_call(video_case, monkeypatch):
+    db, _sessions, path = video_case
+    model = await add_model(db, path / "data", "fal", "fal-ai/hunyuan-video", "secret")
+    configure(db, model)
+    project = Project(id="guard-commit-project", workflow_status="generating_video", workflow_mode="audio_video")
+    db.add_all([project, Segment(project_id=project.id, segment_number=1, text_content="story")])
+    await db.commit()
+    calls = []
+    orchestrator = WorkflowOrchestrator(db, project.id)
+    monkeypatch.setattr(orchestrator._registry, "get_video", lambda _name: calls.append("provider"))
+    async def failed_commit():
+        raise OSError("database unavailable")
+    monkeypatch.setattr(db, "commit", failed_commit)
+    with pytest.raises(OSError):
+        await orchestrator._generate_all_video()
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_definite_rejection_reset_failure_never_falls_back(video_case, monkeypatch):
+    db, _sessions, path = video_case
+    model = await add_model(db, path / "data", "fal", "fal-ai/hunyuan-video", "secret")
+    await add_model(db, path / "data", "kling", "kling-v3", "other-secret")
+    configure(db, model)
+    project = Project(id="reset-failure-project", workflow_status="generating_video", workflow_mode="audio_video")
+    segment = Segment(project_id=project.id, segment_number=1, text_content="story")
+    db.add_all([project, segment])
+    await db.commit()
+    calls = []
+    class Adapter:
+        async def generate_video(self, _prompt, _duration, _output, *, route_target, api_key):
+            calls.append(route_target.provider_id)
+            raise VideoBoundaryError("capability_mismatch", status_code=422, definitive=True)
+    orchestrator = WorkflowOrchestrator(db, project.id)
+    monkeypatch.setattr(orchestrator._registry, "get_video", lambda _name: Adapter())
+    original_commit = db.commit
+    async def failed_reset():
+        if calls and segment.video_status == "in_progress":
+            raise OSError("database unavailable")
+        await original_commit()
+    monkeypatch.setattr(db, "commit", failed_reset)
+    with pytest.raises(RoutePending):
+        await orchestrator._generate_all_video()
+    await db.refresh(segment)
+    assert calls == ["fal"]
+    assert segment.video_status == "provider_pending"
+
+
+@pytest.mark.asyncio
+async def test_pre_submit_notification_error_never_calls_provider_or_sets_guard(video_case, monkeypatch):
+    db, _sessions, path = video_case
+    model = await add_model(db, path / "data", "fal", "fal-ai/hunyuan-video", "secret")
+    configure(db, model)
+    project = Project(id="notification-project", workflow_status="generating_video", workflow_mode="audio_video")
+    segment = Segment(project_id=project.id, segment_number=1, text_content="story")
+    db.add_all([project, segment])
+    await db.commit()
+    calls = []
+    orchestrator = WorkflowOrchestrator(db, project.id)
+    monkeypatch.setattr(orchestrator._registry, "get_video", lambda _name: calls.append("provider"))
+    async def broken_progress(_event):
+        raise OSError("local notification error")
+    monkeypatch.setattr(orchestrator, "_emit_progress", broken_progress)
+    with pytest.raises(OSError):
+        await orchestrator._generate_all_video()
+    await db.refresh(segment)
+    assert calls == []
+    assert segment.video_status == "pending"

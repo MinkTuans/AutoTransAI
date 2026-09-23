@@ -35,6 +35,7 @@ from app.models.segment import Segment, SegmentStatus
 from app.models.job import Job, JobType, JobStatus
 from app.models.error import Error
 from app.providers.base import AudioProvider, VideoProvider
+from app.providers.video.boundary_errors import VideoBoundaryError
 from app.providers.registry import get_registry
 from app.services.file_manager import (
     ensure_project_structure,
@@ -55,6 +56,13 @@ from app.workflow.state_machine import validate_transition, is_resumable_state
 logger = get_logger(__name__)
 settings = get_settings()
 PENDING_VIDEO_MESSAGE = "Video provider task may still be running; manual reconciliation required before retry."
+
+
+def _definite_video_rejection(error: Exception) -> bool:
+    """Only adapter-classified rejections can advance a billable route."""
+    if not isinstance(error, VideoBoundaryError):
+        return False
+    return error.definitive is True or error.status_code in (400, 401, 402, 403, 404, 422, 429)
 
 
 class WorkflowOrchestrator:
@@ -148,6 +156,15 @@ class WorkflowOrchestrator:
             project = await self._get_project()
             if project.workflow_status == WorkflowStatus.PROVIDER_PENDING.value:
                 return
+            if project.workflow_mode == WorkflowMode.AUDIO_VIDEO.value:
+                # Startup may have changed a running project to INTERRUPTED,
+                # and resume may have moved it to PRECHECKED. The segment's
+                # durable guard still proves an uncertain video submission.
+                pending = next((seg for seg in await self._get_segments()
+                                if seg.video_status == SegmentStatus.PROVIDER_PENDING.value), None)
+                if pending is not None:
+                    await self._persist_video_pending(pending, recovery=True)
+                    return
             ensure_project_structure(self.project_id)
 
             # Start audio generation
@@ -413,6 +430,9 @@ class WorkflowOrchestrator:
     ) -> None:
         """Generate video for a single segment with idempotency and retry."""
         if segment.video_status == SegmentStatus.PROVIDER_PENDING.value:
+            project = await self._get_project()
+            if project.workflow_status == WorkflowStatus.GENERATING_VIDEO.value:
+                await self._persist_video_pending(segment)
             raise RoutePending(PENDING_VIDEO_MESSAGE)
         # IDEMPOTENCY: Skip completed segments
         if segment.video_status == SegmentStatus.COMPLETED.value:
@@ -424,8 +444,9 @@ class WorkflowOrchestrator:
                 )
                 return
 
-        segment.video_status = SegmentStatus.IN_PROGRESS.value
-        await self.session.commit()
+        if route is None:
+            segment.video_status = SegmentStatus.IN_PROGRESS.value
+            await self.session.commit()
 
         output_path = get_segment_video_path(self.project_id, segment.segment_number)
         if route is not None and not output_path.resolve().is_relative_to(file_manager.settings.STORAGE_ROOT.resolve()):
@@ -437,6 +458,12 @@ class WorkflowOrchestrator:
             "segment": segment.segment_number,
             "project_id": self.project_id,
         })
+
+        if route is not None:
+            # All local setup and notifications happen before this durable
+            # guard. No provider request can start if its commit fails.
+            segment.video_status = SegmentStatus.PROVIDER_PENDING.value
+            await self.session.commit()
 
         try:
             if route is not None:
@@ -514,42 +541,7 @@ class WorkflowOrchestrator:
                 raise WorkflowError(err_msg, code="VIDEO_GENERATION_FAILED")
 
         except RoutePending:
-            segment.video_status = SegmentStatus.PROVIDER_PENDING.value
-            segment.video_error_message = PENDING_VIDEO_MESSAGE
-            project = await self._get_project()
-            validate_transition(project.workflow_status, WorkflowStatus.PROVIDER_PENDING.value)
-            project.workflow_status = WorkflowStatus.PROVIDER_PENDING.value
-            project.error_message = PENDING_VIDEO_MESSAGE
-            await self.session.commit()
-
-            # The DB commit is authoritative. Each notification is best effort:
-            # a storage or SSE outage must never turn an accepted job into a retry.
-            try:
-                update_segment_in_manifest(self.project_id, segment.segment_number, {
-                    "video_status": SegmentStatus.PROVIDER_PENDING.value,
-                    "video_error": PENDING_VIDEO_MESSAGE,
-                })
-            except Exception:
-                logger.warning("Pending video notification failed", project_id=self.project_id,
-                               notification="segment_manifest")
-            try:
-                update_manifest(self.project_id, {
-                    "workflow_status": WorkflowStatus.PROVIDER_PENDING.value,
-                    "error": PENDING_VIDEO_MESSAGE,
-                })
-            except Exception:
-                logger.warning("Pending video notification failed", project_id=self.project_id,
-                               notification="project_manifest")
-            try:
-                await self._emit_progress({
-                    "type": "status_change",
-                    "status": WorkflowStatus.PROVIDER_PENDING.value,
-                    "project_id": self.project_id,
-                    "message": PENDING_VIDEO_MESSAGE,
-                })
-            except Exception:
-                logger.warning("Pending video notification failed", project_id=self.project_id,
-                               notification="sse")
+            await self._persist_video_pending(segment)
             raise
         except Exception as e:
             err_msg = ("Video generation failed; review the catalog route."
@@ -569,28 +561,94 @@ class WorkflowOrchestrator:
                 error=err_msg,
             )
 
+    async def _persist_video_pending(self, segment: Segment, *, recovery: bool = False) -> None:
+        segment.video_status = SegmentStatus.PROVIDER_PENDING.value
+        segment.video_error_message = PENDING_VIDEO_MESSAGE
+        project = await self._get_project()
+        if project.workflow_status != WorkflowStatus.PROVIDER_PENDING.value:
+            if not recovery:
+                validate_transition(project.workflow_status, WorkflowStatus.PROVIDER_PENDING.value)
+            project.workflow_status = WorkflowStatus.PROVIDER_PENDING.value
+        project.error_message = PENDING_VIDEO_MESSAGE
+        await self.session.commit()
+
+        # Database state is authoritative. Notifications cannot turn an
+        # accepted task into a retry when manifest/SSE publication fails.
+        try:
+            update_segment_in_manifest(self.project_id, segment.segment_number, {
+                "video_status": SegmentStatus.PROVIDER_PENDING.value,
+                "video_error": PENDING_VIDEO_MESSAGE,
+            })
+        except Exception:
+            logger.warning("Pending video notification failed", project_id=self.project_id,
+                           notification="segment_manifest")
+        try:
+            update_manifest(self.project_id, {
+                "workflow_status": WorkflowStatus.PROVIDER_PENDING.value,
+                "error": PENDING_VIDEO_MESSAGE,
+            })
+        except Exception:
+            logger.warning("Pending video notification failed", project_id=self.project_id,
+                           notification="project_manifest")
+        try:
+            await self._emit_progress({
+                "type": "status_change",
+                "status": WorkflowStatus.PROVIDER_PENDING.value,
+                "project_id": self.project_id,
+                "message": PENDING_VIDEO_MESSAGE,
+            })
+        except Exception:
+            logger.warning("Pending video notification failed", project_id=self.project_id,
+                           notification="sse")
+
     async def _generate_catalog_video(self, segment: Segment, route: RoutePlan,
                                       output_path: Path):
         """Submit once per eligible target and publish a completed download atomically."""
         sessions = async_sessionmaker(self.session.bind, expire_on_commit=False)
 
         async def transport(target, secret):
-            provider = self._registry.get_video(target.provider_id)
-            if provider is None or not supported_video_target(target.provider_id, target.remote_model_id):
-                raise UnsupportedModalityError("Video adapter unavailable for catalog model.")
-            staging_root = settings.DATA_DIR / "video_staging"
-            staging_root.mkdir(parents=True, exist_ok=True)
-            directory = Path(tempfile.mkdtemp(dir=staging_root))
+            try:
+                provider = self._registry.get_video(target.provider_id)
+                if provider is None or not supported_video_target(target.provider_id, target.remote_model_id):
+                    raise UnsupportedModalityError("Video adapter unavailable for catalog model.")
+                staging_root = settings.DATA_DIR / "video_staging"
+                staging_root.mkdir(parents=True, exist_ok=True)
+                directory = Path(tempfile.mkdtemp(dir=staging_root))
+            except UnsupportedModalityError:
+                segment.video_status = SegmentStatus.IN_PROGRESS.value
+                try:
+                    await self.session.commit()
+                except Exception:
+                    raise RoutePending(PENDING_VIDEO_MESSAGE) from None
+                raise
             preserve = False
             try:
                 staged = Path(directory) / "video.mp4"
-                result = await provider.generate_video(
-                    segment.text_content, settings.VIDEO_TARGET_DURATION, staged,
-                    route_target=target, api_key=secret)
+                if segment.video_status != SegmentStatus.PROVIDER_PENDING.value:
+                    segment.video_status = SegmentStatus.PROVIDER_PENDING.value
+                    try:
+                        await self.session.commit()
+                    except Exception:
+                        raise RoutePending(PENDING_VIDEO_MESSAGE) from None
+                try:
+                    result = await provider.generate_video(
+                        segment.text_content, settings.VIDEO_TARGET_DURATION, staged,
+                        route_target=target, api_key=secret)
+                except RoutePending:
+                    raise
+                except Exception as error:
+                    if isinstance(error, UnsupportedModalityError) or _definite_video_rejection(error):
+                        segment.video_status = SegmentStatus.IN_PROGRESS.value
+                        try:
+                            await self.session.commit()
+                        except Exception:
+                            raise RoutePending(PENDING_VIDEO_MESSAGE) from None
+                        raise
+                    raise RoutePending(PENDING_VIDEO_MESSAGE) from None
+                except asyncio.CancelledError:
+                    raise RoutePending(PENDING_VIDEO_MESSAGE) from None
                 if not result.success:
-                    # Canonical adapters normally raise classified errors. A
-                    # returned failure carries no trusted message to expose.
-                    raise RuntimeError("Video provider unavailable")
+                    raise RoutePending(PENDING_VIDEO_MESSAGE)
                 if result.file_path != staged or not staged.is_file():
                     raise RoutePending(PENDING_VIDEO_MESSAGE)
                 preserve = True

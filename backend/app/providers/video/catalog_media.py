@@ -14,30 +14,12 @@ from urllib.parse import urljoin
 import httpx
 
 from app.providers.image.catalog_media import CatalogImageError, validate_public_https_url
-from app.services.ai_routing import RoutePending
+from app.providers.video.boundary_errors import VideoBoundaryError, VideoRoutePending
 
 MAX_VIDEO_BYTES = 100 * 1024 * 1024
 MAX_PROBE_JSON_BYTES = 64 * 1024
 PROBE_TIMEOUT = 10.0
 DECODE_TIMEOUT = 10.0
-
-
-class VideoBoundaryError(Exception):
-    """Safe local error; provider body and exception text are never retained."""
-
-    def __init__(self, code: str, status_code: int | None = None, *, definitive: bool = False):
-        self.code = code
-        self.status_code = status_code
-        self.definitive = definitive
-        super().__init__(f"Video generation failed: {code}")
-
-
-class VideoRoutePending(RoutePending):
-    """Accepted or uncertain task; outcome is a local classification only."""
-
-    def __init__(self, outcome: str = "pending"):
-        self.outcome = outcome
-        super().__init__("Video generation pending")
 
 
 def validated_video_path(path: Path, data_root: Path) -> Path:
