@@ -40,6 +40,12 @@ from app.models.video_translator import (
 logger = get_logger(__name__)
 settings = get_settings()
 
+
+class TranslationOutputError(Exception):
+    """A target returned unusable translation text; exclude its details from route errors."""
+
+    code = "invalid_output"
+
 # Stage weights for overall progress calculation
 STAGE_WEIGHTS = {
     "DOWNLOADING": 10.0,
@@ -944,7 +950,7 @@ def parse_translation_envelope(text: str, target_language: str = "") -> Tuple[Di
             lines_map = _safe_parse_json_translation(fake)
         except ValueError:
             lines_map = {}
-    if not lines_map:
+    if not lines_map and lines_raw:
         lines_map = _safe_parse_json_translation(text)
     names: List[Dict[str, Any]] = []
     if isinstance(names_raw, list):
@@ -1116,6 +1122,8 @@ async def _translate_sub_batch(
             resp = await llm.generate_text(
                 prompt if attempt == 0 else prompt + '\nLƯU Ý: Trả về đúng JSON {"lines":[{"n":1,"text":"..."}],"names":[]}',
                 model=model_id,
+                **({"route_lines": payload["lines"], "require_complete": True, "reject_echo": True}
+                   if canonical else {}),
             )
             parsed_map, _names = parse_translation_envelope(resp)
             mapped = _ordered_translations(parsed_map, numbers, len(sub_segments))
@@ -1136,7 +1144,11 @@ async def _translate_sub_batch(
                     )
                 )
                 try:
-                    rec_resp = await llm.generate_text(rec_prompt, model=model_id)
+                    rec_resp = await llm.generate_text(
+                        rec_prompt, model=model_id,
+                        **({"route_lines": missing_items["lines"], "require_complete": True, "reject_echo": True}
+                           if canonical else {}),
+                    )
                     rec_map, _ = parse_translation_envelope(rec_resp)
                     for r_id, r_trans in rec_map.items():
                         if r_id in missing_ids:
@@ -1275,14 +1287,39 @@ async def translate_transcript_segments(
                 provider_id = "catalog"
                 provider_name = "Catalog translation route"
 
-                async def generate_text(self, prompt: str, **_kwargs) -> str:
+                async def generate_text(
+                    self, prompt: str, *, route_lines: List[Dict[str, Any]],
+                    require_complete: bool = False, reject_echo: bool = False,
+                    enforce_glossary: bool = False, **_kwargs,
+                ) -> str:
                     if len(prompt.encode("utf-8")) > prompt_limit:
                         raise RuntimeError("Translation prompt exceeds catalog context budget.")
                     async def transport(target: RouteTarget, secret: str | None) -> str:
                         adapter = registry.get_llm(target.provider_id)
                         if adapter is None:
                             raise UnsupportedModalityError("No Studio translation adapter for this provider.")
-                        return await adapter.generate_text(prompt, route_target=target, api_key=secret)
+                        response = await adapter.generate_text(prompt, route_target=target, api_key=secret)
+                        try:
+                            if _load_json_blob(response) is None:
+                                raise TranslationOutputError()
+                            parsed, _ = parse_translation_envelope(response, target_language=target_language)
+                            mapped = _ordered_translations(
+                                parsed, [item["n"] for item in route_lines], len(route_lines))
+                            if require_complete and mapped is None:
+                                raise TranslationOutputError()
+                            if mapped is not None and reject_echo:
+                                if any(is_verbatim_echo(item["text"], value, source_language, target_language)
+                                       or item["text"].strip() and not value.strip()
+                                       for item, value in zip(route_lines, mapped)):
+                                    raise TranslationOutputError()
+                            if mapped is not None and enforce_glossary:
+                                checked = [{"text": item["text"], "translated_text": value}
+                                           for item, value in zip(route_lines, mapped)]
+                                if find_glossary_violations(checked, glossary, source_language, target_language):
+                                    raise TranslationOutputError()
+                        except (ValueError, TypeError, KeyError):
+                            raise TranslationOutputError() from None
+                        return response
 
                     return await invoke_route(route, transport, sessions, data_dir or settings.DATA_DIR,
                                               max_attempts=2, timeout=180.0)
@@ -1386,7 +1423,10 @@ async def translate_transcript_segments(
                 for attempt in range(1 if canonical else 2):
                     try:
                         curr_prompt = prompt if attempt == 0 else prompt + '\nLƯU Ý BẮT BUỘC: Trả về đúng JSON {"lines":[{"n":1,"text":"..."}],"names":[]}'
-                        response_text = await llm.generate_text(curr_prompt, model=translation_model_id)
+                        response_text = await llm.generate_text(
+                            curr_prompt, model=translation_model_id,
+                            **({"route_lines": payload["lines"]} if canonical else {}),
+                        )
                         parsed_map, batch_names = parse_translation_envelope(response_text, target_language=target_language)
                         if batch_names:
                             collected_names.extend(batch_names)
@@ -1409,7 +1449,11 @@ async def translate_transcript_segments(
                                     )
                                 )
                                 try:
-                                    rec_resp = await llm.generate_text(rec_prompt, model=translation_model_id)
+                                    rec_resp = await llm.generate_text(
+                                        rec_prompt, model=translation_model_id,
+                                        **({"route_lines": missing_items["lines"], "require_complete": True,
+                                            "reject_echo": True} if canonical else {}),
+                                    )
                                     rec_map, rec_names = parse_translation_envelope(rec_resp, target_language=target_language)
                                     if rec_names:
                                         collected_names.extend(rec_names)
@@ -1484,7 +1528,11 @@ async def translate_transcript_segments(
                                     )
                                 )
                                 try:
-                                    rec_resp = await llm.generate_text(correction_prompt, model=translation_model_id)
+                                    rec_resp = await llm.generate_text(
+                                        correction_prompt, model=translation_model_id,
+                                        **({"route_lines": retry_payload["lines"], "require_complete": True,
+                                            "reject_echo": True} if canonical else {}),
+                                    )
                                     rec_map, rec_names = parse_translation_envelope(rec_resp, target_language=target_language)
                                     if rec_names:
                                         collected_names.extend(rec_names)
@@ -1606,7 +1654,11 @@ async def translate_transcript_segments(
                             )
                         )
                         try:
-                            retry_resp = await llm.generate_text(strict_retry_prompt, model=translation_model_id)
+                            retry_resp = await llm.generate_text(
+                                strict_retry_prompt, model=translation_model_id,
+                                **({"route_lines": retry_payload["lines"], "require_complete": True,
+                                    "reject_echo": True, "enforce_glossary": True} if canonical else {}),
+                            )
                             retry_map, retry_names = parse_translation_envelope(retry_resp, target_language=target_language)
                             if retry_names:
                                 collected_names.extend(retry_names)

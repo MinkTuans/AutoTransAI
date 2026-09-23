@@ -117,6 +117,8 @@ def classify_failure(error: BaseException) -> str:
     if isinstance(error, asyncio.TimeoutError):
         return "timeout"
     code = getattr(error, "code", None)
+    if code == "invalid_output":
+        return "invalid_output"
     if code == "insufficient_quota":
         return "quota"
     status = getattr(error, "status_code", None)

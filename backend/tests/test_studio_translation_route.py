@@ -433,3 +433,99 @@ async def test_studio_background_entry_forwards_catalog_sessions_to_translation(
         assert captured["sessions"] is sessions
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_output", ["not JSON", response([]), response([(1, "Hello 0")])])
+async def test_semantically_bad_default_advances_to_backup(catalog, monkeypatch, bad_output):
+    sessions, path = catalog
+    async with sessions.begin() as db:
+        selected = await add_model(db, path, "openai", "a-default", "synthetic-primary")
+        await add_model(db, path, "openai", "b-backup", "synthetic-backup")
+        db.add(AIFunctionConfig(function_id="translation", function_name="Translation", capability="TRANSLATION",
+                                primary_provider_id="openai", model_id=selected.id))
+    calls = []
+
+    class LLM:
+        provider_name = "test"
+        async def generate_text(self, prompt, *, route_target, api_key, **kwargs):
+            calls.append((route_target.remote_model_id, api_key))
+            return bad_output if route_target.remote_model_id == "a-default" else response([(1, "Xin chào")])
+
+    monkeypatch.setattr(service.get_registry(), "get_llm", lambda provider: LLM())
+    result = await service.translate_transcript_segments(segments(), "en", "vi", sessions=sessions, data_dir=path)
+    assert result[0]["translated_text"] == "Xin chào"
+    expected = ([("a-default", "synthetic-primary"), ("b-backup", "synthetic-backup")]
+                if bad_output == "not JSON" else
+                [("a-default", "synthetic-primary"), ("a-default", "synthetic-primary"),
+                 ("b-backup", "synthetic-backup")])
+    assert calls == expected
+
+
+@pytest.mark.asyncio
+async def test_glossary_correction_advances_to_backup_after_bad_default(catalog, monkeypatch):
+    sessions, path = catalog
+    async with sessions.begin() as db:
+        selected = await add_model(db, path, "gemini", "a-default", "synthetic-primary")
+        await add_model(db, path, "gemini", "b-backup", "synthetic-backup")
+        db.add(AIFunctionConfig(function_id="translation", function_name="Translation", capability="TRANSLATION",
+                                primary_provider_id="gemini", model_id=selected.id))
+    calls = []
+
+    class LLM:
+        provider_name = "test"
+        async def generate_text(self, prompt, *, route_target, api_key, **kwargs):
+            calls.append(route_target.remote_model_id)
+            text = "Chào thế giới" if route_target.remote_model_id == "a-default" else "Xin chào thế giới"
+            return response([(1, text)])
+
+    monkeypatch.setattr(service.get_registry(), "get_llm", lambda provider: LLM())
+    result = await service.translate_transcript_segments(
+        [{"number": 1, "text": "Hello world"}], "en", "vi",
+        glossary={"Hello": "Xin chào"}, sessions=sessions, data_dir=path)
+    assert result[0]["translated_text"] == "Xin chào thế giới"
+    assert calls == ["a-default", "a-default", "b-backup"]
+
+
+@pytest.mark.asyncio
+async def test_malformed_model_output_cannot_leak_secret(catalog, monkeypatch, caplog):
+    sessions, path = catalog
+    async with sessions.begin() as db:
+        selected = await add_model(db, path, "openai", "only", "synthetic-secret-123")
+        db.add(AIFunctionConfig(function_id="translation", function_name="Translation", capability="TRANSLATION",
+                                primary_provider_id="openai", model_id=selected.id))
+
+    class LLM:
+        provider_name = "test"
+        async def generate_text(self, prompt, **kwargs):
+            return "synthetic-secret-123 invalid provider body"
+
+    monkeypatch.setattr(service.get_registry(), "get_llm", lambda provider: LLM())
+    with pytest.raises(RuntimeError) as exc:
+        await service.translate_transcript_segments(segments(), "en", "vi", sessions=sessions, data_dir=path)
+    assert "synthetic-secret-123" not in str(exc.value) + caplog.text
+    assert "invalid provider body" not in str(exc.value) + caplog.text
+
+
+@pytest.mark.asyncio
+async def test_targeted_missing_id_recovery_uses_backup_after_default_repeats_partial(catalog, monkeypatch):
+    sessions, path = catalog
+    async with sessions.begin() as db:
+        selected = await add_model(db, path, "openai", "a-default", "synthetic-primary")
+        await add_model(db, path, "openai", "b-backup", "synthetic-backup")
+        db.add(AIFunctionConfig(function_id="translation", function_name="Translation", capability="TRANSLATION",
+                                primary_provider_id="openai", model_id=selected.id))
+    calls = []
+
+    class LLM:
+        provider_name = "test"
+        async def generate_text(self, prompt, *, route_target, api_key, **kwargs):
+            calls.append(route_target.remote_model_id)
+            if route_target.remote_model_id == "a-default":
+                return response([(n, f"Bản dịch {n}") for n in range(1, 5)])
+            return response([(5, "Bản dịch 5")])
+
+    monkeypatch.setattr(service.get_registry(), "get_llm", lambda provider: LLM())
+    result = await service.translate_transcript_segments(segments(5), "en", "vi", sessions=sessions, data_dir=path)
+    assert [seg["translated_text"] for seg in result] == [f"Bản dịch {n}" for n in range(1, 6)]
+    assert calls == ["a-default", "a-default", "b-backup"]
