@@ -21,6 +21,8 @@ class CatalogModel(Base):
     # The provider's exact spelling is identity; do not trim, casefold, or remove prefixes.
     remote_model_id: Mapped[str] = mapped_column(String(255).with_variant(String(255, collation="utf8mb4_bin"), "mysql"))
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Provider-allowlisted listing evidence; NULL means a pre-evidence historical row.
+    discovery_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=dict)
     source: Mapped[str] = mapped_column(String(30), default="discovered")
     capabilities: Mapped[list] = mapped_column(JSON, default=list)
     capability_status: Mapped[str] = mapped_column(String(30), default="FULL_UNKNOWN")

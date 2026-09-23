@@ -5,6 +5,7 @@ platform.claude.com/docs/en/api/models/list; elevenlabs.io/docs/api-reference/mo
 fal.ai/docs/platform-apis/v1/models. See task report for full source links.
 """
 from dataclasses import dataclass
+import json
 import re
 import unicodedata
 from urllib.parse import unquote
@@ -105,6 +106,16 @@ class ListAdapter:
         source = row.get("metadata", {}) if self.provider == "fal" else row
         if not isinstance(source, dict):
             raise DiscoveryError("malformed")
+        return DiscoveredModel(remote_id, safe_text(source.get(self.name_field), secret), self.metadata(source, secret))
+
+    def metadata(self, source, secret: str | None) -> dict:
+        """Reapply provider allowlists at both HTTP and persistence boundaries.
+
+        Ignore oversized input strings before scanning them; retain at most 8 KiB
+        of UTF-8 JSON evidence, with fixed fields and bounded shallow structures.
+        """
+        if not isinstance(source, dict):
+            return {}
         metadata = {}
         text_fields = {"gemini": ("baseModelId", "version"), "openai": ("owned_by",),
                        "anthropic": ("created_at",), "fal": ("category", "status")}
@@ -113,7 +124,8 @@ class ListAdapter:
         bool_fields = {"gemini": ("thinking",), "elevenlabs": (
             "can_do_text_to_speech", "can_do_voice_conversion", "requires_alpha_access")}
         for key in text_fields.get(self.provider, ()):
-            value = safe_text(source.get(key), secret)
+            raw = source.get(key)
+            value = safe_text(raw, secret) if isinstance(raw, str) and len(raw) <= 4096 else None
             if value is not None:
                 metadata[key] = value
         for key in int_fields.get(self.provider, ()):
@@ -125,6 +137,7 @@ class ListAdapter:
                 metadata[key] = source[key]
         if self.provider == "gemini" and isinstance(source.get("supportedGenerationMethods"), list):
             metadata["supportedGenerationMethods"] = [text for value in source["supportedGenerationMethods"][:32]
+                if isinstance(value, str) and len(value) <= 4096
                 if (text := safe_text(value, secret)) is not None]
         if self.provider == "anthropic" and isinstance(source.get("capabilities"), dict):
             evidence = {}
@@ -135,7 +148,12 @@ class ListAdapter:
                     evidence[key] = {"supported": value["supported"]}
             if evidence:
                 metadata["capabilities"] = evidence
-        return DiscoveredModel(remote_id, safe_text(source.get(self.name_field), secret), metadata)
+        # Scalars/nested capability flags are fixed-size. Trim list tails to keep
+        # useful initial capability evidence when multibyte strings fill the budget.
+        methods = metadata.get("supportedGenerationMethods", [])
+        while methods and len(json.dumps(metadata, ensure_ascii=False).encode("utf-8")) > 8192:
+            methods.pop()
+        return metadata
 
 
 ADAPTERS = {adapter.provider: adapter for adapter in (

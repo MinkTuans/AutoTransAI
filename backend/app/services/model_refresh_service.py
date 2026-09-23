@@ -36,7 +36,7 @@ def _signature(keys):
     return tuple(sorted((k.id, k.provider_id, k.revision, k.enabled, k.ciphertext) for k in keys))
 
 
-def _validated(result):
+def _validated(result, provider, secret):
     """Do not let an unexpected injected/adapter result authorize retirement."""
     if (not isinstance(result, DiscoveryResult)
             or result.status not in {"complete", "partial", "failed", "unsupported"}
@@ -47,7 +47,10 @@ def _validated(result):
                    or m.display_name is not None and (not isinstance(m.display_name, str) or len(m.display_name) > 255)
                    for m in result.models)):
         return DiscoveryResult("failed", error_code="malformed")
-    return result
+    adapter = ADAPTERS.get(provider)
+    models = tuple(DiscoveredModel(m.remote_model_id, m.display_name,
+        adapter.metadata(m.metadata, secret) if adapter is not None else {}) for m in result.models)
+    return DiscoveryResult(result.status, models, result.error_code, result.pages_fetched, result.access_scope)
 
 
 def _complete(result):
@@ -111,7 +114,7 @@ class ModelRefreshService:
                     result = DiscoveryResult("failed", error_code="credential_unavailable")
                 else:
                     try:
-                        result = _validated(await self.discovery(provider, secret))
+                        result = _validated(await self.discovery(provider, secret), provider, secret)
                     except Exception:
                         # No adapter exception text is persisted or exposed (may contain auth).
                         result = DiscoveryResult("failed", error_code="discovery_failed")
@@ -189,9 +192,13 @@ class ModelRefreshService:
                     db.add(model)
                     await db.flush()
                     rows[model.remote_model_id] = model
-                model.retired_at = None
-                if discovered.display_name is not None:
-                    model.display_name = discovered.display_name
+                # Non-discovered rows are curated: positive matches can establish
+                # listing edges, but cannot rewrite or reactivate the model row.
+                if model.source == "discovered":
+                    model.retired_at = None
+                    model.discovery_metadata = discovered.metadata
+                    if discovered.display_name is not None:
+                        model.display_name = discovered.display_name
                 if result.access_scope == "credential":
                     access = await db.get(KeyModelAccess, (kid, model.id))
                     if access is None:

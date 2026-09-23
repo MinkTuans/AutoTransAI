@@ -28,6 +28,7 @@ def db(catalog, request):
         with engine.begin() as connection:
             with Operations.context(MigrationContext.configure(connection)):
                 migration().upgrade()
+                migration("20260923_catalog_evidence").upgrade()
     else:
         for model in catalog[:2]:
             model.__table__.create(engine)
@@ -110,8 +111,8 @@ def test_cross_provider_access_is_rejected_by_database(catalog, db, claimed_prov
         db.flush()
 
 
-def migration():
-    path = Path(__file__).parents[1] / "alembic/versions/20260923_ai_catalog.py"
+def migration(name="20260923_ai_catalog"):
+    path = Path(__file__).parents[1] / f"alembic/versions/{name}.py"
     assert path.exists(), "additive catalog migration is missing"
     spec = importlib.util.spec_from_file_location("catalog_migration", path)
     module = importlib.util.module_from_spec(spec)

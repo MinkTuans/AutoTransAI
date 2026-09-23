@@ -1,5 +1,6 @@
 """Refresh safety with disposable SQLite, synthetic keys, and injected discovery."""
 import json
+from datetime import datetime
 
 import pytest
 from sqlalchemy import event, select
@@ -27,7 +28,7 @@ async def env(tmp_path):
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with sessions.begin() as db:
         db.add_all([models.Provider(id=p, name=p, provider_type="llm")
-                    for p in ("openai", "fal", "edge_tts", "kling")])
+                    for p in ("openai", "fal", "edge_tts", "kling", "gemini", "elevenlabs", "anthropic")])
     responses = {}
 
     async def discover(provider, secret):
@@ -295,3 +296,63 @@ async def test_write_failure_rolls_back_entire_catalog_reconciliation(env):
     assert run.status == "failed" and "private-data" not in json.dumps(run.summary)
     rows = await inventory(sessions)
     assert set(rows) == {"A", "B"} and rows["B"].retired_at is None
+
+
+@pytest.mark.parametrize("provider,evidence", [
+    ("gemini", {"supportedGenerationMethods": ["generateContent"], "inputTokenLimit": 32000, "outputTokenLimit": 4096}),
+    ("elevenlabs", {"can_do_text_to_speech": True, "can_do_voice_conversion": False}),
+    ("anthropic", {"max_input_tokens": 200000, "capabilities": {"image_input": {"supported": True}}}),
+    ("openai", {"owned_by": "provider", "created": 123}),
+    ("fal", {"category": "text-to-image", "status": "active"}),
+])
+async def test_discovery_persists_provider_evidence(env, provider, evidence):
+    service, sessions, key, responses, _ = env
+    a = await key("synthetic-evidence-key", provider)
+    responses["synthetic-evidence-key"] = DiscoveryResult("complete", (DiscoveredModel("A", metadata=evidence),),
+        access_scope="catalog" if provider in {"fal", "elevenlabs"} else "credential")
+    await service.discover_key(a.id)
+    assert getattr((await inventory(sessions))["A"], "discovery_metadata", None) == evidence
+
+
+async def test_refresh_replaces_evidence_with_bounded_sanitized_allowlisted_values(env):
+    service, sessions, key, responses, _ = env
+    a = await key("synthetic-evidence-key", "gemini")
+    responses["synthetic-evidence-key"] = DiscoveryResult("complete", (DiscoveredModel("A", metadata={
+        "inputTokenLimit": 100, "outputTokenLimit": 50}),), access_scope="credential")
+    await service.discover_key(a.id)
+    responses["synthetic-evidence-key"] = DiscoveryResult("complete", (DiscoveredModel("A", metadata={
+        "inputTokenLimit": 200, "outputTokenLimit": -1, "thinking": "yes",
+        "baseModelId": "synthetic%2Devidence%2Dkey", "version": "x" * 10000,
+        "supportedGenerationMethods": ["generateContent", "synthetic-evi\x00dence-key", {"secret": "secret"}]
+            + ["界" * 255] * 100,
+        "authorization": "synthetic-evidence-key", "arbitrary": {"deep": ["secret"]},
+    }),), access_scope="credential")
+    await service.refresh()
+    evidence = getattr((await inventory(sessions))["A"], "discovery_metadata", None)
+    assert evidence is not None
+    assert evidence["inputTokenLimit"] == 200
+    assert "outputTokenLimit" not in evidence and "thinking" not in evidence
+    assert "authorization" not in evidence and "arbitrary" not in evidence and "version" not in evidence
+    assert evidence["baseModelId"] == "[redacted]"
+    assert evidence["supportedGenerationMethods"][:2] == ["generateContent", "[redacted]"]
+    serialized = json.dumps(evidence, ensure_ascii=False).encode()
+    assert len(serialized) <= 8192 and b"synthetic-evidence-key" not in serialized
+
+
+@pytest.mark.parametrize("source", ["system", "manual"])
+async def test_discovery_collision_preserves_all_curated_model_fields(env, source):
+    service, sessions, key, responses, _ = env
+    a = await key("synthetic-key")
+    retired = datetime(2020, 1, 1)
+    async with sessions.begin() as db:
+        db.add(models.CatalogModel(provider_id="openai", remote_model_id="A", source=source,
+            display_name="Curated", retired_at=retired, enabled=False, capabilities=["STT"], capability_status="VERIFIED"))
+    responses["synthetic-key"] = DiscoveryResult("complete", (DiscoveredModel("A", "Provider Name", {"owned_by": "upstream"}),),
+        access_scope="credential")
+    await service.discover_key(a.id)
+    await service.refresh()
+    model = (await inventory(sessions))["A"]
+    assert model.display_name == "Curated" and model.retired_at == retired
+    assert model.source == source and model.capabilities == ["STT"] and model.capability_status == "VERIFIED"
+    assert not model.enabled
+    assert model.discovery_metadata == {}

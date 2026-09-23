@@ -1,3 +1,7 @@
+- **Discovery Evidence and Curated Row Protection (2026-09-23)**:
+  - Added nullable `CatalogModel.discovery_metadata` via additive revision `20260923_catalog_evidence`; persist/update only provider-allowlisted, typed, secret-redacted evidence bounded to 8 KiB using shared adapter sanitization at the persistence boundary.
+  - Protected every non-discovered source from positive-result field updates/reactivation, while preserving listing-edge reconciliation. Added eight test-first regressions for provider evidence, injected oversized/secret-shaped metadata, and system/manual collisions; expanded disposable SQLite/offline MySQL migration coverage. Updated knowledge base; no production migrations or API/UI changes.
+
 - **Transactional Catalog Refresh (2026-09-23)**:
   - Added `ModelRefreshService` for additive key discovery and explicit all-key union refresh, protected retirement, credential-visible access replacement, public catalog separation, sanitized persisted run summaries, and visible retired-default errors.
   - Added shared provider revision locking, credential rotation/enable methods, and stale snapshot rejection for concurrent key/provider/refresh changes. Discovery runs outside database sessions; failed reconciliation rolls back atomically. Historical model rows and Edge system entries are retained.
