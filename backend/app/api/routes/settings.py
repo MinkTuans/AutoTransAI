@@ -19,7 +19,7 @@ from app.schemas.settings_schema import (
     SystemSettingsUpdateRequest,
     TestStorageRequest,
 )
-from app.services.settings_service import SettingsService
+from app.services.settings_service import CanonicalFunctionConflict, SettingsService
 from app.core import get_logger
 
 logger = get_logger(__name__)
@@ -31,7 +31,6 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 @router.get("", response_model=dict)
 async def get_settings(db: AsyncSession = Depends(get_db)):
     """Get all system settings."""
-    await SettingsService.ensure_defaults_seeded(db)
     data = await SettingsService.get_all_settings(db)
     return {"success": True, "data": data}
 
@@ -48,7 +47,6 @@ async def update_settings(
 @router.get("/functions", response_model=dict)
 async def get_ai_functions(db: AsyncSession = Depends(get_db)):
     """List all AI function configurations with eligible candidate providers."""
-    await SettingsService.ensure_defaults_seeded(db)
     functions = await SettingsService.get_function_configs(db)
 
     # Attach eligible providers for each function based on capabilities and configured status
@@ -72,6 +70,8 @@ async def update_ai_function(
             db, function_id, body.model_dump(exclude_none=True)
         )
         return {"success": True, "data": updated, "message": f"AI Function '{function_id}' updated"}
+    except CanonicalFunctionConflict:
+        raise HTTPException(status_code=409, detail="Use /api/ai/functions/{function_id} to change this default.") from None
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
 
@@ -81,7 +81,6 @@ async def get_models(
     provider_id: Optional[str] = None, db: AsyncSession = Depends(get_db)
 ):
     """List AI models catalog."""
-    await SettingsService.ensure_defaults_seeded(db)
     models = await SettingsService.get_models(db, provider_id=provider_id)
     return {"success": True, "data": models}
 
@@ -120,6 +119,8 @@ async def delete_model(
         if not success:
             raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
         return {"success": True, "message": f"Model '{model_id}' deleted successfully"}
+    except CanonicalFunctionConflict:
+        raise HTTPException(status_code=409, detail="Canonical Function default must be changed through /api/ai/functions/{function_id}.") from None
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
 

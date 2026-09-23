@@ -13,11 +13,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import get_logger
 from app.models.settings import AIFunctionConfig, AIModel, SocialAccount, SystemSetting
+from app.models.ai_catalog import CatalogModel
+from app.models.api_key import APIKey
 from app.models.provider import Provider
-from app.providers.registry import get_registry
 from app.services.key_manager import get_key_manager
 
 logger = get_logger(__name__)
+
+
+class CanonicalFunctionConflict(Exception):
+    """A legacy writer tried to replace a canonical Function default."""
 
 
 # ── Default System Configurations Seed Data ─────────────────────────────
@@ -263,11 +268,16 @@ class SettingsService:
         db: AsyncSession, function_id: str, payload: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Update a specific AI function configuration."""
-        stmt = select(AIFunctionConfig).where(AIFunctionConfig.function_id == function_id)
+        # Lock before checking identity: canonical PUT may have committed a new
+        # catalog ID while this legacy request was waiting for the config row.
+        stmt = select(AIFunctionConfig).where(AIFunctionConfig.function_id == function_id).with_for_update()
         res = await db.execute(stmt)
         config = res.scalar_one_or_none()
         if not config:
             raise ValueError(f"AI Function '{function_id}' not found")
+        if await db.scalar(select(CatalogModel.id).where(CatalogModel.id == config.model_id)
+                           .with_for_update()):
+            raise CanonicalFunctionConflict
 
         if "primary_provider_id" in payload:
             config.primary_provider_id = payload["primary_provider_id"]
@@ -310,8 +320,10 @@ class SettingsService:
         }
         target_cap = cap_map.get(function_id, "LLM")
 
-        registry = get_registry()
-        key_mgr = get_key_manager()
+        # Legacy KeyManager initializes a plaintext JSON store on first read.
+        # This compatibility view reads canonical enabled-key flags only.
+        enabled_providers = set((await db.scalars(select(APIKey.provider_id).where(
+            APIKey.enabled.is_(True)))).all())
 
         # Build list of all system known providers
         known_providers = [
@@ -331,10 +343,7 @@ class SettingsService:
                 continue
 
             # Check if key is available or free tier
-            has_key = p["free"]
-            if not p["free"]:
-                keys = await key_mgr.get_keys_for_provider(p["id"])
-                has_key = len(keys) > 0 and any(k.get("status") not in ("disabled", "invalid") for k in keys)
+            has_key = p["free"] or p["id"] in enabled_providers
 
             eligible.append({
                 "id": p["id"],
@@ -474,9 +483,13 @@ class SettingsService:
             return False
 
         # Find any AI function config referencing this model
-        stmt_fn = select(AIFunctionConfig).where(AIFunctionConfig.model_id == model_id)
+        stmt_fn = select(AIFunctionConfig).where(AIFunctionConfig.model_id == model_id).with_for_update()
         res_fn = await db.execute(stmt_fn)
         affected_configs = res_fn.scalars().all()
+
+        if affected_configs and await db.scalar(select(CatalogModel.id).where(
+                CatalogModel.id == model_id).with_for_update()):
+            raise CanonicalFunctionConflict
 
         if affected_configs:
             # Query all remaining enabled models
