@@ -102,7 +102,8 @@ class TranslateStage:
         if not segments and ctx.raw_transcript:
             segments = [{"text": ctx.raw_transcript}]
         saved = await extract_and_persist_from_segments(
-            db, ctx.project_id, segments, ctx.target_language
+            db, ctx.project_id, segments, ctx.target_language,
+            sessions=async_session_factory,
         )
         return {"entities_extracted": True, "saved": saved}
 

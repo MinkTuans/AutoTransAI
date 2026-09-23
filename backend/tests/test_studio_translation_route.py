@@ -383,7 +383,9 @@ async def test_concurrent_legacy_jobs_keep_resolved_model_local(monkeypatch):
 @pytest.mark.asyncio
 async def test_studio_background_entry_forwards_catalog_sessions_to_translation(monkeypatch, tmp_path):
     from app.api.routes import video_translator as studio
+    from app.models import Project
     from app.services.video_translator import character_mapping_service, visual_gender_service
+    from app.services import terminology_extractor
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'studio.db'}")
     async with engine.begin() as conn:
@@ -392,8 +394,9 @@ async def test_studio_background_entry_forwards_catalog_sessions_to_translation(
     asset_path = tmp_path / "source.mp4"
     asset_path.write_bytes(b"synthetic media")
     async with sessions.begin() as db:
+        db.add(Project(id="project-one", title="Synthetic"))
         db.add(VideoAsset(id="asset-one", file_path=str(asset_path)))
-        db.add(VideoTranslationJob(id="job-one", asset_id="asset-one",
+        db.add(VideoTranslationJob(id="job-one", asset_id="asset-one", project_id="project-one",
                                    settings_snapshot_json='{"trim_filler_enabled": false, "copyright_check_enabled": false}'))
     monkeypatch.setattr(studio, "async_session_factory", sessions)
     monkeypatch.setattr(studio.settings, "STORAGE_ROOT", tmp_path)
@@ -413,6 +416,7 @@ async def test_studio_background_entry_forwards_catalog_sessions_to_translation(
         return SimpleNamespace(by_speaker={})
 
     captured = {}
+    term_kwargs = {}
     visual_kwargs = {}
 
     async def visual(*args, **kwargs):
@@ -423,11 +427,16 @@ async def test_studio_background_entry_forwards_catalog_sessions_to_translation(
         captured.update(kwargs)
         raise RuntimeError("stop after translation boundary")
 
+    async def extract_terms(*args, **kwargs):
+        term_kwargs.update(kwargs)
+        return 0
+
     monkeypatch.setattr(studio, "extract_audio_from_video", extract)
     monkeypatch.setattr(studio, "speech_to_text_and_detect_language", stt)
     monkeypatch.setattr(character_mapping_service, "map_and_persist", mapping)
     monkeypatch.setattr(visual_gender_service, "detect_speakers_gender", visual)
     monkeypatch.setattr(studio, "translate_transcript_segments", translate)
+    monkeypatch.setattr(terminology_extractor, "extract_and_persist_from_segments", extract_terms)
     tasks = BackgroundTasks()
     try:
         async with sessions() as db:
@@ -437,6 +446,7 @@ async def test_studio_background_entry_forwards_catalog_sessions_to_translation(
         assert captured["job_id"] == "job-one"
         assert captured["sessions"] is sessions
         assert visual_kwargs["sessions"] is sessions
+        assert term_kwargs["sessions"] is sessions
     finally:
         await engine.dispose()
 

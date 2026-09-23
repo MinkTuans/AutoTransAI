@@ -1090,6 +1090,7 @@ async def start_translation_pipeline(
                             b_job.project_id,
                             segments_raw,
                             b_job.target_language or "vi",
+                            sessions=async_session_factory,
                         )
 
                     # 4. Translate with the project glossary loaded by the service.

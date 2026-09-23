@@ -5,11 +5,20 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
+from pathlib import Path
 from typing import Any, Iterable, Optional
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.config import get_settings
 from app.core import get_logger
+from app.models import APIKey, CatalogModel, CatalogRefreshRun
+from app.models.settings import AIFunctionConfig
+from app.providers.registry import get_registry
+from app.services.ai_routing import (
+    RouteConfigurationError, RouteTarget, UnsupportedModalityError, build_route, invoke_route,
+)
 from app.services.glossary_service import create_glossary_entry
 
 logger = get_logger(__name__)
@@ -324,8 +333,14 @@ def heuristic_extract_terms(text: str, target_lang: str = "vi") -> list[dict[str
     return normalize_extracted_terms(raw, target_lang=target_lang)
 
 
-def _parse_llm_terms(payload: str, target_lang: str = "") -> list[dict[str, Any]]:
+class InvalidTerminologyOutput(ValueError):
+    code = "invalid_output"
+
+
+def _parse_llm_terms(payload: str, target_lang: str = "", *, strict: bool = False) -> list[dict[str, Any]]:
     if not payload:
+        if strict:
+            raise InvalidTerminologyOutput() from None
         return []
     text = payload.strip()
     fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
@@ -336,12 +351,18 @@ def _parse_llm_terms(payload: str, target_lang: str = "") -> list[dict[str, Any]
     except json.JSONDecodeError:
         match = re.search(r"\[[\s\S]*\]", text)
         if not match:
+            if strict:
+                raise InvalidTerminologyOutput() from None
             return []
         try:
             data = json.loads(match.group(0))
         except json.JSONDecodeError:
+            if strict:
+                raise InvalidTerminologyOutput() from None
             return []
     if isinstance(data, dict):
+        if strict and not any(key in data for key in ("terms", "entities", "names", "glossary", "items")):
+            raise InvalidTerminologyOutput() from None
         data = (
             data.get("terms")
             or data.get("entities")
@@ -351,38 +372,94 @@ def _parse_llm_terms(payload: str, target_lang: str = "") -> list[dict[str, Any]
             or []
         )
     if not isinstance(data, list):
+        if strict:
+            raise InvalidTerminologyOutput() from None
         return []
     return normalize_extracted_terms([x for x in data if isinstance(x, dict)], target_lang=target_lang)
 
 
-async def llm_extract_terms(text: str, target_lang: str = "vi") -> list[dict[str, Any]]:
+async def llm_extract_terms(
+    text: str, target_lang: str = "vi", *,
+    sessions: async_sessionmaker[AsyncSession] | None = None,
+    data_dir: Path | None = None,
+) -> list[dict[str, Any]]:
     blob = (text or "").strip()
     if len(blob) < 8:
         return []
-    try:
-        from app.providers.registry import get_registry
+    route = None
+    prompt_limit = 6000
+    if sessions is not None:
+        async with sessions() as catalog_db:
+            catalog_model = await catalog_db.scalar(select(CatalogModel.id).where(
+                CatalogModel.source != "system",
+                CatalogModel.provider_id.in_(("gemini", "openai", "anthropic")),
+            ).limit(1))
+            catalog_key = await catalog_db.scalar(select(APIKey.id).where(
+                APIKey.provider_id.in_(("gemini", "openai", "anthropic")),
+            ).limit(1))
+            await catalog_db.scalar(select(CatalogRefreshRun.id).limit(1))
+            configured = await catalog_db.get(AIFunctionConfig, "translation")
+            canonical_default = (await catalog_db.get(CatalogModel, configured.model_id)
+                                 if configured and configured.model_id else None)
+            if catalog_model is not None or catalog_key is not None or canonical_default is not None:
+                if configured is None or not configured.model_id:
+                    raise RouteConfigurationError("LLM default is not configured.")
+                route = await build_route(catalog_db, "LLM")
+                limits = []
+                for target in route.targets:
+                    model = await catalog_db.get(CatalogModel, target.model_id)
+                    metadata = model.discovery_metadata if isinstance(model.discovery_metadata, dict) else {}
+                    for field in ("inputTokenLimit", "max_input_tokens"):
+                        value = metadata.get(field)
+                        if type(value) is int and value > 0:
+                            limits.append(value)
+                            break
+                prompt_limit = min(6000, max(0, min(limits) - 512)) if limits else 6000
 
+    prompt_prefix = (
+        "Extract important canonical terminology: people/characters, creatures, place names, "
+        "organizations, skills, weapons, items, techniques, titles, and important domain terms.\n"
+        "Do NOT extract sentences, clauses, verbs, pronouns, or random subtitle fragments "
+        "(e.g. 我先走了, 看来今天, 只是想给).\n"
+        f"Lines may include source transcript and the {target_lang} translation.\n"
+        'Return ONLY JSON: {{"terms":[{{"source_term":"...","suggested_term":"...","term_type":"character","confidence":0.9}}]}}\n'
+        "source_term is the original-language name; suggested_term MUST be the translated/transliterated name "
+        f"in {target_lang} (keep {target_lang} diacritics). "
+        "IMPORTANT: If source_term is in Chinese (e.g. 安妮, 詹森, 路斯), suggested_term MUST be the "
+        f"{target_lang} rendering (e.g. Annie, Jensen, Ruth), NOT the original Chinese characters. "
+        "Never set suggested_term equal to source_term when they are in different scripts. "
+        "If you do not have enough information to determine the target name, do NOT guess; omit the term.\n"
+        "term_type must be one of: character, creature, location, organization, skill, weapon, "
+        "item, technique, title, other.\n\n"
+        "Subtitles:\n"
+    )
+    if route is not None:
+        room = prompt_limit - len(prompt_prefix.encode("utf-8"))
+        if room < 8:
+            raise RouteConfigurationError("Terminology prompt exceeds catalog context budget.")
+        bounded_blob = blob.encode("utf-8")[:room].decode("utf-8", errors="ignore")
+    else:
+        bounded_blob = blob[:6000]
+    prompt = prompt_prefix + bounded_blob
+
+    if route is not None:
+        async def transport(target: RouteTarget, secret: str | None) -> list[dict[str, Any]]:
+            adapter = get_registry().get_llm(target.provider_id)
+            if adapter is None:
+                raise UnsupportedModalityError("No terminology LLM adapter for this provider.")
+            response = await adapter.generate_text(prompt, route_target=target, api_key=secret)
+            return _parse_llm_terms(response if isinstance(response, str) else str(response),
+                                    target_lang=target_lang, strict=True)
+
+        parsed = await invoke_route(route, transport, sessions, data_dir or get_settings().DATA_DIR,
+                                    max_attempts=2, timeout=60.0)
+        logger.info("LLM terminology extraction parsed terms", count=len(parsed))
+        return parsed
+    try:
         registry = get_registry()
         llm = registry.get_llm("gemini") or next(iter(registry._llm.values()), None)
         if not llm:
             return []
-        prompt = (
-            "Extract important canonical terminology: people/characters, creatures, place names, "
-            "organizations, skills, weapons, items, techniques, titles, and important domain terms.\n"
-            "Do NOT extract sentences, clauses, verbs, pronouns, or random subtitle fragments "
-            "(e.g. 我先走了, 看来今天, 只是想给).\n"
-            f"Lines may include source transcript and the {target_lang} translation.\n"
-            'Return ONLY JSON: {{"terms":[{{"source_term":"...","suggested_term":"...","term_type":"character","confidence":0.9}}]}}\n'
-            "source_term is the original-language name; suggested_term MUST be the translated/transliterated name "
-            f"in {target_lang} (keep {target_lang} diacritics). "
-            "IMPORTANT: If source_term is in Chinese (e.g. 安妮, 詹森, 路斯), suggested_term MUST be the "
-            f"{target_lang} rendering (e.g. Annie, Jensen, Ruth), NOT the original Chinese characters. "
-            "Never set suggested_term equal to source_term when they are in different scripts. "
-            "If you do not have enough information to determine the target name, do NOT guess; omit the term.\n"
-            "term_type must be one of: character, creature, location, organization, skill, weapon, "
-            "item, technique, title, other.\n\n"
-            f"Subtitles:\n{blob[:6000]}"
-        )
         model = getattr(llm, "_resolved_model_id", None)
         raw = await llm.generate_text(prompt, model=model)
         parsed = _parse_llm_terms(raw if isinstance(raw, str) else str(raw), target_lang=target_lang)
@@ -407,12 +484,7 @@ async def persist_detected_terms(
         suggested = item["suggested_term"]
         # Reject invalid glossary entries (e.g. CJK self-mapped when target is not Chinese)
         if not is_valid_glossary_mapping(source, suggested, target_lang):
-            logger.info(
-                "Rejected invalid glossary entry",
-                source_term=source,
-                suggested_term=suggested,
-                target_lang=target_lang,
-            )
+            logger.info("Rejected invalid glossary entry")
             continue
         await create_glossary_entry(
             db,
@@ -480,7 +552,7 @@ def validate_and_align_extracted_terms(terms: Iterable[dict[str, Any]], source_b
                 exact_match = match.group(0)
             else:
                 # Reject if not found in source
-                logger.warning(f"Term '{raw_source}' rejected: not found exactly in source text")
+                logger.warning("Extracted term rejected: not found exactly in source text")
                 continue
                 
         # Deduplicate
@@ -501,6 +573,9 @@ async def extract_and_persist_from_segments(
     project_id: str,
     segments: Optional[Iterable[dict[str, Any]]],
     target_lang: str = "vi",
+    *,
+    sessions: async_sessionmaker[AsyncSession] | None = None,
+    data_dir: Path | None = None,
 ) -> int:
     """Used by the Studio Auto job pipeline (startJob), which never hits TranslateStage."""
     blob = segments_transcript_blob(segments)
@@ -511,7 +586,7 @@ async def extract_and_persist_from_segments(
         )
         return 0
     heuristic = filter_terminology(heuristic_extract_terms(blob, target_lang))
-    llm_terms = filter_terminology(await llm_extract_terms(blob, target_lang))
+    llm_terms = filter_terminology(await llm_extract_terms(blob, target_lang, sessions=sessions, data_dir=data_dir))
     llm_keys = {t["source_term"].casefold() for t in llm_terms}
     merged = llm_terms + [t for t in heuristic if t["source_term"].casefold() not in llm_keys]
     
