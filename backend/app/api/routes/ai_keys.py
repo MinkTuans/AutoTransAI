@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt, model_validator
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.config import get_settings
@@ -62,6 +62,13 @@ class KeyView(BaseModel):
     enabled: bool
     revision: int
     created_at: datetime
+    priority: int
+    runtime_status: str
+    cooldown_until: datetime | None
+    last_error_code: str | None
+    request_count: int
+    success_count: int
+    failure_count: int
 
 
 class DiscoveryView(BaseModel):
@@ -76,8 +83,15 @@ class AddKeyView(BaseModel):
     discovery: DiscoveryView
 
 
-class EnabledInput(BaseModel):
-    enabled: bool
+class KeyPatchInput(BaseModel):
+    enabled: bool | None = None
+    priority: StrictInt | None = Field(default=None, gt=0, le=2_147_483_647)
+
+    @model_validator(mode="after")
+    def exactly_one_change(self):
+        if (self.enabled is None) == (self.priority is None):
+            raise ValueError("Specify exactly one key change.")
+        return self
 
 
 class RefreshKeyResult(BaseModel):
@@ -155,9 +169,15 @@ async def add_key(provider_id: str, body: KeyInput,
 
 
 @router.patch("/keys/{key_id}")
-async def set_key_enabled(key_id: str, body: EnabledInput,
+async def set_key_enabled(key_id: str, body: KeyPatchInput,
                           context: KeyAPIContext = Depends(get_key_api_context)) -> dict:
     try:
+        if body.priority is not None:
+            async with context.sessions.begin() as db:
+                changed = await (await CredentialService.open(db, context.data_dir)).set_priority(key_id, body.priority)
+            return {"success": True, "data": AddKeyView(
+                key=_key_view(changed), discovery=DiscoveryView(status="unchanged")
+            ).model_dump(mode="json")}
         async with context.sessions() as db:
             current = await (await CredentialService.open(db, context.data_dir)).get(key_id)
         if not body.enabled:

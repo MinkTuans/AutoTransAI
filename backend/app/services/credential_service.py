@@ -25,6 +25,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.api_key import APIKey
 from app.models.provider import Provider
 
+SAFE_KEY_ERROR_CODES = frozenset({"auth", "quota", "rate_limit", "timeout", "provider_unavailable",
+                                  "model_unavailable", "capability_mismatch", "invalid_output"})
+
 
 async def lock_catalog_provider(session: AsyncSession, provider_id: str) -> None:
     """UPDATE takes a SQLite write lock / MySQL row lock until caller commit.
@@ -71,10 +74,20 @@ class CredentialDTO:
     enabled: bool
     revision: int
     created_at: datetime
+    priority: int
+    runtime_status: str
+    cooldown_until: datetime | None
+    last_error_code: str | None
+    request_count: int
+    success_count: int
+    failure_count: int
 
 
 def _dto(row: APIKey) -> CredentialDTO:
-    return CredentialDTO(row.id, row.provider_id, row.masked_key, row.enabled, row.revision, row.created_at)
+    return CredentialDTO(row.id, row.provider_id, row.masked_key, row.enabled, row.revision, row.created_at,
+                         row.priority, row.runtime_status, row.cooldown_until,
+                         row.last_error_code if row.last_error_code in SAFE_KEY_ERROR_CODES else None,
+                         row.request_count, row.success_count, row.failure_count)
 
 
 def _load_master(path: Path, *, allow_create: bool) -> bytes:
@@ -199,6 +212,19 @@ class CredentialService:
         await lock_catalog_provider(self._session, row.provider_id)
         await self._session.refresh(row)
         row.enabled = bool(enabled)
+        row.revision += 1
+        await self._session.flush()
+        return _dto(row)
+
+    async def set_priority(self, key_id: str, priority: int) -> CredentialDTO:
+        if type(priority) is not int or priority < 1 or priority > 2_147_483_647:
+            raise CredentialValidationError("Credential priority must be a positive integer.")
+        row = await self._session.get(APIKey, key_id)
+        if row is None:
+            raise CredentialNotFoundError("Credential does not exist.")
+        await lock_catalog_provider(self._session, row.provider_id)
+        await self._session.refresh(row)
+        row.priority = priority
         row.revision += 1
         await self._session.flush()
         return _dto(row)

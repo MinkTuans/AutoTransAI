@@ -73,6 +73,23 @@ async def test_add_lists_masked_key_and_adds_models_after_commit(key_api):
         assert (await db.scalar(select(CatalogModel).where(CatalogModel.remote_model_id == "model-one"))) is not None
 
 
+async def test_priority_patch_and_masked_get_preserve_disabled_state(key_api):
+    client, sessions, responses = key_api
+    responses["synthetic-priority-secret"] = listing(status="failed", error="auth_invalid")
+    added = await client.post("/api/ai/providers/openai/keys", json={"key": "synthetic-priority-secret"})
+    key_id = added.json()["data"]["key"]["id"]
+    changed = await client.patch(f"/api/ai/keys/{key_id}", json={"priority": 3})
+    assert changed.status_code == 200
+    view = changed.json()["data"]["key"]
+    assert view["priority"] == 3 and view["enabled"] is False and view["runtime_status"] == "ready"
+    assert "synthetic-priority-secret" not in changed.text
+    assert (await client.get("/api/ai/providers/openai/keys")).json()["data"][0] == view
+    for bad in (0, -1, True, 1.2, "2"):
+        assert (await client.patch(f"/api/ai/keys/{key_id}", json={"priority": bad})).status_code == 422
+    async with sessions() as db:
+        assert (await db.get(APIKey, key_id)).enabled is False
+
+
 async def test_rejected_discovery_stays_disabled_and_response_is_safe(key_api):
     client, sessions, responses = key_api
     responses["synthetic-secret-invalid"] = listing(status="failed", error="auth_invalid")

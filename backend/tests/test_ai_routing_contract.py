@@ -43,6 +43,55 @@ async def add_key(db, path, provider, models, secret):
     return key
 
 
+@pytest.mark.asyncio
+async def test_same_model_orders_eligible_keys_by_priority_usage_and_preference(routing_db):
+    from datetime import datetime, timedelta, timezone
+    from app.services.ai_routing import build_route
+    sessions, path = routing_db
+    async with sessions.begin() as db:
+        model = await add_model(db, "openai", "rotation", caps=["STT"], status="KNOWN")
+        keys = [await add_key(db, path, "openai", [model], f"synthetic-{i}") for i in range(7)]
+        rows = [await db.get(APIKey, key.id) for key in keys]
+        rows[0].priority, rows[0].request_count = 2, 5
+        rows[1].priority, rows[1].request_count = 1, 5
+        rows[2].priority, rows[2].request_count = 1, 1
+        rows[3].runtime_status = "invalid"
+        rows[4].runtime_status = "exhausted"
+        rows[5].runtime_status = "rate_limited"
+        rows[5].cooldown_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=1)
+        rows[6].runtime_status = "rate_limited"
+        rows[6].cooldown_until = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=1)
+    async with sessions() as db:
+        route = await build_route(db, "STT")
+        preferred = await build_route(db, "STT", preferred_key_ids=(keys[0].id, keys[3].id))
+    assert [target.key_id for target in route.targets] == [keys[2].id, keys[1].id, keys[0].id, keys[6].id]
+    assert [target.key_id for target in preferred.targets] == [keys[0].id, keys[2].id, keys[1].id, keys[6].id]
+
+
+@pytest.mark.asyncio
+async def test_stale_plan_rejects_newly_ineligible_credential(routing_db):
+    from datetime import datetime, timedelta, timezone
+    from app.services.ai_routing import build_route, invoke_route, RouteExhausted
+    sessions, path = routing_db
+    async with sessions.begin() as db:
+        model = await add_model(db, "openai", "rotation", caps=["STT"], status="KNOWN")
+        key = await add_key(db, path, "openai", [model], "synthetic-stale")
+    async with sessions() as db:
+        route = await build_route(db, "STT")
+    async with sessions.begin() as db:
+        row = await db.get(APIKey, key.id)
+        row.runtime_status = "rate_limited"
+        row.cooldown_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=1)
+    called = False
+    async def transport(_target, _secret):
+        nonlocal called
+        called = True
+        return "wrong"
+    with pytest.raises(RouteExhausted):
+        await invoke_route(route, transport, sessions, path)
+    assert called is False
+
+
 def test_capability_evidence_and_unknown():
     from app.services.capability_registry import classify, compatible
     gemini = classify("gemini", {"supportedGenerationMethods": ["generateContent"]})

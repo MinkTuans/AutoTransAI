@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Awaitable, Callable, TypeVar
 
@@ -33,6 +34,14 @@ def _keyless_allowed(model: CatalogModel, capability: str) -> bool:
     return (model.provider_id == "edge_tts" and capability == "TTS"
             or (capability == "IMAGE_GENERATION" and model.source == "system"
                 and model.provider_id in _KEYLESS_SYSTEM_IMAGE_PROVIDERS))
+
+
+def _key_eligible(key: APIKey, now: datetime) -> bool:
+    if not key.enabled or key.runtime_status in ("invalid", "exhausted"):
+        return False
+    if key.cooldown_until is not None and key.cooldown_until > now:
+        return False
+    return key.runtime_status in ("ready", "rate_limited")
 
 
 class RouteConfigurationError(Exception):
@@ -83,7 +92,8 @@ async def build_route(db: AsyncSession, capability: str, *, preferred_key_ids: t
     models = (await db.scalars(select(CatalogModel))).all()
     usable = {m.id: m for m in models if m.provider_id in providers and m.enabled
               and m.retired_at is None and compatible(capability, model_evidence(m))}
-    keys = {k.id: k for k in (await db.scalars(select(APIKey))).all() if k.enabled}
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    keys = {k.id: k for k in (await db.scalars(select(APIKey))).all() if _key_eligible(k, now)}
     access: dict[str, list[str]] = {}
     for edge in (await db.scalars(select(KeyModelAccess))).all():
         if edge.key_id in keys and edge.model_id in usable and keys[edge.key_id].provider_id == edge.provider_id == usable[edge.model_id].provider_id:
@@ -93,7 +103,9 @@ async def build_route(db: AsyncSession, capability: str, *, preferred_key_ids: t
             access[model.id] = [key.id for key in keys.values() if key.provider_id == model.provider_id]
     priority = {key_id: index for index, key_id in enumerate(preferred_key_ids)}
     for ids in access.values():
-        ids.sort(key=lambda key_id: (priority.get(key_id, len(priority)), key_id))
+        ids.sort(key=lambda key_id: (0 if key_id in priority else 1,
+                                     priority.get(key_id, 0), keys[key_id].priority,
+                                     keys[key_id].request_count, key_id))
 
     def available(model: CatalogModel) -> bool:
         return _keyless_allowed(model, capability) or bool(access.get(model.id))
@@ -189,7 +201,8 @@ async def invoke_route(route: RoutePlan, transport: Callable[[RouteTarget, str |
                     raise RouteConfigurationError("Catalog route target changed.")
                 if target.key_id:
                     row = await db.get(APIKey, target.key_id)
-                    if row is None or not row.enabled or row.provider_id != target.provider_id:
+                    if (row is None or not _key_eligible(row, datetime.now(timezone.utc).replace(tzinfo=None))
+                            or row.provider_id != target.provider_id):
                         raise RouteConfigurationError("Credential access changed.")
                     if target.access_scope == "listing_unverified" and await db.get(
                             KeyModelAccess, (target.key_id, target.model_id)) is None:

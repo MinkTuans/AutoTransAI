@@ -1,3 +1,8 @@
+- **Canonical key rotation domain (2026-09-23, Task 9B2A)**:
+  - Added additive `20260923_key_rotation_domain` revision for positive priority, separate runtime status, cooldown, allowlisted last error code, and local usage counters. The revision joins the two catalog heads; SQLite migration triggers preserve existing key-model references, while offline MySQL emits checks.
+  - Masked credential reads now expose safe rotation metadata. Priority-only PATCH validates positive integers and takes the provider revision lock without enabling or disabling a key. Runtime routes order eligible same-model keys by preference, priority, usage and ID, and recheck status/cooldown before transport.
+  - Added failing-first disposable SQLite credential/API/routing and migration tests; no live provider calls, real keys, production database, UI priority control, legacy import, or response-derived runtime accounting.
+
 - **Canonical Provider and Key Pool Settings UI (2026-09-23, Task 8C)**:
   - Review fix round 2: an A→B→A selection during an in-flight A key mutation now reconciles A's key list when that mutation settles. Request sequencing prevents an earlier list response from overwriting the reconciliation, and the old mutation leaves the reselected provider's draft and notice untouched. Added deferred add/toggle DOM regressions.
   - Review fix: provider-level keyless policy now covers Edge TTS, Pollinations, and Local Image independently of active catalog models, preventing an Add Key action for an unseeded/retired keyless service. Selection generation guards discard stale add/list/toggle/delete/refresh completions and preserve the next provider's draft and keys. Added failing-first disposable SQLite and deferred-response DOM regressions.

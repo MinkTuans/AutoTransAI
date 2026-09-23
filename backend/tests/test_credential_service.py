@@ -51,6 +51,31 @@ async def test_first_use_persists_private_master_and_only_encrypted_secret(crede
     assert (await reopened.list_keys("one"))[0].id == dto.id
 
 
+async def test_priority_update_is_validated_revisioned_and_preserves_enable_state(credentials, db, tmp_path):
+    service = await credentials.CredentialService.open(db, tmp_path)
+    key = await service.create("one", "synthetic-priority-key", enabled=False)
+    assert key.priority == 100 and key.runtime_status == "ready"
+    assert key.request_count == 0 and key.success_count == 0 and key.failure_count == 0
+    before_revision = (await db.get(Provider, "one")).catalog_revision
+    with pytest.raises(credentials.CredentialValidationError):
+        await service.set_priority(key.id, 0)
+    with pytest.raises(credentials.CredentialValidationError):
+        await service.set_priority(key.id, True)
+    changed = await service.set_priority(key.id, 2)
+    assert changed.priority == 2 and changed.enabled is False
+    assert changed.revision == key.revision + 1
+    assert (await db.get(Provider, "one")).catalog_revision == before_revision + 1
+    assert (await service.get(key.id)).priority == 2
+
+
+async def test_read_dto_never_exposes_unrecognized_error_text(credentials, db, tmp_path):
+    service = await credentials.CredentialService.open(db, tmp_path)
+    key = await service.create("one", "synthetic-safe-error")
+    row = await db.get(APIKey, key.id)
+    row.last_error_code = "upstream-secret-sentinel"
+    assert (await service.get(key.id)).last_error_code is None
+
+
 async def test_duplicate_detection_is_provider_scoped_and_keyed(credentials, db, tmp_path):
     service = await credentials.CredentialService.open(db, tmp_path)
     first = await service.create("one", "same-synthetic-secret")
