@@ -995,3 +995,5 @@
 - **Unified DUB independent-review fixes (2026-09-23, Task 6E2B)**:
   - Automatic speaker confidence/review state no longer masquerades as user voice confirmation. Only an explicitly confirmed character profile pins provider/voice; unconfirmed mappings retain compatible cross-provider fallback.
   - A clean canonical Edge default can validate its exact keyless voice through a five-second bounded voice-list lookup when the pool has no row, without seeding data or reviving an explicitly disabled entry. Language and known gender still gate eligibility. Added isolated synthetic regressions and updated the knowledge base.
+- **Unified DUB legacy voice-pool alias review fix (2026-09-23, Task 6E2B)**:
+  - Normalize persisted `edge` voice-pool aliases to `edge_tts` when reading enabled and disabled rows. Disabled voice IDs override enabled aliases/canonical duplicates and block live Edge voice revalidation. Added synthetic no-network tests for both disabled and enabled historical aliases; updated the knowledge base.

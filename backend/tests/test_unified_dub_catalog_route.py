@@ -497,3 +497,66 @@ async def test_unlisted_edge_voice_lookup_has_finite_timeout(catalog, monkeypatc
     with pytest.raises(RouteConfigurationError, match="compatible TTS voice"):
         await DubStage().execute_step("tts_generation", ctx, None)
     assert asyncio.get_running_loop().time() - start < 7
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("canonical_row_present", [False, True])
+async def test_legacy_disabled_edge_alias_overrides_live_or_canonical_voice(
+    catalog, monkeypatch, canonical_row_present,
+):
+    import app.workflow.stages.dub_stage as dub_module
+
+    sessions, path, _, _, edge_id = catalog
+    async with sessions.begin() as db:
+        config = await db.get(AIFunctionConfig, "tts")
+        config.model_id = edge_id
+        config.primary_provider_id = "edge_tts"
+        if not canonical_row_present:
+            await db.delete(await db.get(VoicePoolEntry, "voice-edge"))
+        db.add(VoicePoolEntry(id="legacy-disabled", provider="edge", language="vi-VN", gender="female",
+                              voice_id="vi-VN-HoaiMyNeural", display_name="Hoai My", enabled=False))
+    calls = []
+    class Edge:
+        async def get_voices(self):
+            calls.append("lookup")
+            return [VoiceInfo(id="vi-VN-HoaiMyNeural", name="Hoai My", language="vi-VN", gender="female")]
+        async def generate_audio(self, *args, **kwargs):
+            calls.append("synthesize")
+            raise AssertionError("A disabled alias must prevent synthesis")
+    monkeypatch.setattr(dub_module, "get_registry", lambda: Registry({"edge_tts": Edge()}))
+    ctx = context(path / f"legacy-disabled-{canonical_row_present}.mp4")
+    ctx.speaker_voice_map = {"Speaker 1": {"provider": "edge_tts", "voice_id": "vi-VN-HoaiMyNeural",
+                                           "confirmed_by_user": True}}
+    with pytest.raises(RouteConfigurationError, match="compatible TTS voice"):
+        await DubStage().execute_step("tts_generation", ctx, None)
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_legacy_enabled_edge_alias_is_eligible_without_live_lookup(catalog, monkeypatch):
+    import app.workflow.stages.dub_stage as dub_module
+
+    sessions, path, _, _, edge_id = catalog
+    async with sessions.begin() as db:
+        config = await db.get(AIFunctionConfig, "tts")
+        config.model_id = edge_id
+        config.primary_provider_id = "edge_tts"
+        await db.delete(await db.get(VoicePoolEntry, "voice-edge"))
+        db.add(VoicePoolEntry(id="legacy-enabled", provider="edge", language="vi-VN", gender="female",
+                              voice_id="vi-VN-HoaiMyNeural", display_name="Hoai My", enabled=True))
+    calls = []
+    class Edge:
+        async def get_voices(self):
+            calls.append("lookup")
+            return []
+        async def generate_audio(self, text, voice_id, output_path, *, route_target, api_key):
+            calls.append("synthesize")
+            output_path.write_bytes(b"edge")
+            return GenerationResult(success=True, file_path=output_path)
+    monkeypatch.setattr(dub_module, "get_registry", lambda: Registry({"edge_tts": Edge()}))
+    monkeypatch.setattr(dub_module, "probe_duration_async", _duration)
+    ctx = context(path / "legacy-enabled.mp4")
+    ctx.speaker_voice_map = {"Speaker 1": {"provider": "edge_tts", "voice_id": "vi-VN-HoaiMyNeural",
+                                           "confirmed_by_user": True}}
+    await DubStage().execute_step("tts_generation", ctx, None)
+    assert calls == ["synthesize"]
