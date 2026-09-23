@@ -1,3 +1,8 @@
+- **Historical TikTok migration link (2026-09-23, Task 9D3A)**:
+  - Preserved revision identity/ancestry and the first-published `1ebccbb` table/index definition. An absent table is created only after namespace preflight; existing published/startup-created shapes are validated without writes. Incompatible tables, views, case aliases, constraints, and partial/incorrect/colliding indexes fail with a fixed reconciliation message.
+  - Downgrade refuses ambiguous deletion; blind offline upgrade requires an explicit online connection. Added an independent frozen SQL fixture and disposable SQLite regressions for actual revision operations through TikTok, populated-value preservation, no-write rejections, unique/default behavior, and offline MySQL DDL compilation. Updated the knowledge base.
+  - No runtime API/configuration/ORM changes, configured database, real keys, network, stamp, or push. Full-chain/version-table rehearsal, live MySQL and production compatibility remain unproven; voice/glossary/FK/catalog chain work remains pending.
+
 - **Historical YouTube/workflow progress links (2026-09-23, Task 9D2)**:
   - Review fix: preflight relation names through dialect-aware lookup and SQLite's shared table/view/index namespace before any creation, including mixed-case collisions. Validate primary keys through the portable table-constraint reflection API so MySQL-shaped column metadata is accepted. Added no-write/no-data-change regressions.
   - Repaired the two `20260908` revisions with frozen migration-owned prerequisites from `eec0ef5`, preserving revision ancestry and adding only missing progress columns. Both groups are validated before writes; invalid/partial schemas and ambiguous downgrades fail closed.
