@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import shutil
 import socket
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,12 +26,174 @@ AUDIO_HANDLER = box(b"hdlr", b"\x00" * 8 + b"soun" + b"\x00" * 12)
 SAMPLE_DESC = box(b"stsd", b"\x00" * 4 + (1).to_bytes(4, "big") + box(b"avc1", b"\x00" * 78))
 
 
-def sample_mp4(handler=VIDEO_HANDLER):
+def sample_mp4(handler=VIDEO_HANDLER, *, tail=b"", media=b"frame-bytes"):
     return FTYP + box(b"moov", box(b"trak", box(b"mdia", handler +
-        box(b"minf", box(b"stbl", SAMPLE_DESC))))) + box(b"mdat", b"frame-bytes")
+        box(b"minf", box(b"stbl", SAMPLE_DESC)))) + tail) + box(b"mdat", media)
 
 
 MP4 = sample_mp4()
+MALFORMED_AFTER_VIDEO_TRACK = sample_mp4(tail=b"\x00\x00\x01\x00junk")
+
+
+@pytest.mark.parametrize("content", [MP4, MALFORMED_AFTER_VIDEO_TRACK],
+                         ids=["zero-dimension-no-samples-text-mdat", "malformed-later-moov-child"])
+@pytest.mark.asyncio
+async def test_zero_dimension_or_malformed_tail_mp4_is_rejected(tmp_path, content):
+    path = tmp_path / "bad.mp4"
+    path.write_bytes(content)
+    with pytest.raises(catalog_media.VideoBoundaryError, match="invalid_output"):
+        await catalog_media.validate_mp4_file(path, len(content))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changes,valid", [
+    ({}, True), ({"width": 0}, False), ({"height": 0}, False),
+    ({"codec_name": "unknown"}, False), ({"nb_read_packets": "0"}, False),
+    ({"duration": "0"}, True), ({"duration": "0", "format_duration": "0"}, False),
+    ({"duration": "N/A"}, True),
+    ({"codec_type": "audio"}, False), ({"nb_read_packets": 1.2}, False),
+])
+async def test_probe_requires_usable_video_metadata(monkeypatch, tmp_path, changes, valid):
+    path = tmp_path / "sample.mp4"
+    path.write_bytes(MP4)
+    stream = {"codec_type": "video", "codec_name": "h264", "width": 16, "height": 16,
+              "duration": "1.0", "nb_read_packets": "1"}
+    stream.update({key: value for key, value in changes.items() if key != "format_duration"})
+    body = {"format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+                       "duration": changes.get("format_duration", "1.0")},
+            "streams": [stream]}
+    class Probe:
+        def __init__(self, payload):
+            self.returncode = None
+            self.stdout = asyncio.StreamReader()
+            self.stdout.feed_data(payload)
+            self.stdout.feed_eof()
+        async def wait(self):
+            self.returncode = 0
+            return 0
+        def kill(self):
+            self.returncode = -9
+    commands = []
+    async def launch(*args, **kwargs):
+        commands.append((args, kwargs))
+        return Probe(b"\x00\x00\x00" if args[0].endswith("ffmpeg") else json.dumps(body).encode())
+    monkeypatch.setattr(catalog_media.shutil, "which", lambda name: f"/synthetic/{name}")
+    monkeypatch.setattr(catalog_media.asyncio, "create_subprocess_exec", launch)
+    if valid:
+        await catalog_media.validate_mp4_file(path, len(MP4))
+    else:
+        with pytest.raises(catalog_media.VideoBoundaryError, match="invalid_output"):
+            await catalog_media.validate_mp4_file(path, len(MP4))
+    assert commands[0][0][-2:] == ("-i", str(path))
+    assert commands[0][1]["stderr"] == asyncio.subprocess.DEVNULL
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["ffprobe", "ffmpeg"])
+async def test_probe_unavailable_fails_closed(monkeypatch, tmp_path, missing):
+    path = tmp_path / "sample.mp4"
+    path.write_bytes(MP4)
+    monkeypatch.setattr(catalog_media.shutil, "which", lambda name: None if name == missing else f"/synthetic/{name}")
+    with pytest.raises(catalog_media.VideoBoundaryError, match="invalid_output"):
+        await catalog_media.validate_mp4_file(path, len(MP4))
+
+
+@pytest.mark.asyncio
+async def test_probe_total_deadline_kills_stalled_process(monkeypatch, tmp_path):
+    path = tmp_path / "sample.mp4"
+    path.write_bytes(MP4)
+    class Stream:
+        async def read(self, _):
+            await asyncio.Event().wait()
+    class Probe:
+        returncode = None
+        stdout = Stream()
+        killed = False
+        async def wait(self):
+            self.returncode = -9
+            return -9
+        def kill(self):
+            self.killed = True
+            self.returncode = -9
+    process = Probe()
+    async def launch(*args, **kwargs):
+        return process
+    monkeypatch.setattr(catalog_media.shutil, "which", lambda _: "/synthetic/ffprobe")
+    monkeypatch.setattr(catalog_media.asyncio, "create_subprocess_exec", launch)
+    monkeypatch.setattr(catalog_media, "PROBE_TIMEOUT", 0.02)
+    with pytest.raises(catalog_media.VideoBoundaryError, match="invalid_output"):
+        await catalog_media.validate_mp4_file(path, len(MP4))
+    assert process.killed
+
+
+@pytest.mark.asyncio
+async def test_probe_output_cap_kills_noisy_process(monkeypatch, tmp_path):
+    path = tmp_path / "sample.mp4"
+    path.write_bytes(MP4)
+    class Probe:
+        def __init__(self):
+            self.returncode = None
+            self.killed = False
+            self.stdout = asyncio.StreamReader()
+            self.stdout.feed_data(b"x" * (catalog_media.MAX_PROBE_JSON_BYTES + 1))
+            self.stdout.feed_eof()
+        async def wait(self):
+            self.returncode = -9
+            return -9
+        def kill(self):
+            self.killed = True
+            self.returncode = -9
+    process = Probe()
+    async def launch(*args, **kwargs):
+        return process
+    monkeypatch.setattr(catalog_media.shutil, "which", lambda _: "/synthetic/ffprobe")
+    monkeypatch.setattr(catalog_media.asyncio, "create_subprocess_exec", launch)
+    with pytest.raises(catalog_media.VideoBoundaryError, match="invalid_output"):
+        await catalog_media.validate_mp4_file(path, len(MP4))
+    assert process.killed
+
+
+@pytest.mark.asyncio
+async def test_positive_probe_metadata_with_no_decoded_frame_is_rejected(monkeypatch, tmp_path):
+    path = tmp_path / "sample.mp4"
+    path.write_bytes(MP4)
+    metadata = {"format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2", "duration": "1.0"},
+                "streams": [{"codec_type": "video", "codec_name": "h264", "width": 16,
+                             "height": 16, "duration": "1.0", "nb_read_packets": "1"}]}
+    commands = []
+    class Probe:
+        def __init__(self, content, code):
+            self.returncode = None
+            self.code = code
+            self.stdout = asyncio.StreamReader()
+            self.stdout.feed_data(content)
+            self.stdout.feed_eof()
+        async def wait(self):
+            self.returncode = self.code
+            return self.code
+        def kill(self):
+            self.returncode = -9
+    async def launch(executable, *args, **kwargs):
+        commands.append(executable)
+        return (Probe(json.dumps(metadata).encode(), 0) if executable.endswith("ffprobe")
+                else Probe(b"", 1))
+    monkeypatch.setattr(catalog_media.shutil, "which", lambda name: f"/synthetic/{name}")
+    monkeypatch.setattr(catalog_media.asyncio, "create_subprocess_exec", launch)
+    with pytest.raises(catalog_media.VideoBoundaryError, match="invalid_output"):
+        await catalog_media.validate_mp4_file(path, len(MP4))
+    assert commands == ["/synthetic/ffprobe", "/synthetic/ffmpeg"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(shutil.which("ffprobe") is None or shutil.which("ffmpeg") is None,
+                    reason="ffprobe or ffmpeg is not installed")
+@pytest.mark.parametrize("content", [MP4, MALFORMED_AFTER_VIDEO_TRACK],
+                         ids=["zero-dimension-no-samples", "malformed-later-child"])
+async def test_real_ffprobe_rejects_header_like_mp4(tmp_path, content):
+    path = tmp_path / "sample.mp4"
+    path.write_bytes(content)
+    with pytest.raises(catalog_media.VideoBoundaryError, match="invalid_output"):
+        await catalog_media.validate_mp4_file(path, len(content))
 
 
 @pytest.fixture(autouse=True)
@@ -46,10 +209,14 @@ def guarded_network(monkeypatch, tmp_path):
             AssertionError("canonical request consulted KeyManager")))
 
 
-def client_for(monkeypatch, module, handler):
+def client_for(monkeypatch, module, handler, *, probe_ok=True):
     real = httpx.AsyncClient
     monkeypatch.setattr(module.httpx, "AsyncClient", lambda **kwargs: real(
         transport=httpx.MockTransport(handler), **kwargs))
+    if probe_ok:
+        async def checked_fixture(path, size):
+            assert path.exists() and path.stat().st_size == size
+        monkeypatch.setattr(catalog_media, "validate_mp4_file", checked_fixture)
 
 
 def target(provider, model):
@@ -582,7 +749,7 @@ async def test_structurally_invalid_mp4_cannot_replace_old_output(monkeypatch, t
             return httpx.Response(200, json={"code": 0, "data": {"task_status": "succeed",
                 "task_result": {"videos": [{"url": "https://cdn.example.test/x.mp4"}]}}})
         return httpx.Response(200, content=content, headers={"content-type": "video/mp4"})
-    client_for(monkeypatch, kling_provider, respond)
+    client_for(monkeypatch, kling_provider, respond, probe_ok=False)
     async def no_sleep(_): pass
     monkeypatch.setattr(kling_provider.asyncio, "sleep", no_sleep)
     output = tmp_path / "x.mp4"
