@@ -55,25 +55,34 @@ async def _available(db, model: CatalogModel, capability: str) -> bool:
                  .where(APIKey.provider_id == model.provider_id, APIKey.enabled.is_(True),
                         KeyModelAccess.provider_id == model.provider_id,
                         KeyModelAccess.model_id == model.id))
-    return await db.scalar(query.limit(1)) is not None
+    return await db.scalar(query.limit(1).with_for_update()) is not None
 
 
 @router.put("/functions/{function_id}", response_model=Envelope[FunctionView])
 async def set_function_default(function_id: str, body: FunctionDefaultInput,
                                sessions: async_sessionmaker = Depends(get_function_sessions)):
+    # Keep the provider-ID preflight outside the write transaction: on MySQL
+    # REPEATABLE READ an ordinary SELECT would otherwise pin an older snapshot.
+    async with sessions() as preflight:
+        provider_id = await preflight.scalar(select(CatalogModel.provider_id).where(
+            CatalogModel.id == body.model_id))
+    if provider_id is None:
+        raise HTTPException(404, "Catalog model does not exist.")
     async with sessions.begin() as db:
-        config = await db.get(AIFunctionConfig, function_id)
+        await lock_catalog_provider(db, provider_id)
+        config = await db.scalar(select(AIFunctionConfig).where(
+            AIFunctionConfig.function_id == function_id).with_for_update()
+            .execution_options(populate_existing=True))
         if config is None:
             raise HTTPException(404, "Function does not exist.")
-        model = await db.get(CatalogModel, body.model_id)
+        model = await db.scalar(select(CatalogModel).where(CatalogModel.id == body.model_id)
+                                .with_for_update().execution_options(populate_existing=True))
         if model is None:
             raise HTTPException(404, "Catalog model does not exist.")
-        # Refresh and credential writes take this same provider lock. Re-read after
-        # acquiring it so a just-retired model cannot become the saved default.
-        await lock_catalog_provider(db, model.provider_id)
-        await db.refresh(model)
-        provider = await db.get(Provider, model.provider_id, populate_existing=True)
-        if (provider is None or not provider.enabled or not model.enabled or model.retired_at is not None
+        provider = await db.scalar(select(Provider).where(Provider.id == provider_id)
+                                   .with_for_update().execution_options(populate_existing=True))
+        if (model.provider_id != provider_id or provider is None or not provider.enabled
+                or not model.enabled or model.retired_at is not None
                 or not compatible(config.capability, model_evidence(model))
                 or not await _available(db, model, config.capability)):
             raise HTTPException(409, "Catalog model is unavailable for this function.")

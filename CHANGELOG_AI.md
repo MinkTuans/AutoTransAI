@@ -36,6 +36,7 @@
 
 - **Canonical Function Default API (2026-09-23, Task 7B2A)**:
   - Added `PUT /api/ai/functions/{function_id}` with exact catalog-ID selection, provider/capability/access checks under the refresh provider lock, and the typed Function response used by canonical GET. It clears prior configuration error and leaves historical fallback columns untouched.
+  - Review fix: split provider preflight from the write transaction and use current locking reads after the provider lock, so MySQL REPEATABLE READ cannot validate against an older snapshot. Added pre-lock change and MySQL `FOR UPDATE` compilation regressions.
   - Added isolated SQLite tests with synthetic credentials and an outbound socket guard for available, unavailable, public-catalog, keyless, malformed, secret-bearing, and retirement-at-lock-boundary cases. No legacy Settings route, UI, schema, provider traffic, real key, or production database change; updated the knowledge base.
 
 - **Canonical Key Pool and Refresh API (2026-09-23, Task 7B1)**:

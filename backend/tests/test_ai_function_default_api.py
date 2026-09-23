@@ -6,6 +6,7 @@ import socket
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event, select
+from sqlalchemy.dialects import mysql
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.deps import get_db
@@ -173,3 +174,53 @@ async def test_refresh_retirement_at_lock_boundary_rejects_write(default_api, mo
     assert response.status_code == 409
     async with sessions() as db:
         assert (await db.get(AIFunctionConfig, "stt")).model_id == "legacy-remote"
+
+
+@pytest.mark.parametrize("change", ["retire", "disable_model", "disable_provider", "disable_key"])
+async def test_concurrent_change_before_provider_lock_rejects_default(default_api, monkeypatch, change):
+    from app.api.routes import ai_function_defaults
+
+    client, sessions, path = default_api
+    await seed(sessions, path)
+    original = ai_function_defaults.lock_catalog_provider
+
+    async def change_then_lock(db, provider_id):
+        # This writer commits after pre-lookup but before the selection lock.
+        async with sessions.begin() as writer:
+            if change == "retire":
+                (await writer.get(CatalogModel, "catalog-id")).retired_at = datetime(2026, 1, 1)
+            elif change == "disable_model":
+                (await writer.get(CatalogModel, "catalog-id")).enabled = False
+            elif change == "disable_provider":
+                (await writer.get(Provider, "openai")).enabled = False
+            else:
+                (await writer.scalar(select(APIKey))).enabled = False
+        await original(db, provider_id)
+
+    monkeypatch.setattr(ai_function_defaults, "lock_catalog_provider", change_then_lock)
+    response = await client.put("/api/ai/functions/stt", json={"model_id": "catalog-id"})
+    assert response.status_code == 409
+    async with sessions() as db:
+        assert (await db.get(AIFunctionConfig, "stt")).model_id == "legacy-remote"
+
+
+async def test_validation_uses_mysql_current_locking_reads(default_api):
+    client, sessions, path = default_api
+    await seed(sessions, path)
+    statements = []
+
+    def capture(_conn, _cursor, _statement, _params, context, _many):
+        compiled = getattr(context, "compiled", None)
+        if compiled is not None and getattr(compiled.statement, "_for_update_arg", None) is not None:
+            statements.append(str(compiled.statement.compile(dialect=mysql.dialect())))
+
+    engine = sessions.kw["bind"]
+    event.listen(engine.sync_engine, "before_cursor_execute", capture)
+    try:
+        response = await client.put("/api/ai/functions/stt", json={"model_id": "catalog-id"})
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture)
+    assert response.status_code == 200
+    assert any("FROM ai_catalog_models" in sql and "FOR UPDATE" in sql for sql in statements)
+    assert any("FROM providers" in sql and "FOR UPDATE" in sql for sql in statements)
+    assert any("JOIN ai_key_model_access" in sql and "FOR UPDATE" in sql for sql in statements)
