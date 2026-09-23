@@ -229,6 +229,7 @@ class ProduceStage:
                     selected_style=style,
                     custom_instruction=instruction,
                     provider_id=provider,
+                    sessions=async_session_factory,
                 )
                 url = getattr(record, "thumbnail_url", None)
                 ctx.thumbnail_url = url

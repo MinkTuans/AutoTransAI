@@ -412,7 +412,10 @@ async def test_studio_background_entry_forwards_catalog_sessions_to_translation(
     async def stt(audio, **kwargs):
         return ([{"number": 1, "text": "Hello", "speaker_id": "S1", "start_time": 0, "end_time": 1}], "en")
 
+    mapping_kwargs = {}
+
     async def mapping(*args, **kwargs):
+        mapping_kwargs.update(kwargs)
         return SimpleNamespace(by_speaker={})
 
     captured = {}
@@ -445,6 +448,7 @@ async def test_studio_background_entry_forwards_catalog_sessions_to_translation(
         await tasks()
         assert captured["job_id"] == "job-one"
         assert captured["sessions"] is sessions
+        assert mapping_kwargs["sessions"] is sessions
         assert visual_kwargs["sessions"] is sessions
         assert term_kwargs["sessions"] is sessions
     finally:

@@ -3,11 +3,15 @@
 from dataclasses import dataclass
 from typing import Any
 import json
+import math
 import uuid
+from pathlib import Path
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.settings import SystemSetting
 from app.models.workflow_engine import CharacterVoiceProfile, SpeakerVoiceMapping
+from app.services.video_editor.catalog_llm import InvalidEditorOutput, generate_catalog_json
 
 
 @dataclass
@@ -15,6 +19,13 @@ class CharacterMappingResult:
     by_speaker: dict[str, dict[str, Any]]
     requires_review: bool
     issues: list[dict[str, Any]]
+
+
+def _safe_confidence(value: Any) -> bool:
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return False
 
 
 def validate_character_mapping(speaker_ids: list[str], candidates: list[dict[str, Any]], threshold: float) -> CharacterMappingResult:
@@ -54,6 +65,9 @@ async def map_and_persist(
     llm,
     video_path: str | None = None,
     visual_genders: dict[str, str] | None = None,
+    *,
+    sessions: async_sessionmaker[AsyncSession] | None = None,
+    data_dir: Path | None = None,
 ) -> CharacterMappingResult:
     setting = (await db.execute(select(SystemSetting).where(SystemSetting.key == "character_mapping_confidence_threshold"))).scalar_one_or_none()
     try:
@@ -69,9 +83,9 @@ async def map_and_persist(
             try:
                 from app.services.video_translator.visual_gender_service import detect_speakers_gender
                 visual_genders = await detect_speakers_gender(video_path, segments, db=db)
-            except Exception as e:
+            except Exception:
                 import logging
-                logging.getLogger(__name__).error(f"Failed to detect visual genders: {e}")
+                logging.getLogger(__name__).error("Failed to detect visual genders")
 
     # Priority 1: Query existing persistent SpeakerVoiceMapping records for this project
     existing_mappings = (
@@ -89,19 +103,55 @@ async def map_and_persist(
     ).scalars().all()
     profile_by_char_id = {p.character_id: p for p in existing_profiles}
 
-    prompt = (
+    prompt_prefix = (
         "Analyze the complete dialogue and map speakers to characters conservatively. "
         "Only merge speakers when strongly supported. Return JSON only: "
         '{"characters":[{"character_id":"...","name":"...","gender":"male|female|unknown",'
         '"role":"main|supporting","speaker_ids":["..."],"confidence":0.0}]}\n'
-        + json.dumps(transcript, ensure_ascii=False)
     )
-    try:
-        raw = await llm.generate_text(prompt)
-        parsed = json.loads(raw.strip().removeprefix("```json").removesuffix("```").strip())
-        candidates = parsed.get("characters", [])
-    except Exception:
-        candidates = []
+    transcript_json = json.dumps(transcript, ensure_ascii=False)
+
+    def validate(parsed: dict) -> dict:
+        candidates = parsed.get("characters")
+        if not isinstance(candidates, list) or len(candidates) > 1000:
+            raise InvalidEditorOutput() from None
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                raise InvalidEditorOutput() from None
+            members = candidate.get("speaker_ids")
+            confidence = candidate.get("confidence")
+            name = candidate.get("name")
+            gender = candidate.get("gender")
+            role = candidate.get("role")
+            cid = candidate.get("character_id")
+            if (not isinstance(members, list) or not members
+                    or any(not isinstance(item, str) or not item or len(item) > 100 for item in members)
+                    or type(confidence) not in (int, float) or not math.isfinite(confidence)
+                    or not 0 <= confidence <= 1
+                    or not isinstance(name, str) or not name.strip() or len(name) > 200
+                    or gender not in ("male", "female", "unknown")
+                    or role not in ("main", "supporting")
+                    or cid is not None and (not isinstance(cid, str) or len(cid) > 200)):
+                raise InvalidEditorOutput() from None
+        return {"characters": candidates}
+
+    parsed = await generate_catalog_json(
+        sessions=sessions, data_dir=data_dir, prompt_prefix=prompt_prefix,
+        transcript=transcript_json, prompt_suffix="", validate=validate,
+    )
+    if parsed is not None:
+        candidates = parsed["characters"]
+    else:
+        try:
+            raw = await llm.generate_text(prompt_prefix + transcript_json) if llm is not None else ""
+            parsed = json.loads(raw.strip().removeprefix("```json").removesuffix("```").strip())
+            raw_candidates = parsed.get("characters", []) if isinstance(parsed, dict) else []
+            candidates = [candidate for candidate in raw_candidates
+                          if isinstance(candidate, dict)
+                          and isinstance(candidate.get("speaker_ids", []), list)
+                          and _safe_confidence(candidate.get("confidence", 0.0))]
+        except Exception:
+            candidates = []
 
     for candidate in candidates:
         cand_speakers = [str(spk) for spk in candidate.get("speaker_ids", [])]

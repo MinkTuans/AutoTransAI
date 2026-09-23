@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_session
+from app.database import get_session, async_session_factory
 from app.models.video_thumbnail import VideoThumbnail, ThumbnailStatus
 from app.models.project import Project
 from app.models.video_translator import VideoTranslationJob, VideoAsset
@@ -158,6 +158,8 @@ async def generate_thumbnail_endpoint(
             custom_instruction=req.custom_instruction,
             provider_id=req.provider_id,
             model_id=req.model_id,
+            sessions=async_session_factory,
+            data_dir=settings.DATA_DIR,
         )
         return {
             "success": record.status == ThumbnailStatus.COMPLETED.value,
@@ -253,6 +255,8 @@ async def regenerate_thumbnail_endpoint(
             custom_instruction=req.custom_instruction if req.custom_instruction is not None else record.custom_instruction,
             provider_id=req.provider_id or record.provider,
             model_id=req.model_id or record.model,
+            sessions=async_session_factory,
+            data_dir=settings.DATA_DIR,
         )
         return {
             "success": new_record.status == ThumbnailStatus.COMPLETED.value,

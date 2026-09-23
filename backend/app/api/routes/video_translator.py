@@ -1058,6 +1058,8 @@ async def start_translation_pipeline(
                         llm,
                         video_path=video_path_str,
                         visual_genders=visual_genders,
+                        sessions=async_session_factory,
+                        data_dir=settings.DATA_DIR,
                     )
 
                     # Decorate segments_raw with character metadata (including resolved gender)
@@ -2774,7 +2776,10 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                         .values(current_step="Đang tạo Thumbnail AI…")
                     )
                     await thumb_session.commit()
-                    thumb_res = await ThumbnailService.maybe_generate_for_job(thumb_session, job_row)
+                    thumb_res = await ThumbnailService.maybe_generate_for_job(
+                        thumb_session, job_row, sessions=async_session_factory,
+                        data_dir=settings.DATA_DIR,
+                    )
                     log_job_event(
                         job_id,
                         "THUMBNAIL",

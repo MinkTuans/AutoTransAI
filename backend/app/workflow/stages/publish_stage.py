@@ -117,6 +117,7 @@ class PublishStage:
                         custom_instruction=getattr(ctx, "thumbnail_custom_instruction", None)
                         or snapshot.get("thumbnail_custom_instruction"),
                         provider_id=getattr(ctx, "thumbnail_provider", None) or snapshot.get("thumbnail_provider"),
+                        sessions=async_session_factory,
                     )
                     if record and record.thumbnail_url:
                         thumbnail_url = record.thumbnail_url

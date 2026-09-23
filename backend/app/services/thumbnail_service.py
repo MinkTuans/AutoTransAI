@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import get_settings
 from app.core import get_logger
@@ -25,6 +25,8 @@ from app.providers.registry import get_registry
 from app.providers.base import ImageProvider
 from app.services.key_manager import get_key_manager
 from app.services.storage_service import storage_service
+from app.services.ai_routing import classify_failure
+from app.services.video_editor.catalog_llm import InvalidEditorOutput, generate_catalog_json
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -86,8 +88,11 @@ class ThumbnailService:
         transcript_summary: str,
         source_lang: str = "auto",
         target_lang: str = "vi",
+        *,
+        sessions: async_sessionmaker[AsyncSession] | None = None,
+        data_dir: Path | None = None,
     ) -> Dict[str, Any]:
-        """Use LLM (Gemini or OpenAI via KeyManager) to generate structured content analysis."""
+        """Analyze with the catalog LLM route, retaining the unmigrated legacy path."""
         system_prompt = (
             "You are an expert YouTube Thumbnail Director and Content Analyst. "
             "Analyze the video title, description, and transcript summary to extract core visual storytelling elements. "
@@ -112,9 +117,6 @@ class ThumbnailService:
             f"Transcript Content:\n{transcript_summary[:3000]}\n"
         )
 
-        registry = get_registry()
-        llm_provider = registry.get_llm("gemini") or registry.get_llm("openai")
-
         fallback_analysis = {
             "title": title,
             "main_subject": title,
@@ -127,6 +129,27 @@ class ThumbnailService:
             "thumbnail_hook": f"Visual scene representing {title}",
         }
 
+        def validate(parsed: dict) -> dict:
+            for name in ("title", "main_subject", "main_event", "thumbnail_hook"):
+                value = parsed.get(name)
+                if not isinstance(value, str) or not value.strip() or len(value) > 500:
+                    raise InvalidEditorOutput() from None
+            elements = parsed.get("important_visual_elements", [])
+            if (not isinstance(elements, list) or len(elements) > 30
+                    or any(not isinstance(item, str) or len(item) > 200 for item in elements)):
+                raise InvalidEditorOutput() from None
+            return AIThumbnailAnalysis(**parsed).model_dump()
+
+        catalog_analysis = await generate_catalog_json(
+            sessions=sessions, data_dir=data_dir,
+            prompt_prefix=system_prompt + "\n", transcript=user_prompt,
+            prompt_suffix="", validate=validate,
+        )
+        if catalog_analysis is not None:
+            return catalog_analysis
+
+        registry = get_registry()
+        llm_provider = registry.get_llm("gemini") or registry.get_llm("openai")
         if not llm_provider:
             return fallback_analysis
 
@@ -142,7 +165,7 @@ class ThumbnailService:
             validated = AIThumbnailAnalysis(**parsed)
             return validated.model_dump()
         except Exception as ex:
-            logger.warning("LLM content analysis parsing failed, using fallback", error=str(ex))
+            logger.warning("LLM content analysis parsing failed, using fallback", code=classify_failure(ex))
             return fallback_analysis
 
     @classmethod
@@ -189,6 +212,9 @@ class ThumbnailService:
         custom_instruction: Optional[str] = None,
         provider_id: Optional[str] = None,
         model_id: Optional[str] = None,
+        *,
+        sessions: async_sessionmaker[AsyncSession] | None = None,
+        data_dir: Path | None = None,
     ) -> VideoThumbnail:
         """
         Full End-to-End AI Auto Thumbnail Generation Workflow.
@@ -284,13 +310,15 @@ class ThumbnailService:
             chunks = cls.chunk_transcript(cleaned)
             summary_context = "\n".join(chunks[:3]) if chunks else title
 
-            logger.info("[THUMBNAIL] Starting AI Content Analysis", thumbnail_id=thumbnail_id, title=title)
+            logger.info("[THUMBNAIL] Starting AI Content Analysis", thumbnail_id=thumbnail_id)
             analysis = await cls.analyze_content_with_llm(
                 title=title,
                 description=description,
                 transcript_summary=summary_context,
                 source_lang=source_lang,
                 target_lang=target_lang,
+                sessions=sessions,
+                data_dir=data_dir,
             )
 
             # 3. Generate Visual Image Prompt
@@ -443,7 +471,11 @@ class ThumbnailService:
         return bool(raw)
 
     @classmethod
-    async def maybe_generate_for_job(cls, db: Optional[AsyncSession], job: VideoTranslationJob) -> Dict[str, Any]:
+    async def maybe_generate_for_job(
+        cls, db: Optional[AsyncSession], job: VideoTranslationJob, *,
+        sessions: async_sessionmaker[AsyncSession] | None = None,
+        data_dir: Path | None = None,
+    ) -> Dict[str, Any]:
         """Used by Studio Auto after render. No-op when the checkbox was off."""
         snap: Dict[str, Any] = {}
         raw_json = getattr(job, "settings_snapshot_json", None)
@@ -480,6 +512,8 @@ class ThumbnailService:
             selected_style=snap.get("thumbnail_style") or "auto",
             custom_instruction=snap.get("thumbnail_custom_instruction") or None,
             provider_id=snap.get("thumbnail_provider") or "pollinations",
+            sessions=sessions,
+            data_dir=data_dir,
         )
         url = getattr(record, "thumbnail_url", None)
         return {
