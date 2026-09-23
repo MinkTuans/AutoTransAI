@@ -3,11 +3,12 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import APIKey, CatalogModel, KeyModelAccess, Provider
 from app.providers.base import GenerationResult
+from app.providers.base import VoiceInfo
 from app.services.ai_routing import RouteConfigurationError, RouteExhausted, RoutePlan, RouteTarget
 from app.services.credential_service import CredentialService
 from app.services.video_translator.studio_tts_routing import (
@@ -212,6 +213,194 @@ async def test_uninitialized_catalog_keeps_legacy_tts_call(tmp_path, monkeypatch
     try:
         await studio.execute_job_render_pipeline("job")
         assert calls == [("Xin chào", "vi-VN-HoaiMyNeural")]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_first_keyed_tts_row_does_not_activate_unmigrated_legacy_edge_default(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.database import Base
+    from app.models.settings import AIModel, AIFunctionConfig
+    from app.models.video_translator import VideoAsset, VideoTranslationJob, VideoTranslationSegment
+    from app.models.workflow_engine import VoicePoolEntry
+    from app.api.routes import video_translator as studio
+    from app.services.video_translator import timeline_scheduler
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'legacy-keyed.db'}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(studio, "async_session_factory", sessions)
+    monkeypatch.setattr(studio.settings, "STORAGE_ROOT", tmp_path / "storage")
+    monkeypatch.setattr(studio, "log_job_event", lambda *args: None)
+    monkeypatch.setattr(studio, "start_job_heartbeat", lambda *args: None)
+    monkeypatch.setattr(studio, "stop_job_heartbeat", lambda *args: None)
+    monkeypatch.setattr(studio, "probe_duration_async", AsyncMock(return_value=1.0))
+    calls = []
+
+    class LegacyEdge:
+        async def generate_audio(self, text, voice_id, output_path):
+            calls.append((text, voice_id))
+            output_path.write_bytes(b"audio")
+            return GenerationResult(success=True, file_path=output_path)
+
+    monkeypatch.setattr(studio, "get_registry", lambda: Registry({"edge_tts": LegacyEdge()}))
+    monkeypatch.setattr(timeline_scheduler, "schedule_segments", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("stop")))
+    async with sessions.begin() as db:
+        db.add(Provider(id="elevenlabs", name="eleven", provider_type="audio"))
+        db.add(AIModel(id="edge-tts", provider_id="edge_tts", model_name="Edge TTS", capabilities='["TTS"]'))
+        db.add(AIFunctionConfig(function_id="tts", function_name="TTS", capability="TTS",
+                                primary_provider_id="edge_tts", model_id="edge-tts"))
+        db.add(VideoAsset(id="asset", file_path=str(tmp_path / "source.mp4"), duration=2.0))
+        db.add(VideoTranslationJob(id="job", asset_id="asset", target_language="vi",
+                                   audio_provider_id="edge_tts", voice_id="vi-VN-HoaiMyNeural"))
+        db.add(VideoTranslationSegment(job_id="job", segment_number=1, start_time=0.0, end_time=1.0,
+                                       original_text="Hello", translated_text="Xin chào",
+                                       voice_provider="edge_tts", voice_id="vi-VN-HoaiMyNeural"))
+        await add_model(db, tmp_path / "data", "eleven-model", "request-key")
+    try:
+        await studio.execute_job_render_pipeline("job")
+        assert calls == [("Xin chào", "vi-VN-HoaiMyNeural")]
+        async with sessions() as db:
+            assert await db.scalar(select(CatalogModel.id).where(CatalogModel.provider_id == "edge_tts")) is None
+            assert await db.scalar(select(Provider.id).where(Provider.id == "edge_tts")) is None
+            job = await db.get(VideoTranslationJob, "job")
+            assert job.error_message is None or "TTS default" not in job.error_message
+        # Task 9 cutover condition: a real Edge provider/system model and UUID
+        # default make this same installation eligible for canonical rendering.
+        async with sessions.begin() as db:
+            db.add(Provider(id="edge_tts", name="edge", provider_type="audio"))
+            edge_model = CatalogModel(provider_id="edge_tts", remote_model_id="edge-tts",
+                                      source="system", capability_status="KNOWN", capabilities=["TTS"])
+            db.add(edge_model)
+            db.add(VoicePoolEntry(id="legacy-voice", provider="edge_tts", voice_id="vi-VN-HoaiMyNeural",
+                                  language="vi-VN", gender="Female", display_name="Hoai My"))
+            await db.flush()
+            default = await db.get(AIFunctionConfig, "tts")
+            default.model_id = edge_model.id
+        canonical_calls = []
+
+        class CanonicalEdge:
+            async def generate_audio(self, text, voice_id, output_path, *, route_target, api_key):
+                canonical_calls.append((route_target.remote_model_id, api_key, voice_id))
+                output_path.write_bytes(b"audio")
+                return GenerationResult(success=True, file_path=output_path)
+
+        monkeypatch.setattr(studio, "get_registry", lambda: Registry({"edge_tts": CanonicalEdge()}))
+        (tmp_path / "storage" / "translator" / "jobs" / "job" / "tts" / "seg_001.wav").unlink()
+        await studio.execute_job_render_pipeline("job")
+        assert canonical_calls == [("edge-tts", None, "vi-VN-HoaiMyNeural")]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_review_confirmed_edge_voice_outside_seed_pool_renders_canonically(tmp_path, monkeypatch):
+    from fastapi import BackgroundTasks
+    from unittest.mock import AsyncMock
+    from app.database import Base
+    from app.models.project import Project
+    from app.models.settings import AIFunctionConfig
+    from app.models.video_translator import VideoAsset, VideoTranslationJob, VideoTranslationSegment
+    from app.models.workflow_engine import VoicePoolEntry
+    from app.api.routes import video_translator as studio
+    from app.services.video_translator import timeline_scheduler
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'review.db'}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(studio, "async_session_factory", sessions)
+    monkeypatch.setattr(studio.settings, "STORAGE_ROOT", tmp_path / "storage")
+    monkeypatch.setattr(studio, "log_job_event", lambda *args: None)
+    monkeypatch.setattr(studio, "start_job_heartbeat", lambda *args: None)
+    monkeypatch.setattr(studio, "stop_job_heartbeat", lambda *args: None)
+    monkeypatch.setattr(studio, "probe_duration_async", AsyncMock(return_value=1.0))
+    calls = []
+
+    class Edge:
+        async def get_voices(self, language=None):
+            return [VoiceInfo(id="vi-VN-XiaNeural", name="Xia", language="vi-VN", gender="Female")]
+
+        async def generate_audio(self, text, voice_id, output_path, *, route_target, api_key):
+            calls.append((route_target.provider_id, api_key, voice_id))
+            output_path.write_bytes(b"audio")
+            return GenerationResult(success=True, file_path=output_path)
+
+    monkeypatch.setattr(studio, "get_registry", lambda: Registry({"edge_tts": Edge()}))
+    async with sessions.begin() as db:
+        db.add_all([Provider(id="edge_tts", name="edge", provider_type="audio"),
+                    Provider(id="elevenlabs", name="eleven", provider_type="audio")])
+        db.add(Project(id="project"))
+        db.add(VideoAsset(id="asset", file_path=str(tmp_path / "source.mp4"), duration=2.0))
+        db.add(VideoTranslationJob(id="job", project_id="project", asset_id="asset", target_language="vi",
+                                   status="needs_review", audio_provider_id="edge_tts",
+                                   voice_id="vi-VN-XiaNeural"))
+        seg = VideoTranslationSegment(job_id="job", segment_number=1, speaker_id="spk", start_time=0.0,
+                                      end_time=1.0, original_text="Hello", translated_text="Xin chào")
+        db.add(seg)
+        db.add(CatalogModel(provider_id="edge_tts", remote_model_id="edge-tts", source="system",
+                            capability_status="KNOWN", capabilities=["TTS"]))
+        db.add(CatalogModel(provider_id="elevenlabs", remote_model_id="model-a", source="discovered",
+                            capability_status="KNOWN", capabilities=["TTS"]))
+        await db.flush()
+        edge_model = await db.scalar(select(CatalogModel).where(
+            CatalogModel.provider_id == "edge_tts"))
+        db.add(AIFunctionConfig(function_id="tts", function_name="TTS", capability="TTS",
+                                primary_provider_id="edge_tts", model_id=edge_model.id))
+        segment_id = seg.id
+    try:
+        async with sessions() as db:
+            edit = studio.CharacterVoiceEdit(
+                segment_id=segment_id, speaker_id="spk", character_id="char", gender="female",
+                voice_provider="edge_tts", voice_id="vi-VN-XiaNeural",
+            )
+            payload = studio.CharacterVoiceReviewUpdate(mappings=[edit, edit])
+            await studio.update_character_voice_review("job", payload, db)
+            enrolled = await db.scalar(select(VoicePoolEntry).where(
+                VoicePoolEntry.provider == "edge_tts", VoicePoolEntry.voice_id == "vi-VN-XiaNeural"))
+            assert enrolled is not None
+            assert enrolled.language == "vi-VN"
+            assert enrolled.gender.lower() == "female"
+            enrolled.language = "en-US"
+            enrolled.gender = "Male"
+            await db.flush()
+            await studio.update_character_voice_review("job", payload, db)
+            assert enrolled.language == "vi-VN"
+            assert enrolled.gender.lower() == "female"
+            await studio.confirm_character_voice_review("job", BackgroundTasks(), db)
+        monkeypatch.setattr(timeline_scheduler, "schedule_segments", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("stop")))
+        await studio.execute_job_render_pipeline("job")
+        assert calls == [("edge_tts", None, "vi-VN-XiaNeural")]
+        # A historical confirmed profile may predate pool enrollment.
+        async with sessions.begin() as db:
+            row = await db.scalar(select(VoicePoolEntry).where(
+                VoicePoolEntry.provider == "edge_tts", VoicePoolEntry.voice_id == "vi-VN-XiaNeural"))
+            await db.delete(row)
+        tts_dir = tmp_path / "storage" / "translator" / "jobs" / "job" / "tts"
+        (tts_dir / "seg_001.wav").unlink()
+        (tts_dir / "seg_001.meta.json").unlink()
+        await studio.execute_job_render_pipeline("job")
+        assert calls == [("edge_tts", None, "vi-VN-XiaNeural")] * 2
+        # A deliberate pool disable must never be bypassed by historical review metadata.
+        async with sessions.begin() as db:
+            db.add(VoicePoolEntry(id="disabled-voice", provider="edge_tts", voice_id="vi-VN-XiaNeural",
+                                  language="vi-VN", gender="Female", display_name="Xia", enabled=False))
+        (tts_dir / "seg_001.wav").unlink()
+        (tts_dir / "seg_001.meta.json").unlink()
+        await studio.execute_job_render_pipeline("job")
+        assert calls == [("edge_tts", None, "vi-VN-XiaNeural")] * 2
+        async with sessions() as db:
+            failed = await db.get(VideoTranslationJob, "job")
+            assert failed.status == "failed"
+            assert "No compatible TTS voice" in failed.error_message
+            from fastapi import HTTPException
+            with pytest.raises(HTTPException, match="Voice Pool"):
+                await studio.update_character_voice_review("job", payload, db)
+            disabled = await db.scalar(select(VoicePoolEntry).where(
+                VoicePoolEntry.provider == "edge_tts", VoicePoolEntry.voice_id == "vi-VN-XiaNeural"))
+            assert disabled.enabled is False
     finally:
         await engine.dispose()
 

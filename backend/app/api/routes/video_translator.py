@@ -58,6 +58,7 @@ from app.services.video_editor.watermark_service import (
 )
 
 from app.providers.registry import get_registry
+from app.providers.base import VoiceInfo
 from app.services.video_source import get_video_source_service
 from app.services.video_source.transfer_progress import (
     apply_yt_dlp_progress,
@@ -2037,19 +2038,29 @@ async def execute_job_render_pipeline(job_id: str) -> None:
             segment_routes = {}
             if canonical_tts:
                 tts_default = await init_session.get(AIFunctionConfig, "tts")
+                # Legacy installations seed only AIModel("edge-tts") and keep that
+                # string in the TTS default. Adding an unrelated key must not
+                # switch Studio to a catalog route before the Edge default is
+                # migrated to its canonical model UUID (Task 9 cutover).
+                if (tts_default and tts_default.primary_provider_id == "edge_tts"
+                        and tts_default.model_id == "edge-tts"):
+                    canonical_tts = False
+            if canonical_tts:
                 if not tts_default or not tts_default.model_id:
                     raise RouteConfigurationError("TTS default is not configured.")
                 tts_route = await build_route(init_session, "TTS")
-                pool_rows = (await init_session.execute(select(VoicePoolEntry).where(
-                    VoicePoolEntry.enabled.is_(True)
-                ))).scalars().all()
+                pool_rows = (await init_session.execute(select(VoicePoolEntry))).scalars().all()
                 voice_pool = [{"provider": p.provider, "voice_id": p.voice_id,
-                               "language": p.language, "gender": p.gender} for p in pool_rows]
+                               "language": p.language, "gender": p.gender} for p in pool_rows if p.enabled]
+                disabled_voices = {(p.provider, p.voice_id) for p in pool_rows if not p.enabled}
+                historical_edge_voices = {}
                 profiles = {}
                 if b_job.project_id:
                     profiles = {p.character_id: p for p in (await init_session.execute(
                         select(CharacterVoiceProfile).where(CharacterVoiceProfile.project_id == b_job.project_id)
                     )).scalars().all()}
+                # Release the catalog connection before historical voice lookup.
+                await init_session.close()
                 for seg in segments_data:
                     profile = profiles.get(seg.get("character_id"))
                     seg["gender"] = profile.gender if profile else None
@@ -2059,8 +2070,27 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                         or seg.get("voice_id") != profile.voice_id
                     ):
                         raise RouteConfigurationError("Confirmed TTS voice mapping needs review.")
+                    segment_pool = voice_pool
+                    selected_voice = (seg.get("voice_provider"), seg.get("voice_id"))
+                    if (seg["confirmed_by_user"] and selected_voice[0] == "edge_tts"
+                            and selected_voice not in disabled_voices
+                            and not any((v["provider"], v["voice_id"]) == selected_voice for v in voice_pool)):
+                        if selected_voice not in historical_edge_voices:
+                            edge_provider = registry.get_audio("edge_tts")
+                            try:
+                                live_voices = await edge_provider.get_voices() if edge_provider else []
+                            except Exception:
+                                live_voices = []
+                            verified = next((v for v in live_voices if v.id == selected_voice[1]), None)
+                            historical_edge_voices[selected_voice] = (
+                                {"provider": "edge_tts", "voice_id": verified.id,
+                                 "language": verified.language, "gender": verified.gender}
+                                if verified else None
+                            )
+                        if historical_edge_voices[selected_voice]:
+                            segment_pool = voice_pool + [historical_edge_voices[selected_voice]]
                     segment_routes[seg["id"]] = select_segment_route(
-                        tts_route, seg, voice_pool, b_job.target_language,
+                        tts_route, seg, segment_pool, b_job.target_language,
                     )
             if not canonical_tts and not audio_provider:
                 await init_session.execute(
@@ -3568,6 +3598,7 @@ async def validate_voice_assignment(
     voice_id: Optional[str],
     target_language: Optional[str] = None,
     character_gender: Optional[str] = None,
+    validated_voice: Optional[List[VoiceInfo]] = None,
 ) -> Optional[Dict[str, str]]:
     """Validate provider, voice existence, target language compatibility, and character gender matching."""
     if not provider_id:
@@ -3612,12 +3643,16 @@ async def validate_voice_assignment(
                 "reason": "gender_unresolved",
                 "message": "Chưa xác định giới tính nhân vật. Vui lòng chọn Nam hoặc Nữ trước khi gán giọng.",
             }
+        if c_gender in ("male", "female") and v_gender not in ("male", "female"):
+            return {"reason": "gender_unknown", "message": "Không thể xác minh giới tính giọng đọc đã chọn."}
         if c_gender in ("male", "female") and v_gender in ("male", "female") and v_gender != c_gender:
             return {
                 "reason": "gender_mismatch",
                 "message": f"Giọng đọc '{voice_id}' ({'Nữ' if v_gender == 'female' else 'Nam'}) không khớp với giới tính nhân vật ({'Nam' if c_gender == 'male' else 'Nữ'}).",
             }
 
+    if validated_voice is not None:
+        validated_voice.append(matched_voice)
     return None
 
 
@@ -3683,6 +3718,7 @@ async def update_character_voice_review(job_id: str, body: CharacterVoiceReviewU
         raise HTTPException(status_code=404, detail="Job not found")
 
     target_lang = job.target_language or "vi"
+    validated_voices = []
     for item in body.mappings:
         cur_gender = item.gender
         if cur_gender == "unknown":
@@ -3700,12 +3736,33 @@ async def update_character_voice_review(job_id: str, body: CharacterVoiceReviewU
             voice_id=item.voice_id,
             target_language=target_lang,
             character_gender=cur_gender,
+            validated_voice=validated_voices,
         )
         if err:
             raise HTTPException(
                 status_code=400,
                 detail=f"Lỗi cấu hình giọng đọc: {err['message']} ({err['reason']})",
             )
+
+    # Review acceptance and the offline render pool must use the same verified
+    # provider voice metadata. Never revive an explicitly disabled pool entry.
+    for item, verified in zip(body.mappings, validated_voices):
+        existing = (await session.execute(select(VoicePoolEntry).where(
+            VoicePoolEntry.provider == item.voice_provider,
+            VoicePoolEntry.voice_id == item.voice_id,
+        ))).scalar_one_or_none()
+        if existing and not existing.enabled:
+            raise HTTPException(status_code=400, detail="Giọng đọc đã bị tắt trong Voice Pool.")
+        if existing:
+            existing.language = verified.language
+            existing.gender = verified.gender
+            existing.display_name = verified.name or item.voice_id
+        else:
+            session.add(VoicePoolEntry(
+                id=str(uuid.uuid4()), provider=item.voice_provider, voice_id=item.voice_id,
+                language=verified.language, gender=verified.gender,
+                display_name=verified.name or item.voice_id,
+            ))
 
     job_dir = settings.STORAGE_ROOT / "translator" / "jobs" / job_id
     tts_dir = job_dir / "tts"

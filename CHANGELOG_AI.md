@@ -1,3 +1,7 @@
+- **Studio TTS review fixes (2026-09-23, Task 6D2 review)**:
+  - A review-accepted voice is enrolled in the enabled pool with verified provider metadata; disabled rows stay disabled and are rejected. Confirmed historical Edge voices absent from the pool are revalidated by exact ID, language, and gender for canonical render, without persisting guessed metadata or silently switching provider/voice.
+  - A first keyed TTS catalog entry no longer breaks installations with the seeded legacy `edge_tts`/`edge-tts` default. This exact state remains on the read-only legacy Studio path until Task 9 creates the Edge provider/system catalog row and migrates the default to its UUID; no catalog row or entitlement is fabricated by render. Added isolated review/render and migration-gate regressions. Updated the knowledge base; no schema or public API change.
+
 - **Studio TTS canonical cutover (2026-09-23, Task 6D2)**:
   - Studio Phase 2 now builds a TTS route for initialized canonical state and sends each segment and schedule retry through request-local targets and keys. It selects enabled voices by provider, target language, and known gender, preserving confirmed mappings and rejecting runs with no eligible voice.
   - Canonical failed synthesis now advances through classified route fallback and fails the job if exhausted. TTS cache identity includes provider, catalog/remote model, key ID, voice, text, and configured default. Schedule retries close their read session before network/media work. Uninitialized catalogs retain legacy positional calls.
