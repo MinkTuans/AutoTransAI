@@ -107,6 +107,65 @@ def test_media_routes_serve_video_from_valid_roots(media_roots, route, root):
     assert response.content == b"fake-video-content"
 
 
+@pytest.mark.parametrize("suffix", [".flv", ".ts", ".3gp"])
+@pytest.mark.parametrize("route", ["media", "files", "download"])
+def test_media_routes_serve_accepted_video_formats(media_roots, route, suffix):
+    _, storage_dir = media_roots
+    path = f"merger/uploads/source{suffix}"
+    video = storage_dir / path
+    video.parent.mkdir(parents=True, exist_ok=True)
+    video.write_bytes(b"accepted-video-format")
+
+    client = TestClient(app)
+    if route == "media":
+        response = client.get(f"/media/{path}")
+    elif route == "files":
+        response = client.get(f"/api/storage/files/{path}")
+    else:
+        response = client.get("/api/storage/download", params={"path": path})
+
+    assert response.status_code == 200
+    assert response.content == b"accepted-video-format"
+
+
+@pytest.mark.parametrize("route", ["media", "files", "download"])
+def test_nested_storage_root_serves_media_without_exposing_data_root(media_roots, monkeypatch, route):
+    data_dir, _ = media_roots
+    nested_storage = data_dir / "storage"
+    nested_storage.mkdir()
+    Settings(DATA_DIR=data_dir, STORAGE_ROOT=nested_storage)
+    monkeypatch.setattr(storage_routes.settings, "STORAGE_ROOT", nested_storage)
+    monkeypatch.setattr(storage_service.settings, "STORAGE_ROOT", nested_storage)
+    media_mount = next(route_item for route_item in app.routes if getattr(route_item, "name", None) == "media")
+    monkeypatch.setattr(media_mount.app, "storage_root", nested_storage)
+
+    path = "projects/sample/video.mp4"
+    video = nested_storage / path
+    video.parent.mkdir(parents=True, exist_ok=True)
+    video.write_bytes(b"nested-storage-video")
+    (data_dir / "private.mp4").write_bytes(b"private-root-file")
+    (data_dir / "api_keys.json").write_bytes(b"fake-private-content")
+
+    client = TestClient(app)
+    if route == "media":
+        public = client.get(f"/media/{path}")
+        private_media = client.get("/media/private.mp4")
+        private_keys = client.get("/media/api_keys.json")
+    elif route == "files":
+        public = client.get(f"/api/storage/files/{path}")
+        private_media = client.get("/api/storage/files/private.mp4")
+        private_keys = client.get("/api/storage/files/api_keys.json")
+    else:
+        public = client.get("/api/storage/download", params={"path": path})
+        private_media = client.get("/api/storage/download", params={"path": "private.mp4"})
+        private_keys = client.get("/api/storage/download", params={"path": "api_keys.json"})
+
+    assert public.status_code == 200
+    assert public.content == b"nested-storage-video"
+    assert private_media.status_code == 404
+    assert private_keys.status_code == 404
+
+
 @pytest.mark.parametrize("route", ["media", "files", "download"])
 def test_media_routes_reject_data_root_media(media_roots, route):
     data_dir, _ = media_roots

@@ -18,9 +18,9 @@ router = APIRouter(prefix="/api/storage", tags=["storage"])
 settings = get_settings()
 
 MEDIA_SUFFIXES = {
-    ".aac", ".ass", ".avi", ".bmp", ".flac", ".gif", ".jpeg", ".jpg",
+    ".3gp", ".aac", ".ass", ".avi", ".bmp", ".flac", ".flv", ".gif", ".jpeg", ".jpg",
     ".m4a", ".m4v", ".mkv", ".mov", ".mp3", ".mp4", ".ogg",
-    ".opus", ".png", ".srt", ".ssa", ".tif", ".tiff", ".vtt",
+    ".opus", ".png", ".srt", ".ssa", ".tif", ".tiff", ".ts", ".vtt",
     ".wav", ".webm", ".webp",
 }
 
@@ -48,8 +48,6 @@ def resolve_media_file(file_path: str, storage_root: Path, data_dir: Path) -> Pa
         except (OSError, RuntimeError):
             continue
         if not target.is_relative_to(root) or not is_file:
-            continue
-        if target.is_relative_to(data_root) and not target.is_relative_to(legacy_root):
             continue
         if target.suffix.lower() in MEDIA_SUFFIXES and not any(part.startswith(".") for part in target.relative_to(root).parts):
             return target

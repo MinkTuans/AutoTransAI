@@ -1,5 +1,6 @@
 - **Public Media Credential Isolation (2026-09-23)**:
   - Restricted `/media` and both `/api/storage` file routes to validated media in `STORAGE_ROOT` and legacy `DATA_DIR/translator/`; blocked secrets, database files, logs, dotfiles, traversal, and escaping symlinks.
+  - Preserved serving of `.flv`, `.ts`, and `.3gp` formats accepted by video ingest and merger, and valid `STORAGE_ROOT` paths nested under `DATA_DIR` such as `DATA_DIR/storage`.
   - Enforced `DATA_DIR` outside `STORAGE_ROOT` at configuration load, keeping credential, SQLite, and encryption-key storage separate. Root-level `DATA_DIR` media URLs now require migration to an allowed media root.
   - Added isolated HTTP regression tests for all three routes and adapted Unicode download coverage to a temporary legacy translator path. Updated `PROJECT_KNOWLEDGE_BASE.md`.
 
