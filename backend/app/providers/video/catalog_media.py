@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
+import json
 import os
 import tempfile
 from pathlib import Path
+from typing import BinaryIO, Iterator
 from urllib.parse import urljoin
 
 import httpx
@@ -14,6 +15,7 @@ from app.providers.image.catalog_media import CatalogImageError, validate_public
 from app.services.ai_routing import RoutePending
 
 MAX_VIDEO_BYTES = 100 * 1024 * 1024
+_VIDEO_SAMPLE_ENTRIES = frozenset({b"avc1", b"avc3", b"hvc1", b"hev1", b"av01", b"vp09", b"mp4v"})
 
 
 class VideoBoundaryError(Exception):
@@ -74,7 +76,6 @@ async def request_json(client: httpx.AsyncClient, method: str, url: str, *, head
                 content.extend(chunk)
                 if len(content) > 1024 * 1024:
                     raise VideoBoundaryError("invalid_output")
-        import json
         result = json.loads(content)
         if not isinstance(result, dict):
             raise VideoBoundaryError("invalid_output")
@@ -85,6 +86,89 @@ async def request_json(client: httpx.AsyncClient, method: str, url: str, *, head
         raise VideoBoundaryError("invalid_output") from None
     except httpx.HTTPError:
         raise VideoBoundaryError("provider_unavailable") from None
+
+
+def _boxes(file: BinaryIO, start: int, end: int) -> Iterator[tuple[bytes, int, int]]:
+    """Walk bounded ISO-BMFF boxes; never trust a size beyond the enclosing box."""
+    position = start
+    count = 0
+    while position < end:
+        count += 1
+        if count > 10_000 or end - position < 8:
+            raise VideoBoundaryError("invalid_output")
+        file.seek(position)
+        header = file.read(8)
+        size = int.from_bytes(header[:4], "big")
+        kind = header[4:8]
+        header_size = 8
+        if size == 1:
+            if end - position < 16:
+                raise VideoBoundaryError("invalid_output")
+            size = int.from_bytes(file.read(8), "big")
+            header_size = 16
+        elif size == 0:
+            size = end - position
+        if size < header_size or size > end - position:
+            raise VideoBoundaryError("invalid_output")
+        box_end = position + size
+        yield kind, position + header_size, box_end
+        position = box_end
+
+
+def _video_track(file: BinaryIO, start: int, end: int) -> bool:
+    for kind, mdia_start, mdia_end in _boxes(file, start, end):
+        if kind != b"mdia":
+            continue
+        is_video = False
+        sample_desc = False
+        for child, child_start, child_end in _boxes(file, mdia_start, mdia_end):
+            if child == b"hdlr":
+                if child_end - child_start < 12:
+                    raise VideoBoundaryError("invalid_output")
+                file.seek(child_start + 8)
+                is_video = file.read(4) == b"vide"
+            elif child == b"minf":
+                for subkind, sub_start, sub_end in _boxes(file, child_start, child_end):
+                    if subkind != b"stbl":
+                        continue
+                    for leaf, leaf_start, leaf_end in _boxes(file, sub_start, sub_end):
+                        if leaf != b"stsd":
+                            continue
+                        if leaf_end - leaf_start < 16:
+                            raise VideoBoundaryError("invalid_output")
+                        file.seek(leaf_start + 4)
+                        entries = int.from_bytes(file.read(4), "big")
+                        if not 1 <= entries <= 64:
+                            raise VideoBoundaryError("invalid_output")
+                        descriptions = list(_boxes(file, leaf_start + 8, leaf_end))
+                        if len(descriptions) != entries:
+                            raise VideoBoundaryError("invalid_output")
+                        sample_desc = any(entry in _VIDEO_SAMPLE_ENTRIES and stop - begin >= 78
+                                          for entry, begin, stop in descriptions)
+        if is_video and sample_desc:
+            return True
+    return False
+
+
+def validate_mp4_file(path: Path, size: int) -> None:
+    """Check container boundaries and a video sample description, not codec decode."""
+    if size < 32 or size > MAX_VIDEO_BYTES:
+        raise VideoBoundaryError("invalid_output")
+    try:
+        with path.open("rb") as file:
+            top = list(_boxes(file, 0, size))
+            if not top or top[0][0] != b"ftyp" or top[0][2] - top[0][1] < 8:
+                raise VideoBoundaryError("invalid_output")
+            if not any(kind == b"mdat" and stop > begin for kind, begin, stop in top):
+                raise VideoBoundaryError("invalid_output")
+            for kind, begin, stop in top:
+                if kind == b"moov":
+                    for child, child_begin, child_stop in _boxes(file, begin, stop):
+                        if child == b"trak" and _video_track(file, child_begin, child_stop):
+                            return
+    except OSError:
+        raise VideoBoundaryError("invalid_output") from None
+    raise VideoBoundaryError("invalid_output")
 
 
 async def download_video(client: httpx.AsyncClient, url: str, output_path: Path) -> int:
@@ -128,6 +212,7 @@ async def download_video(client: httpx.AsyncClient, url: str, output_path: Path)
                         file.write(chunk)
                 if count < 12 or first[4:8] != b"ftyp":
                     raise VideoBoundaryError("invalid_output")
+                validate_mp4_file(temporary, count)
                 os.replace(temporary, output_path)
                 temporary = None
                 return count

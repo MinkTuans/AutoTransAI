@@ -14,12 +14,14 @@ from app.providers.video.catalog_media import (
     VideoBoundaryError, VideoRoutePending, download_video, provider_url, request_json,
     validated_video_path,
 )
+from app.providers.video.request_policy import VideoAttemptPolicy, run_legacy_video
 from app.services.ai_routing import RouteTarget, UnsupportedModalityError
 from app.services.key_manager import get_key_manager
 
 settings = get_settings()
 _MODEL = "fal-ai/hunyuan-video"
 _QUEUE = f"https://queue.fal.run/{_MODEL}"
+SUBMIT_TIMEOUT = 30.0
 
 
 class FalVideoProvider(VideoProvider):
@@ -62,27 +64,16 @@ class FalVideoProvider(VideoProvider):
             return await self._generate(prompt, duration, output_path, secret, canonical=True)
         if api_key is not None:
             raise ValueError("A request credential requires a route target.")
-        last = None
-        for _ in range(3):
-            try:
-                key_entry = await get_key_manager().get_active_key(self.provider_id)
-            except Exception:
-                return GenerationResult(False, provider_id=self.provider_id,
-                                        error_code="PROVIDER_UNAVAILABLE",
-                                        error_message="Video generation failed: provider_unavailable")
-            if not key_entry:
-                break
-            last = await self._generate(prompt, duration, output_path, key_entry.api_key,
-                                        canonical=False, key_id=key_entry.key_id)
-            if last.success or last.error_code not in ("HTTP_401", "HTTP_402", "HTTP_403", "HTTP_429"):
-                return last
-        return last or GenerationResult(False, provider_id=self.provider_id, error_code="NO_API_KEY",
-                                        error_message="No valid fal.ai API key configured.")
+        async def invoke(entry):
+            return await self._generate(prompt, duration, output_path, entry.api_key,
+                                        canonical=False, key_id=entry.key_id)
+        return await run_legacy_video(self.provider_id, get_key_manager, invoke,
+                                      no_key_message="No valid fal.ai API key configured.")
 
     async def _generate(self, prompt: str, duration: int, output_path: Path, secret: str,
                         *, canonical: bool, key_id: str | None = None) -> GenerationResult:
-        submitted = False
-        accepted = False
+        policy = VideoAttemptPolicy(self.provider_id, canonical=canonical, key_id=key_id,
+                                    key_manager=get_key_manager)
         try:
             target_path = validated_video_path(output_path, settings.DATA_DIR)
             headers = {"Authorization": f"Key {secret}", "Content-Type": "application/json"}
@@ -91,10 +82,11 @@ class FalVideoProvider(VideoProvider):
                        if canonical else {"prompt": prompt, "seconds_total": min(duration, 10),
                                           "aspect_ratio": "16:9"})
             async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
-                submitted = True
-                data = await request_json(client, "POST", _QUEUE, headers=headers, payload=payload,
-                                          accepted=(200, 202))
-                accepted = True
+                policy.submitted = True
+                async with asyncio.timeout(SUBMIT_TIMEOUT):
+                    data = await request_json(client, "POST", _QUEUE, headers=headers, payload=payload,
+                                              accepted=(200, 202))
+                policy.accepted = True
                 video = data.get("video")
                 if not isinstance(video, dict):
                     request_id = data.get("request_id")
@@ -122,45 +114,19 @@ class FalVideoProvider(VideoProvider):
                     raise VideoRoutePending("invalid_output")
                 async with asyncio.timeout(120.0):
                     size = await download_video(client, video.get("url"), target_path)
-            if key_id is not None:
-                try:
-                    await get_key_manager().report_result(self.provider_id, key_id, success=True)
-                except Exception:
-                    pass  # Local accounting cannot turn a completed video into another billed attempt.
-            return GenerationResult(True, file_path=target_path,
-                                    provider_id=self.provider_id, metadata={"model": _MODEL, "size": size})
+            return await policy.success(GenerationResult(
+                True, file_path=target_path, provider_id=self.provider_id,
+                metadata={"model": _MODEL, "size": size}))
         except VideoRoutePending:
             raise
         except asyncio.CancelledError:
-            if submitted:
-                raise VideoRoutePending() from None
-            raise
+            policy.cancelled()
         except (TimeoutError, httpx.TimeoutException):
-            if submitted:
-                raise VideoRoutePending("timeout") from None
-            raise
+            policy.timed_out()
         except VideoBoundaryError as error:
-            if submitted and not error.definitive and (accepted or error.status_code is None or error.status_code >= 500):
-                raise VideoRoutePending(error.code) from None
-            if canonical:
-                raise
-            if key_id is not None and error.status_code is not None:
-                try:
-                    await get_key_manager().report_result(self.provider_id, key_id, success=False,
-                                                          status_code=error.status_code,
-                                                          error_message=str(error))
-                except Exception:
-                    pass
-            return GenerationResult(False, provider_id=self.provider_id,
-                                    error_code=f"HTTP_{error.status_code}" if error.status_code else error.code.upper(),
-                                    error_message=str(error))
+            return await policy.boundary_error(error)
         except Exception:
-            if submitted:
-                raise VideoRoutePending("provider_unavailable") from None
-            if canonical:
-                raise VideoBoundaryError("provider_unavailable") from None
-            return GenerationResult(False, provider_id=self.provider_id, error_code="PROVIDER_UNAVAILABLE",
-                                    error_message="Video generation failed: provider_unavailable")
+            return policy.unexpected()
 
     async def estimate_usage(self, duration: int) -> list[UsageEstimate]:
         return [UsageEstimate("video_seconds", float(duration), "seconds")]

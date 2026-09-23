@@ -13,7 +13,24 @@ from app.providers.video import fal_provider, kling_provider, catalog_media
 from app.services.ai_routing import RoutePending, RouteTarget, UnsupportedModalityError
 
 
-MP4 = b"\x00\x00\x00\x18ftypisom\x00\x00\x00\x00isom" + b"x" * 32
+def box(kind, payload):
+    return (len(payload) + 8).to_bytes(4, "big") + kind + payload
+
+
+# Structurally complete ISO-BMFF video sample: ftyp, a video sample description,
+# bounded nested boxes, and media data. No decoder is available in this test env.
+FTYP = box(b"ftyp", b"isom\x00\x00\x02\x00isom")
+VIDEO_HANDLER = box(b"hdlr", b"\x00" * 8 + b"vide" + b"\x00" * 12)
+AUDIO_HANDLER = box(b"hdlr", b"\x00" * 8 + b"soun" + b"\x00" * 12)
+SAMPLE_DESC = box(b"stsd", b"\x00" * 4 + (1).to_bytes(4, "big") + box(b"avc1", b"\x00" * 78))
+
+
+def sample_mp4(handler=VIDEO_HANDLER):
+    return FTYP + box(b"moov", box(b"trak", box(b"mdia", handler +
+        box(b"minf", box(b"stbl", SAMPLE_DESC))))) + box(b"mdat", b"frame-bytes")
+
+
+MP4 = sample_mp4()
 
 
 @pytest.fixture(autouse=True)
@@ -377,24 +394,32 @@ async def test_legacy_quota_without_keys_retains_zero_limit(monkeypatch, module,
 
 
 @pytest.mark.asyncio
-async def test_legacy_accounting_failure_does_not_hide_completed_video(monkeypatch, tmp_path):
+@pytest.mark.parametrize("module,provider", [(fal_provider, "fal"), (kling_provider, "kling")])
+async def test_legacy_accounting_failure_does_not_hide_completed_video(monkeypatch, tmp_path, module, provider):
     class KeyManager:
         async def get_active_key(self, provider):
             return SimpleNamespace(api_key="key", key_id="id")
         async def report_result(self, *args, **kwargs):
             raise RuntimeError("secret-key accounting error")
-    monkeypatch.setattr(kling_provider, "get_key_manager", lambda: KeyManager())
+    monkeypatch.setattr(module, "get_key_manager", lambda: KeyManager())
     def respond(request):
         if request.method == "POST":
-            return httpx.Response(200, json={"code": 0, "data": {"task_id": "id-1"}})
+            return (httpx.Response(202, json={"request_id": "id-1",
+                "status_url": "https://queue.fal.run/fal-ai/hunyuan-video/requests/id-1/status",
+                "response_url": "https://queue.fal.run/fal-ai/hunyuan-video/requests/id-1"})
+                if provider == "fal" else httpx.Response(200, json={"code": 0, "data": {"task_id": "id-1"}}))
+        if provider == "fal" and request.url.host == "queue.fal.run":
+            return (httpx.Response(200, json={"status": "COMPLETED"}) if str(request.url).endswith("status")
+                    else httpx.Response(200, json={"video": {"url": "https://cdn.example.test/x.mp4"}}))
         if request.url.host == "api.klingai.com":
             return httpx.Response(200, json={"code": 0, "data": {"task_status": "succeed",
                 "task_result": {"videos": [{"url": "https://cdn.example.test/x.mp4"}]}}})
         return httpx.Response(200, content=MP4, headers={"content-type": "video/mp4"})
-    client_for(monkeypatch, kling_provider, respond)
+    client_for(monkeypatch, module, respond)
     async def no_sleep(_): pass
-    monkeypatch.setattr(kling_provider.asyncio, "sleep", no_sleep)
-    result = await kling_provider.KlingVideoProvider().generate_video("prompt", 5, tmp_path / "x.mp4")
+    monkeypatch.setattr(module.asyncio, "sleep", no_sleep)
+    cls = module.FalVideoProvider if provider == "fal" else module.KlingVideoProvider
+    result = await cls().generate_video("prompt", 5, tmp_path / "x.mp4")
     assert result.success and result.file_path.read_bytes() == MP4
 
 
@@ -424,6 +449,36 @@ async def test_legacy_rotates_only_after_definitive_key_rejection(monkeypatch, t
     result = await kling_provider.KlingVideoProvider().generate_video("prompt", 5, tmp_path / "x.mp4")
     assert result.success
     assert [r.headers["authorization"] for r in posts] == ["Bearer first", "Bearer second"]
+
+
+@pytest.mark.asyncio
+async def test_fal_legacy_rotation_uses_second_key_only_after_explicit_429(monkeypatch, tmp_path):
+    entries = iter([SimpleNamespace(api_key="first", key_id="one"),
+                    SimpleNamespace(api_key="second", key_id="two")])
+    class KeyManager:
+        async def get_active_key(self, provider):
+            return next(entries, None)
+        async def report_result(self, *args, **kwargs):
+            return None
+    monkeypatch.setattr(fal_provider, "get_key_manager", lambda: KeyManager())
+    posts = []
+    def respond(request):
+        if request.method == "POST":
+            posts.append(request)
+            return (httpx.Response(429, text="first secret") if len(posts) == 1 else
+                    httpx.Response(202, json={"request_id": "id-2",
+                        "status_url": "https://queue.fal.run/fal-ai/hunyuan-video/requests/id-2/status",
+                        "response_url": "https://queue.fal.run/fal-ai/hunyuan-video/requests/id-2"}))
+        if request.url.host == "cdn.example.test":
+            return httpx.Response(200, content=MP4, headers={"content-type": "video/mp4"})
+        return (httpx.Response(200, json={"status": "COMPLETED"}) if str(request.url).endswith("status")
+                else httpx.Response(200, json={"video": {"url": "https://cdn.example.test/x.mp4"}}))
+    client_for(monkeypatch, fal_provider, respond)
+    async def no_sleep(_): pass
+    monkeypatch.setattr(fal_provider.asyncio, "sleep", no_sleep)
+    result = await fal_provider.FalVideoProvider().generate_video("prompt", 5, tmp_path / "x.mp4")
+    assert result.success
+    assert [r.headers["authorization"] for r in posts] == ["Key first", "Key second"]
 
 
 @pytest.mark.asyncio
@@ -473,3 +528,67 @@ async def test_post_acceptance_http_401_does_not_enable_fallback(monkeypatch, tm
         await kling_provider.KlingVideoProvider().generate_video("prompt", 5, tmp_path / "x.mp4",
             route_target=target("kling", "kling-v2-6"), api_key="key")
     assert len([r for r in requests if r.method == "POST"]) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_code", [None, "0", False, 0.0, [], {}])
+async def test_kling_ambiguous_submit_code_is_terminal_pending(monkeypatch, tmp_path, bad_code):
+    payload = {"data": {"task_id": "id-1"}}
+    if bad_code is not None:
+        payload["code"] = bad_code
+    calls = []
+    def respond(request):
+        calls.append(request)
+        return httpx.Response(200, json=payload)
+    client_for(monkeypatch, kling_provider, respond)
+    with pytest.raises(RoutePending):
+        await kling_provider.KlingVideoProvider().generate_video("prompt", 5, tmp_path / "x.mp4",
+            route_target=target("kling", "kling-v2-6"), api_key="key")
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["fal", "kling"])
+async def test_trickling_submit_body_hits_total_deadline(monkeypatch, tmp_path, provider):
+    module = fal_provider if provider == "fal" else kling_provider
+    class Trickling(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b"{"
+            await asyncio.Event().wait()
+    client_for(monkeypatch, module, lambda _: httpx.Response(
+        202 if provider == "fal" else 200, stream=Trickling(),
+        headers={"content-type": "application/json"}))
+    monkeypatch.setattr(module, "SUBMIT_TIMEOUT", 0.02, raising=False)
+    cls = module.FalVideoProvider if provider == "fal" else module.KlingVideoProvider
+    model = "fal-ai/hunyuan-video" if provider == "fal" else "kling-v2-6"
+    with pytest.raises(RoutePending) as caught:
+        await asyncio.wait_for(cls().generate_video("prompt", 5, tmp_path / "x.mp4",
+            route_target=target(provider, model), api_key="key"), 0.2)
+    assert caught.value.outcome == "timeout"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", [
+    b"\x00\x00\x00\x18ftypisom\x00\x00\x00\x00isom" + b"x" * 32,
+    sample_mp4(AUDIO_HANDLER),
+    MP4[:-4],
+    FTYP + box(b"moov", box(b"trak", box(b"mdia", VIDEO_HANDLER))) + box(b"mdat", b""),
+])
+async def test_structurally_invalid_mp4_cannot_replace_old_output(monkeypatch, tmp_path, content):
+    def respond(request):
+        if request.method == "POST":
+            return httpx.Response(200, json={"code": 0, "data": {"task_id": "id-1"}})
+        if request.url.host == "api.klingai.com":
+            return httpx.Response(200, json={"code": 0, "data": {"task_status": "succeed",
+                "task_result": {"videos": [{"url": "https://cdn.example.test/x.mp4"}]}}})
+        return httpx.Response(200, content=content, headers={"content-type": "video/mp4"})
+    client_for(monkeypatch, kling_provider, respond)
+    async def no_sleep(_): pass
+    monkeypatch.setattr(kling_provider.asyncio, "sleep", no_sleep)
+    output = tmp_path / "x.mp4"
+    output.write_bytes(b"old-output")
+    with pytest.raises(RoutePending):
+        await kling_provider.KlingVideoProvider().generate_video("prompt", 5, output,
+            route_target=target("kling", "kling-v2-6"), api_key="key")
+    assert output.read_bytes() == b"old-output"
+    assert not list(tmp_path.glob("*.part"))
