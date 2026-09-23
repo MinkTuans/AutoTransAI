@@ -255,6 +255,51 @@ async def test_retry_classification_fallback_and_secret_is_internal(routing_db):
 
 
 @pytest.mark.asyncio
+async def test_accepted_async_job_pending_does_not_retry_or_fallback(routing_db):
+    from app.services.ai_routing import RoutePending, build_route, invoke_route
+    sessions, path = routing_db
+    async with sessions.begin() as db:
+        first = await add_model(db, "fal", "fal-ai/one", caps=["IMAGE_GENERATION"], status="KNOWN")
+        second = await add_model(db, "fal", "fal-ai/two", caps=["IMAGE_GENERATION"], status="KNOWN")
+        await add_key(db, path, "fal", [first, second], "synthetic-private")
+    async with sessions() as db:
+        route = await build_route(db, "IMAGE_GENERATION")
+    calls = []
+
+    async def transport(target, secret):
+        calls.append(target.remote_model_id)
+        raise RoutePending("Image generation pending")
+
+    with pytest.raises(RoutePending):
+        await invoke_route(route, transport, sessions, path, max_attempts=2)
+    assert calls == ["fal-ai/one"]
+
+
+@pytest.mark.asyncio
+async def test_canceled_submitted_job_is_terminal_pending(routing_db):
+    from app.services.ai_routing import RoutePending, build_route, invoke_route
+    sessions, path = routing_db
+    async with sessions.begin() as db:
+        first = await add_model(db, "fal", "fal-ai/one", caps=["IMAGE_GENERATION"], status="KNOWN")
+        second = await add_model(db, "fal", "fal-ai/two", caps=["IMAGE_GENERATION"], status="KNOWN")
+        await add_key(db, path, "fal", [first, second], "synthetic-private")
+    async with sessions() as db:
+        route = await build_route(db, "IMAGE_GENERATION")
+    calls = []
+
+    async def transport(target, secret):
+        calls.append(target.remote_model_id)
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            raise RoutePending("Image generation pending") from None
+
+    with pytest.raises(RoutePending):
+        await invoke_route(route, transport, sessions, path, timeout=0.01, max_attempts=2)
+    assert calls == ["fal-ai/one"]
+
+
+@pytest.mark.asyncio
 async def test_concurrent_routes_do_not_mutate_targets(routing_db):
     from app.services.ai_routing import build_route, invoke_route
     sessions, path = routing_db

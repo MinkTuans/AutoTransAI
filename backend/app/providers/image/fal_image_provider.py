@@ -16,7 +16,7 @@ from app.providers.image.catalog_media import (
     CatalogImageError, download_image, request_json, validate_public_https_url, validated_output_path,
 )
 from app.providers.request_target import resolve_request_target
-from app.services.ai_routing import RouteTarget
+from app.services.ai_routing import RoutePending, RouteTarget
 from app.config import get_settings
 from app.core import get_logger
 from app.providers.base import (
@@ -29,6 +29,7 @@ from app.services.key_manager import get_key_manager
 
 logger = get_logger(__name__)
 settings = get_settings()
+CATALOG_QUEUE_TIMEOUT = 75.0
 
 
 class FalImageProvider(ImageProvider):
@@ -188,8 +189,10 @@ class FalImageProvider(ImageProvider):
                                     error_code="CAPABILITY_MISMATCH",
                                     error_message="Image generation failed: capability_mismatch")
         headers = {"Authorization": f"Key {secret}", "Content-Type": "application/json"}
+        submission_started = False
         try:
             async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
+                submission_started = True
                 payload = await request_json(
                     client, "POST",
                     f"https://queue.fal.run/{model_id}", headers=headers,
@@ -199,20 +202,28 @@ class FalImageProvider(ImageProvider):
                 )
                 images = payload.get("images")
                 if not images:
-                    status_url = await validate_public_https_url(
-                        payload.get("status_url"), expected_host="queue.fal.run")
-                    response_url = await validate_public_https_url(
-                        payload.get("response_url"), expected_host="queue.fal.run")
-                    for _ in range(12):
-                        state = (await request_json(client, "GET", status_url, headers=headers)).get("status")
-                        if state == "COMPLETED":
-                            break
-                        if state in ("FAILED", "CANCELED"):
-                            raise CatalogImageError("provider_unavailable")
-                        await asyncio.sleep(1)
-                    else:
-                        raise CatalogImageError("timeout")
-                    images = (await request_json(client, "GET", response_url, headers=headers)).get("images")
+                    try:
+                        status_url = await validate_public_https_url(
+                            payload.get("status_url"), expected_host="queue.fal.run")
+                        response_url = await validate_public_https_url(
+                            payload.get("response_url"), expected_host="queue.fal.run")
+                        async with asyncio.timeout(CATALOG_QUEUE_TIMEOUT):
+                            while True:
+                                state = (await request_json(client, "GET", status_url, headers=headers)).get("status")
+                                if state == "COMPLETED":
+                                    break
+                                if state in ("FAILED", "CANCELED"):
+                                    raise CatalogImageError("job_failed")
+                                if state not in ("IN_QUEUE", "IN_PROGRESS"):
+                                    raise RoutePending("Image generation pending")
+                                await asyncio.sleep(1)
+                            images = (await request_json(client, "GET", response_url, headers=headers)).get("images")
+                    except (TimeoutError, httpx.TimeoutException):
+                        raise RoutePending("Image generation pending") from None
+                    except CatalogImageError as error:
+                        if error.code != "job_failed":
+                            raise RoutePending("Image generation pending") from None
+                        raise
                 if not isinstance(images, list) or not images or not isinstance(images[0], dict):
                     raise CatalogImageError("invalid_output")
                 image_bytes = await download_image(client, images[0].get("url"))
@@ -222,11 +233,23 @@ class FalImageProvider(ImageProvider):
                           "width": width, "height": height},
             )
         except CatalogImageError as error:
+            if error.code == "provider_unavailable" and error.status_code is None:
+                raise RoutePending("Image generation pending") from None
             return GenerationResult(
                 success=False, provider_id=self.provider_id,
                 error_code=f"HTTP_{error.status_code}" if error.status_code else error.code.upper(),
                 error_message=str(error),
             )
+        except asyncio.CancelledError:
+            if not submission_started:
+                raise
+            # The router's attempt timeout may cancel a queue already accepted
+            # by fal. Its outcome is unknown; resubmission could bill twice.
+            raise RoutePending("Image generation pending") from None
+        except httpx.TimeoutException:
+            # Even a POST timeout can mean fal accepted the job but the reply
+            # never reached us; a new submission is not safe.
+            raise RoutePending("Image generation pending") from None
         except (httpx.HTTPError, ValueError):
             return GenerationResult(
                 success=False, provider_id=self.provider_id,

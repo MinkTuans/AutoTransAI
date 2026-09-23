@@ -4,18 +4,29 @@ import base64
 import asyncio
 import json
 import socket
+import struct
+import zlib
+from io import BytesIO
 from types import SimpleNamespace
 
 import httpx
 import pytest
+from PIL import Image
 
 from app.providers.image import openai_image_provider, fal_image_provider, catalog_media
-from app.services.ai_routing import RouteTarget
+from app.services.ai_routing import RoutePending, RouteTarget
 
 
-PNG = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/+QAAAABJRU5ErkJggg=="
-)
+_png_buffer = BytesIO()
+Image.new("RGB", (1, 1), (0, 0, 0)).save(_png_buffer, format="PNG")
+PNG = _png_buffer.getvalue()
+
+
+def huge_dimension_png():
+    altered = bytearray(PNG)
+    altered[16:24] = struct.pack(">II", 100_000, 100_000)
+    altered[29:33] = struct.pack(">I", zlib.crc32(altered[12:29]) & 0xFFFFFFFF)
+    return bytes(altered)
 
 
 @pytest.fixture(autouse=True)
@@ -43,6 +54,15 @@ def legacy_key(monkeypatch, provider_module, secret="synthetic-legacy"):
             return None
 
     monkeypatch.setattr(provider_module, "get_key_manager", lambda: KeyManager())
+
+
+@pytest.mark.parametrize("content", [
+    b"\x89PNG\r\n\x1a\n" + b"x" * 24,
+    huge_dimension_png(),
+])
+def test_image_validation_rejects_corrupt_or_decompression_bomb(content):
+    with pytest.raises(catalog_media.CatalogImageError, match="invalid_output"):
+        catalog_media.validate_image_bytes(content, "image/png")
 
 
 @pytest.mark.asyncio
@@ -206,10 +226,10 @@ async def test_fal_rejects_untrusted_poll_url_before_forwarding_auth(monkeypatch
 
     mock_client(monkeypatch, fal_image_provider, respond)
     target = RouteTarget("catalog", "fal", "fal-ai/flux/synthetic", "key-id", "IMAGE_GENERATION")
-    result = await fal_image_provider.FalImageProvider().generate_image(
-        "synthetic prompt", route_target=target, api_key="synthetic-fal",
-    )
-    assert not result.success
+    with pytest.raises(RoutePending):
+        await fal_image_provider.FalImageProvider().generate_image(
+            "synthetic prompt", route_target=target, api_key="synthetic-fal",
+        )
     assert len(requests) == 1
 
 
@@ -241,6 +261,101 @@ async def test_fal_queue_poll_is_bounded_to_queue_host_and_download_is_unauthent
     )
     assert result.success
     assert [request.method for request in requests] == ["POST", "GET", "GET", "GET"]
+
+
+@pytest.mark.asyncio
+async def test_fal_catalog_queue_can_complete_after_twelve_polls(monkeypatch):
+    polls = []
+
+    def respond(request):
+        if request.method == "POST":
+            return httpx.Response(202, json={
+                "status_url": "https://queue.fal.run/fal-ai/flux/synthetic/requests/one/status",
+                "response_url": "https://queue.fal.run/fal-ai/flux/synthetic/requests/one",
+            })
+        if request.url.path.endswith("/status"):
+            polls.append(1)
+            return httpx.Response(200, json={"status": "COMPLETED" if len(polls) == 13 else "IN_QUEUE"})
+        if request.url.host == "queue.fal.run":
+            return httpx.Response(200, json={"images": [{"url": "https://cdn.example.test/image.png"}]})
+        return httpx.Response(200, content=PNG, headers={"content-type": "image/png"})
+
+    async def no_sleep(_):
+        pass
+
+    mock_client(monkeypatch, fal_image_provider, respond)
+    monkeypatch.setattr(fal_image_provider.asyncio, "sleep", no_sleep)
+    target = RouteTarget("catalog", "fal", "fal-ai/flux/synthetic", "key-id", "IMAGE_GENERATION")
+    result = await fal_image_provider.FalImageProvider().generate_image(
+        "synthetic prompt", route_target=target, api_key="synthetic-fal",
+    )
+    assert result.success and len(polls) == 13
+
+
+@pytest.mark.asyncio
+async def test_fal_catalog_queue_pending_deadline_does_not_report_failure(monkeypatch):
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        if request.method == "POST":
+            return httpx.Response(202, json={
+                "status_url": "https://queue.fal.run/fal-ai/flux/synthetic/requests/one/status",
+                "response_url": "https://queue.fal.run/fal-ai/flux/synthetic/requests/one",
+            })
+        return httpx.Response(200, json={"status": "IN_QUEUE"})
+
+    mock_client(monkeypatch, fal_image_provider, respond)
+    monkeypatch.setattr(fal_image_provider, "CATALOG_QUEUE_TIMEOUT", 0)
+    target = RouteTarget("catalog", "fal", "fal-ai/flux/synthetic", "key-id", "IMAGE_GENERATION")
+    with pytest.raises(RoutePending):
+        await fal_image_provider.FalImageProvider().generate_image(
+            "synthetic prompt", route_target=target, api_key="synthetic-fal",
+        )
+    assert [request.method for request in requests].count("POST") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["post_timeout", "poll_unavailable"])
+async def test_fal_uncertain_submission_or_poll_is_terminal_pending(monkeypatch, failure):
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        if request.method == "POST":
+            if failure == "post_timeout":
+                raise httpx.ReadTimeout("synthetic secret", request=request)
+            return httpx.Response(202, json={
+                "status_url": "https://queue.fal.run/fal-ai/flux/synthetic/requests/one/status",
+                "response_url": "https://queue.fal.run/fal-ai/flux/synthetic/requests/one",
+            })
+        return httpx.Response(503, json={"secret": "synthetic secret"})
+
+    mock_client(monkeypatch, fal_image_provider, respond)
+    target = RouteTarget("catalog", "fal", "fal-ai/flux/synthetic", "key-id", "IMAGE_GENERATION")
+    with pytest.raises(RoutePending) as error:
+        await fal_image_provider.FalImageProvider().generate_image(
+            "synthetic prompt", route_target=target, api_key="synthetic-fal",
+        )
+    assert "secret" not in str(error.value)
+    assert [request.method for request in requests].count("POST") == 1
+
+
+@pytest.mark.asyncio
+async def test_fal_cancellation_before_post_remains_cancellation(monkeypatch):
+    class CancelBeforePost:
+        async def __aenter__(self):
+            raise asyncio.CancelledError
+
+        async def __aexit__(self, *args):
+            return False
+
+    monkeypatch.setattr(fal_image_provider.httpx, "AsyncClient", lambda **kwargs: CancelBeforePost())
+    target = RouteTarget("catalog", "fal", "fal-ai/flux/synthetic", "key-id", "IMAGE_GENERATION")
+    with pytest.raises(asyncio.CancelledError):
+        await fal_image_provider.FalImageProvider().generate_image(
+            "synthetic prompt", route_target=target, api_key="synthetic-fal",
+        )
 
 
 @pytest.mark.asyncio

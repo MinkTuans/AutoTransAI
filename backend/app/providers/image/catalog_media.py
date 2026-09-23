@@ -12,14 +12,19 @@ import binascii
 import ipaddress
 import json
 import socket
+import warnings
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
+from PIL import Image, UnidentifiedImageError
 
 from app.core.security_url import is_ip_private_or_blocked
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_IMAGE_DIMENSION = 8192
+MAX_IMAGE_PIXELS = 32 * 1024 * 1024
 MAX_JSON_BYTES = 14 * 1024 * 1024
 _MIME = {"image/png", "image/jpeg", "image/webp"}
 
@@ -49,6 +54,26 @@ def validate_image_bytes(content: bytes, declared_mime: str | None = None) -> by
     detected = _image_mime(content)
     if detected is None or (declared_mime is not None and declared_mime != detected):
         raise CatalogImageError("invalid_output")
+    formats = {"image/png": "PNG", "image/jpeg": "JPEG", "image/webp": "WEBP"}
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            for verify in (True, False):
+                with Image.open(BytesIO(content)) as image:
+                    width, height = image.size
+                    if (image.format != formats[detected] or width < 1 or height < 1
+                            or width > MAX_IMAGE_DIMENSION or height > MAX_IMAGE_DIMENSION
+                            or width * height > MAX_IMAGE_PIXELS):
+                        raise CatalogImageError("invalid_output")
+                    if verify:
+                        image.verify()
+                    else:
+                        image.load()
+    except CatalogImageError:
+        raise
+    except (OSError, SyntaxError, ValueError, UnidentifiedImageError, Image.DecompressionBombWarning,
+            Image.DecompressionBombError):
+        raise CatalogImageError("invalid_output") from None
     return content
 
 

@@ -31,6 +31,12 @@ class RouteExhausted(Exception):
     """Every eligible target failed; message contains only classified codes."""
 
 
+class RoutePending(Exception):
+    """An accepted asynchronous provider job may still finish; never retry it."""
+
+    code = "pending"
+
+
 class UnsupportedModalityError(Exception):
     """The runtime adapter cannot invoke this model for the requested function."""
 
@@ -182,12 +188,16 @@ async def invoke_route(route: RoutePlan, transport: Callable[[RouteTarget, str |
             for attempt in range(max_attempts):
                 try:
                     return await wait_for(transport(target, secret), timeout)
+                except RoutePending:
+                    raise
                 except Exception as error:
                     code = classify_failure(error)
                     if code not in ("timeout", "rate_limit", "provider_unavailable") or attempt + 1 == max_attempts:
                         failures.append(code)
                         break
                     await sleep(min(0.25 * (2 ** attempt), 2.0))
+        except RoutePending:
+            raise
         except Exception as error:
             failures.append("configuration" if isinstance(error, (RouteConfigurationError, CredentialError))
                             else classify_failure(error))
