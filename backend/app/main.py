@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.core import setup_logging, get_logger
-from app.database import init_db
+from app.database import init_db, async_session_factory
 from app.providers.registry import get_registry
 
 settings = get_settings()
@@ -85,6 +85,13 @@ async def lifespan(app: FastAPI):
         video=len(registry.list_video()),
         llm=len(registry.list_llm()),
     )
+
+    from app.services.provider_bootstrap import bootstrap_providers
+    try:
+        async with async_session_factory.begin() as db:
+            await bootstrap_providers(db, registry)
+    except Exception:
+        raise RuntimeError("Provider bootstrap failed") from None
 
     # Detect interrupted projects on startup
     logger.info("AutoTransAi backend ready", port=settings.PORT)

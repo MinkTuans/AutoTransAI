@@ -2,7 +2,7 @@ from typing import Optional
 
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Integer, Boolean, DateTime, Text
+from sqlalchemy import String, Integer, Boolean, DateTime, Text, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -21,6 +21,7 @@ class Provider(Base):
     # Tracks usage we've made locally for best-effort remaining estimate
     configured: Mapped[bool] = mapped_column(Boolean, default=False)
     api_key_set: Mapped[bool] = mapped_column(Boolean, default=False)
+    requires_api_key: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     # Never store the actual key here — only a boolean flag
     last_verified: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     capabilities: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

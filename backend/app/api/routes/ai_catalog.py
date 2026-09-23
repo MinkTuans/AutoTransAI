@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db
 from app.models import APIKey, CatalogModel, KeyModelAccess, Provider
 from app.models.settings import AIFunctionConfig
-from app.services.ai_routing import _PUBLIC_CATALOG_PROVIDERS, _keyless_allowed, _keyless_provider
+from app.services.ai_routing import _PUBLIC_CATALOG_PROVIDERS, _keyless_allowed
 from app.services.capability_registry import CAPABILITIES, catalog_capability_summary
 
 
@@ -206,7 +206,7 @@ async def list_providers(db: AsyncSession = Depends(get_db)):
                                  enabled=p.enabled, supported=p.supported, model_count=len(owned),
                                  active_model_count=sum(m.enabled and m.retired_at is None for m in owned),
                                  enabled_key_count=enabled_keys,
-                                 keyless=_keyless_provider(p.id),
+                                 keyless=not p.requires_api_key,
                                  status="disabled" if not p.enabled else "ready" if enabled_keys or keyless_model else "no_key"))
     return Envelope(data=rows)
 

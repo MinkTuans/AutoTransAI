@@ -117,7 +117,7 @@ async def test_search_filter_pagination_status_defaults_and_read_only(catalog_ap
 async def test_keyless_system_provider_is_ready_without_credentials(catalog_api):
     client, sessions = catalog_api
     async with sessions.begin() as db:
-        db.add(Provider(id="edge_tts", name="Edge", provider_type="audio"))
+        db.add(Provider(id="edge_tts", name="Edge", provider_type="audio", requires_api_key=False))
         await db.flush()
         db.add(CatalogModel(id="edge", provider_id="edge_tts", remote_model_id="edge-tts",
                             source="system", capability_status="KNOWN", capabilities=["TTS"]))
@@ -131,16 +131,20 @@ async def test_keyless_system_provider_is_ready_without_credentials(catalog_api)
 async def test_keyless_provider_identity_does_not_depend_on_active_models(catalog_api):
     client, sessions = catalog_api
     async with sessions.begin() as db:
-        db.add_all([Provider(id="edge_tts", name="Edge", provider_type="audio"),
-                    Provider(id="pollinations", name="Pollinations", provider_type="image"),
-                    Provider(id="local_image", name="Local Image", provider_type="image"),
+        db.add_all([Provider(id="edge_tts", name="Edge", provider_type="audio", requires_api_key=False),
+                    Provider(id="pollinations", name="Pollinations", provider_type="image", requires_api_key=False),
+                    Provider(id="local_image", name="Local Image", provider_type="image", requires_api_key=False),
+                    Provider(id="local_video", name="Local Video", provider_type="video", requires_api_key=False),
+                    Provider(id="unknown", name="Unknown", provider_type="video", is_custom=True),
                     Provider(id="openai", name="Open AI", provider_type="llm")])
         await db.flush()
     empty_rows = {row["id"]: row for row in (await client.get("/api/ai/providers")).json()["data"]}
     assert empty_rows["edge_tts"]["keyless"] is True
     assert empty_rows["pollinations"]["keyless"] is True
     assert empty_rows["local_image"]["keyless"] is True
+    assert empty_rows["local_video"]["keyless"] is True
     assert empty_rows["openai"]["keyless"] is False
+    assert empty_rows["unknown"]["keyless"] is False
     async with sessions.begin() as db:
         db.add(CatalogModel(id="retired-edge", provider_id="edge_tts", remote_model_id="edge-tts",
                             source="system", capability_status="KNOWN", capabilities=["TTS"],
@@ -149,6 +153,7 @@ async def test_keyless_provider_identity_does_not_depend_on_active_models(catalo
     assert rows["edge_tts"]["keyless"] is True
     assert rows["pollinations"]["keyless"] is True
     assert rows["local_image"]["keyless"] is True
+    assert rows["local_video"]["keyless"] is True
     assert rows["openai"]["keyless"] is False
 
 
