@@ -22,6 +22,8 @@ from app.core.job_logger import log_job_event
 from app.media.ffprobe import probe_duration_async, get_video_metadata_async
 from app.media.ffmpeg_process import run_ffmpeg_with_progress_async, FFmpegExecutionError
 from app.providers.registry import get_registry
+from app.providers.request_target import resolve_request_target
+from app.services.ai_routing import RouteTarget
 from app.models.video_translator import (
     VideoAsset,
     VideoTranslationJob,
@@ -255,12 +257,19 @@ def validate_and_clean_timeline_segments(
 async def transcribe_audio_with_whisper(
     audio_path: Path,
     job_id: str = "VT-JOB",
+    *,
+    route_target: RouteTarget | None = None,
+    api_key: str | None = None,
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
     Transcribe audio file using OpenAI Whisper API (whisper-1).
     Handles large audio files by chunking via FFmpeg with exact chunk duration bounds and overlap.
     """
-    if not settings.OPENAI_API_KEY:
+    remote_model, request_key = resolve_request_target(
+        route_target, api_key, provider_id="openai", capabilities=("STT",),
+        legacy_model="whisper-1", legacy_key=settings.OPENAI_API_KEY,
+    )
+    if not request_key:
         raise ValueError("OPENAI_API_KEY chưa được cấu hình trong .env")
 
     import httpx
@@ -313,7 +322,7 @@ async def transcribe_audio_with_whisper(
         all_segments = []
         detected_lang = "English"
         url = "https://api.openai.com/v1/audio/transcriptions"
-        headers = {"Authorization": f"Bearer {settings.OPENAI_API_KEY}"}
+        headers = {"Authorization": f"Bearer {request_key}"}
 
         async with httpx.AsyncClient(timeout=180.0) as client:
             for chunk_path, time_offset, actual_chunk_dur in chunks:
@@ -323,14 +332,13 @@ async def transcribe_audio_with_whisper(
                 log_job_event(job_id, "STT", f"[Whisper] Transcribing chunk {chunk_path.name} (Offset: {time_offset:.1f}s, Dur: {actual_chunk_dur:.1f}s)...")
                 with open(chunk_path, "rb") as f:
                     files = {"file": (chunk_path.name, f, "audio/wav")}
-                    data = {"model": "whisper-1", "response_format": "verbose_json"}
+                    data = {"model": remote_model, "response_format": "verbose_json"}
                     res = await client.post(url, headers=headers, files=files, data=data)
 
                 if res.status_code != 200:
-                    res_text = res.text[:200]
-                    if res.status_code == 429 or "insufficient_quota" in res_text:
+                    if res.status_code == 429:
                         raise RuntimeError(f"OpenAI Whisper API HTTP 429 Quota Exceeded: Tài khoản OpenAI hết credit. Vui lòng nạp thêm credit hoặc sử dụng Gemini.")
-                    raise RuntimeError(f"OpenAI Whisper API HTTP {res.status_code}: {res_text}")
+                    raise RuntimeError(f"OpenAI Whisper API HTTP {res.status_code}")
 
                 res_json = res.json()
                 detected_lang = res_json.get("language", detected_lang)
@@ -390,24 +398,36 @@ async def transcribe_audio_with_gemini(
     job_id: str = "VT-JOB",
     model_name: Optional[str] = None,
     db: Optional[AsyncSession] = None,
+    *,
+    route_target: RouteTarget | None = None,
+    api_key: str | None = None,
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
     Transcribe audio file using Google Gemini API.
     Handles large audio files (>5MB or >90s) by chunking via FFmpeg with exact chunk duration bounds and overlap.
     """
-    if not settings.GEMINI_API_KEY:
+    remote_model, request_key = resolve_request_target(
+        route_target, api_key, provider_id="gemini", capabilities=("STT",),
+        legacy_model=model_name, legacy_key=settings.GEMINI_API_KEY,
+    )
+    if not request_key:
         raise ValueError("GEMINI_API_KEY chưa được cấu hình trong .env")
 
     import httpx
     from app.providers.ai_router import AIRouter
     from app.providers.llm.gemini_provider import strip_gemini_model_prefix
-    from app.core.pipeline_errors import PipelineError, classify_http_error, classify_exception
+    from app.core.pipeline_errors import PipelineError, classify_http_error
     from app.services.video_translator.stt_parser import parse_gemini_stt_response
 
     # Resolve active STT provider & model via AIModelResolver (Settings Database)
-    resolved_info = await AIRouter.resolve_stt_model(db, requested_model=model_name)
-    configured_model = resolved_info["model_id"]
-    model_source = resolved_info["source"]
+    if route_target is None:
+        resolved_info = await AIRouter.resolve_stt_model(db, requested_model=remote_model)
+        configured_model = resolved_info["model_id"]
+        model_source = resolved_info["source"]
+    else:
+        configured_model = remote_model
+        model_source = "CATALOG ROUTE"
+        resolved_info = {"provider_id": route_target.provider_id}
     # Use model directly — NO normalization, NO rewriting
     primary_model = strip_gemini_model_prefix(configured_model)
 
@@ -530,9 +550,9 @@ async def transcribe_audio_with_gemini(
                 # Use resolved model directly — NO fallback candidate queue
                 actual_api_model = f"models/{primary_model}"
                 logger.info(f"[STT API REQUEST] Actual model: {actual_api_model} | Chunk: {chunk_path.name}")
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{primary_model}:generateContent?key={settings.GEMINI_API_KEY}"
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{primary_model}:generateContent"
                 try:
-                    res = await client.post(url, json=payload)
+                    res = await client.post(url, json=payload, headers={"x-goog-api-key": request_key})
                     if res.status_code == 200:
                         data = res.json()
                         parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
@@ -545,14 +565,11 @@ async def transcribe_audio_with_gemini(
                                     default_lang=detected_lang,
                                 )
                             except Exception as parse_err:
-                                logger.error(
-                                    f"[Gemini STT Parse Error] Chunk: {chunk_path.name} | "
-                                    f"Error: {parse_err} | Raw response:\n{raw_response[:1000]}"
-                                )
+                                logger.error(f"[Gemini STT Parse Error] Chunk: {chunk_path.name} | Error: {parse_err}")
                                 log_job_event(
                                     job_id,
                                     "STT",
-                                    f"[Gemini STT Parse Error] Raw response snippet for {chunk_path.name}: {raw_response[:200]!r}"
+                                    f"[Gemini STT Parse Error] Invalid response for {chunk_path.name}"
                                 )
                                 raise PipelineError(
                                     code="AI_PROVIDER_API_ERROR",
@@ -560,7 +577,7 @@ async def transcribe_audio_with_gemini(
                                     message=f"Gemini STT trả về JSON không hợp lệ cho chunk {chunk_path.name}.",
                                     provider="gemini",
                                     model=primary_model,
-                                    technical_error=f"{str(parse_err)} | Raw snippet: {raw_response[:200]!r}",
+                                    technical_error=str(parse_err),
                                 ) from parse_err
 
                             detected_lang = parsed_json.get("language", detected_lang)
@@ -605,15 +622,16 @@ async def transcribe_audio_with_gemini(
                         # Non-200 response — raise structured PipelineError
                         raise classify_http_error(
                             status_code=res.status_code,
-                            response_text=res.text[:500],
+                            response_text="",
                             provider="gemini",
                             model=primary_model,
                             stage="STT",
                         )
                 except PipelineError:
                     raise
-                except (httpx.TimeoutException, httpx.RequestError) as req_err:
-                    raise classify_exception(req_err, provider="gemini", model=primary_model, stage="STT")
+                except (httpx.TimeoutException, httpx.RequestError):
+                    raise PipelineError(code="NETWORK_ERROR", stage="STT", provider="gemini", model=primary_model,
+                                        message="Gemini request failed.") from None
 
         if not all_segments:
             raise RuntimeError("Gemini STT không nhận diện được giọng nói trong audio.")

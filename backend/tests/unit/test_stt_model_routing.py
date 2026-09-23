@@ -55,8 +55,8 @@ async def test_transcribe_audio_with_gemini_uses_configured_model(tmp_path: Path
 
     captured_urls = []
 
-    async def mock_post(url, json=None):
-        captured_urls.append(url)
+    async def mock_post(url, json=None, headers=None):
+        captured_urls.append((url, headers))
         return mock_res
 
     with patch("httpx.AsyncClient.post", side_effect=mock_post), \
@@ -72,4 +72,6 @@ async def test_transcribe_audio_with_gemini_uses_configured_model(tmp_path: Path
         assert len(segments) == 1
         assert segments[0]["text"] == "Hello world"
         assert len(captured_urls) > 0
-        assert "gemini-2.0-flash" in captured_urls[0]
+        assert "gemini-2.0-flash" in captured_urls[0][0]
+        assert "?key=" not in captured_urls[0][0]
+        assert captured_urls[0][1]["x-goog-api-key"] == "test_key_123"

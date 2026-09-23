@@ -121,6 +121,8 @@ def classify_failure(error: BaseException) -> str:
         return "quota"
     status = getattr(error, "status_code", None)
     if status is None:
+        status = getattr(error, "http_status", None)
+    if status is None:
         status = getattr(getattr(error, "response", None), "status_code", None)
     if status in (401, 403):
         return "auth"

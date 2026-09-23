@@ -19,6 +19,8 @@ from app.providers.base import (
     QuotaInfo,
     UsageEstimate,
 )
+from app.providers.request_target import resolve_request_target
+from app.services.ai_routing import RouteTarget
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -57,7 +59,8 @@ class OpenAILLMProvider(LLMProvider):
             logger.warning("OpenAI configuration validation failed", error=str(e))
             return False
 
-    async def generate_text(self, prompt: str, system_prompt: str = "", model: Optional[str] = None) -> str:
+    async def generate_text(self, prompt: str, system_prompt: str = "", model: Optional[str] = None,
+                            *, route_target: RouteTarget | None = None, api_key: str | None = None) -> str:
         """
         Generate text using OpenAI API.
 
@@ -66,10 +69,14 @@ class OpenAILLMProvider(LLMProvider):
             system_prompt: Optional system prompt.
             model: Model ID from AIModelResolver. If not provided, raises error.
         """
-        from app.core.pipeline_errors import classify_http_error, classify_exception, PipelineError
+        from app.core.pipeline_errors import classify_http_error, PipelineError, NETWORK_ERROR
 
         settings = get_settings()
-        if not settings.OPENAI_API_KEY:
+        model, request_key = resolve_request_target(
+            route_target, api_key, provider_id="openai", capabilities=("LLM", "TRANSLATION"),
+            legacy_model=model, legacy_key=settings.OPENAI_API_KEY,
+        )
+        if not request_key:
             raise ValueError("OPENAI_API_KEY chưa được cấu hình trong .env")
 
         if not model:
@@ -87,7 +94,7 @@ class OpenAILLMProvider(LLMProvider):
         messages.append({"role": "user", "content": prompt})
 
         headers = {
-            "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
+            "Authorization": f"Bearer {request_key}",
             "Content-Type": "application/json",
         }
 
@@ -113,7 +120,7 @@ class OpenAILLMProvider(LLMProvider):
                 # Non-200 — classify into structured error
                 raise classify_http_error(
                     status_code=res.status_code,
-                    response_text=res.text[:500],
+                    response_text="",
                     provider="openai",
                     model=target_model,
                     stage="LLM",
@@ -123,8 +130,9 @@ class OpenAILLMProvider(LLMProvider):
                 raise
             except RuntimeError:
                 raise
-            except (httpx.TimeoutException, httpx.RequestError) as req_err:
-                raise classify_exception(req_err, provider="openai", model=target_model, stage="LLM")
+            except (httpx.TimeoutException, httpx.RequestError):
+                raise PipelineError(code=NETWORK_ERROR, stage="LLM", provider="openai", model=target_model,
+                                    message="OpenAI request failed.") from None
 
         raise RuntimeError(f"OpenAI API trả về kết quả rỗng cho model '{target_model}'.")
 

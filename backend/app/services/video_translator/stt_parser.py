@@ -77,16 +77,10 @@ def parse_gemini_stt_response(
     
     if parsed_obj is None:
         if is_json_intent:
-            logger.error(
-                f"[Gemini STT Parse Error] JSON parsing failed, but output looks like JSON. Raising error to trigger retry. "
-                f"Raw text snippet: {raw_text[:200]!r}"
-            )
-            raise ValueError(f"Failed to parse JSON response. Raw snippet: {raw_text[:200]!r}")
+            logger.error("[Gemini STT Parse Error] JSON parsing failed; triggering retry.")
+            raise ValueError("Failed to parse JSON response")
             
-        logger.warning(
-            f"[Gemini STT Parse Warning] JSON parsing failed. Attempting Plain Text Fallback Parser. "
-            f"Raw text snippet: {raw_text[:200]!r}"
-        )
+        logger.warning("[Gemini STT Parse Warning] Attempting plain text fallback.")
         parsed_obj = _parse_plain_text_fallback(raw_text, actual_chunk_dur, default_lang)
 
     # Stage F: Schema Normalization
@@ -94,16 +88,16 @@ def parse_gemini_stt_response(
 
     if not normalized.get("segments") and raw_text:
         if is_json_intent:
-            logger.error(f"[Gemini STT Parse Error] Schema normalization yielded 0 segments for a JSON response. Raising error to trigger retry. Raw response:\n{raw_text[:1000]}")
-            raise ValueError(f"Gemini STT response could not be parsed into valid segments. Raw response snippet: {raw_text[:200]!r}")
+            logger.error("[Gemini STT Parse Error] JSON response yielded no segments; triggering retry.")
+            raise ValueError("Gemini STT response could not be parsed into valid segments")
             
         # Last resort: try plain text fallback if schema normalization yielded 0 segments
         fallback_obj = _parse_plain_text_fallback(raw_text, actual_chunk_dur, default_lang)
         normalized = _normalize_stt_schema(fallback_obj, actual_chunk_dur, default_lang)
 
     if not normalized.get("segments"):
-        logger.error(f"[Gemini STT Parse Error] Failed to parse valid segments. Raw response:\n{raw_text[:1000]}")
-        raise ValueError(f"Gemini STT response could not be parsed into valid segments. Raw response snippet: {raw_text[:200]!r}")
+        logger.error("[Gemini STT Parse Error] Failed to parse valid segments.")
+        raise ValueError("Gemini STT response could not be parsed into valid segments")
 
     return normalized
 

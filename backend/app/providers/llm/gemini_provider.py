@@ -18,6 +18,8 @@ from app.providers.base import (
     QuotaInfo,
     UsageEstimate,
 )
+from app.providers.request_target import resolve_request_target
+from app.services.ai_routing import RouteTarget
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -61,15 +63,16 @@ class GeminiLLMProvider(LLMProvider):
         if not settings.GEMINI_API_KEY:
             return False
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models?key={settings.GEMINI_API_KEY}"
+            url = "https://generativelanguage.googleapis.com/v1beta/models"
             async with httpx.AsyncClient(timeout=10.0) as client:
-                res = await client.get(url)
+                res = await client.get(url, headers={"x-goog-api-key": settings.GEMINI_API_KEY})
                 return res.status_code == 200
-        except Exception as e:
-            logger.warning("Gemini validation failed", error=str(e))
+        except Exception:
+            logger.warning("Gemini validation failed")
             return False
 
-    async def generate_text(self, prompt: str, system_prompt: str = "", model: Optional[str] = None) -> str:
+    async def generate_text(self, prompt: str, system_prompt: str = "", model: Optional[str] = None,
+                            *, route_target: RouteTarget | None = None, api_key: str | None = None) -> str:
         """
         Generate text using Gemini API.
 
@@ -80,7 +83,11 @@ class GeminiLLMProvider(LLMProvider):
         """
         from app.core.pipeline_errors import classify_http_error, PipelineError
 
-        if not settings.GEMINI_API_KEY:
+        model, request_key = resolve_request_target(
+            route_target, api_key, provider_id="gemini", capabilities=("LLM", "TRANSLATION"),
+            legacy_model=model, legacy_key=settings.GEMINI_API_KEY,
+        )
+        if not request_key:
             raise ValueError("GEMINI_API_KEY not set in .env")
 
         # Use explicitly provided model or attempt fallback resolution via AIModelResolver
@@ -115,11 +122,12 @@ class GeminiLLMProvider(LLMProvider):
             }
         }
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={settings.GEMINI_API_KEY}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent"
+        headers = {"x-goog-api-key": request_key}
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             try:
-                res = await client.post(url, json=payload)
+                res = await client.post(url, json=payload, headers=headers)
                 if res.status_code == 200:
                     data = res.json()
                     candidates = data.get("candidates", [])
@@ -143,7 +151,7 @@ class GeminiLLMProvider(LLMProvider):
                         "temperature": 0.2,
                         "maxOutputTokens": 8192,
                     }
-                    fb_res = await client.post(url, json=payload_fallback)
+                    fb_res = await client.post(url, json=payload_fallback, headers=headers)
                     if fb_res.status_code == 200:
                         fb_data = fb_res.json()
                         candidates = fb_data.get("candidates", [])
@@ -155,7 +163,7 @@ class GeminiLLMProvider(LLMProvider):
                 # Non-200 error — classify into structured error
                 raise classify_http_error(
                     status_code=res.status_code,
-                    response_text=res.text[:500],
+                    response_text="",
                     provider="gemini",
                     model=target_model,
                     stage="LLM",
@@ -165,9 +173,10 @@ class GeminiLLMProvider(LLMProvider):
                 raise
             except RuntimeError:
                 raise
-            except (httpx.TimeoutException, httpx.RequestError) as req_err:
-                from app.core.pipeline_errors import classify_exception
-                raise classify_exception(req_err, provider="gemini", model=target_model, stage="LLM")
+            except (httpx.TimeoutException, httpx.RequestError):
+                from app.core.pipeline_errors import PipelineError, NETWORK_ERROR
+                raise PipelineError(code=NETWORK_ERROR, stage="LLM", provider="gemini", model=target_model,
+                                    message="Gemini request failed.") from None
 
         raise RuntimeError(f"Gemini API trả về kết quả rỗng cho model '{target_model}'.")
 
