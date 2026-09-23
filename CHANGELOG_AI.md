@@ -2,6 +2,7 @@
   - Added `capability_registry.py` with per-function positive/negative/unknown evidence (including LLM) and `ai_routing/` with immutable provider-scoped route targets, public-catalog versus credential-listing candidate scopes, deterministic fallback/key ordering, a preferred-key hook, bounded retries/timeouts, nonzero backoff, runtime unsupported-modality fallback, and sanitized failures. Credential reads use short-lived sessions closed before provider calls. Explicit defaults remain inspectable and invalid selections raise a configuration error.
   - Narrowed the legacy resolver's capability check so `LLM` and Gemini/OpenAI provider identity no longer imply STT; existing pipeline integration and explicit-model provider inference remain for Task 6 cutover. No schema, API, UI, external network, or production database changes.
   - Added isolated synthetic-key SQLite routing tests and ran focused canonical plus legacy resolver/settings/catalog/credential tests. Updated the project knowledge base.
+  - Added a read-time catalog capability summary contract for Task 7 so sanitized discovery evidence is displayed through current registry rules, not stale raw ORM annotation fields.
 
 - **Discovery Evidence and Curated Row Protection (2026-09-23)**:
   - Added nullable `CatalogModel.discovery_metadata` via additive revision `20260923_catalog_evidence`; persist/update only provider-allowlisted, typed, secret-redacted evidence bounded to 8 KiB using shared adapter sanitization at the persistence boundary.

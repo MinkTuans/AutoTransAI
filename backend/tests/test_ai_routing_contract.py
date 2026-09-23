@@ -83,6 +83,19 @@ def test_translation_only_catalog_annotation_does_not_imply_general_llm():
     assert not compatible("LLM", evidence)
 
 
+def test_catalog_capability_summary_computes_from_persisted_evidence():
+    from app.services.capability_registry import catalog_capability_summary
+    model = CatalogModel(provider_id="gemini", remote_model_id="opaque", source="discovered",
+                         capabilities=[], capability_status="FULL_UNKNOWN",
+                         discovery_metadata={"supportedGenerationMethods": ["generateContent"]})
+    summary = catalog_capability_summary(model)
+    assert summary["status"] == "PARTIAL"
+    assert summary["capabilities"] == ["LLM", "TRANSLATION"]
+    assert "STT" in summary["unknown_capabilities"]
+    assert summary["incompatible_capabilities"] == []
+    assert "discovery_metadata" not in summary
+
+
 @pytest.mark.asyncio
 async def test_llm_route_uses_translation_default_without_implying_stt(routing_db):
     from app.services.ai_routing import build_route

@@ -78,3 +78,19 @@ def model_evidence(model) -> CapabilityEvidence:
         positive = frozenset(positive)
         return CapabilityEvidence(positive, "KNOWN", CAPABILITIES - positive)
     return classify(model.provider_id, model.discovery_metadata, remote_model_id=model.remote_model_id)
+
+
+def catalog_capability_summary(model) -> dict[str, str | list[str]]:
+    """Task 7 catalog DTO source; never serialize raw persisted capability columns.
+
+    Discovery metadata is retained as evidence, while this view is recomputed
+    using the current registry so a refresh or rule correction cannot leave a
+    stale capability label in catalog search responses.
+    """
+    evidence = model_evidence(model)
+    return {
+        "status": evidence.status,
+        "capabilities": sorted(evidence.capabilities),
+        "incompatible_capabilities": sorted(evidence.incompatible),
+        "unknown_capabilities": sorted(CAPABILITIES - evidence.capabilities - evidence.incompatible),
+    }
