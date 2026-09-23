@@ -171,6 +171,12 @@ class CredentialService:
             query = query.where(APIKey.provider_id == provider_id)
         return [_dto(row) for row in (await self._session.scalars(query)).all()]
 
+    async def get(self, key_id: str) -> CredentialDTO:
+        row = await self._session.get(APIKey, key_id)
+        if row is None:
+            raise CredentialNotFoundError("Credential does not exist.")
+        return _dto(row)
+
     async def reveal(self, key_id: str) -> str:
         row = await self._session.get(APIKey, key_id)
         if row is None:
