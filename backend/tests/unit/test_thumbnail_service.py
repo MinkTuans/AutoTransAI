@@ -6,8 +6,12 @@ import pytest
 import asyncio
 import uuid
 import json
+import socket
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
+import httpx
+from PIL import Image
 
 from app.models.video_thumbnail import VideoThumbnail, ThumbnailStatus
 from app.models.project import Project
@@ -20,6 +24,12 @@ from app.providers.image.local_image_provider import LocalImageProvider
 from app.providers.registry import get_registry
 from app.services.thumbnail_service import ThumbnailService
 from app.database import async_session_factory, init_db, engine as db_engine
+
+
+def _valid_png():
+    output = BytesIO()
+    Image.new("RGB", (2, 2), (1, 2, 3)).save(output, "PNG")
+    return output.getvalue()
 
 
 @pytest.mark.asyncio
@@ -89,22 +99,21 @@ async def test_image_provider_registry():
 
 
 @pytest.mark.asyncio
-async def test_local_image_provider_generation():
+async def test_local_image_provider_generation(monkeypatch, tmp_path):
     provider = LocalImageProvider()
-    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
-        mock_response = AsyncMock()
-        mock_response.status_code = 200
-        mock_response.content = b"x" * 6000
-        mock_get.return_value = mock_response
-
-        res = await provider.generate_image(
-            prompt="Cinematic zombie scene",
-            width=1280,
-            height=720,
-        )
-        assert res.success is True
-        assert res.metadata.get("image_bytes") is not None
-        assert len(res.metadata["image_bytes"]) > 1000
+    original_client = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: original_client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(
+            200, content=_valid_png(), headers={"content-type": "image/png"})), **kwargs,
+    ))
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("1.1.1.1", 443)),
+    ])
+    monkeypatch.setattr(socket.socket, "connect", lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("local image unit test attempted outbound network")))
+    res = await provider.generate_image(prompt="Cinematic zombie scene", width=1280, height=720)
+    assert res.success is True
+    assert res.metadata["image_bytes"] == _valid_png()
 
 
 
@@ -123,7 +132,7 @@ async def test_create_and_delete_thumbnail_db_flow():
              patch("app.providers.image.pollinations_provider.PollinationsImageProvider.generate_image", new_callable=AsyncMock) as mock_gen, \
              patch("app.services.thumbnail_service.ThumbnailService.analyze_content_with_llm", new_callable=AsyncMock) as mock_analyze:
 
-            mock_upload.return_value = (f"projects/{project_id}/thumbnails/test.webp", f"/api/storage/files/projects/{project_id}/thumbnails/test.webp")
+            mock_upload.return_value = (f"projects/{project_id}/thumbnails/test.png", f"/api/storage/files/projects/{project_id}/thumbnails/test.png")
             mock_analyze.return_value = {
                 "title": "Test Horror Movie",
                 "main_subject": "Girl in dark house",
@@ -138,7 +147,7 @@ async def test_create_and_delete_thumbnail_db_flow():
                 success=True,
                 provider_id="pollinations",
                 metadata={
-                    "image_bytes": b"mock_image_bytes_content_for_test",
+                    "image_bytes": _valid_png(),
                     "width": 1280,
                     "height": 720,
                     "aspect_ratio": "16:9",

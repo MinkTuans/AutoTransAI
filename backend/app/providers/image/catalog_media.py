@@ -15,7 +15,7 @@ import socket
 import warnings
 from io import BytesIO
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from PIL import Image, UnidentifiedImageError
@@ -133,27 +133,37 @@ async def validate_public_https_url(url: str, *, expected_host: str | None = Non
     return url
 
 
-async def download_image(client: httpx.AsyncClient, url: str) -> bytes:
-    await validate_public_https_url(url)
+async def download_image(client: httpx.AsyncClient, url: str, *, max_redirects: int = 0) -> bytes:
+    if not 0 <= max_redirects <= 3:
+        raise CatalogImageError("invalid_output")
     try:
-        async with client.stream("GET", url, follow_redirects=False,
-                                 headers={"Accept": "image/png, image/jpeg, image/webp"}) as response:
-            if response.status_code != 200:
-                raise CatalogImageError("download_failed", status_code=response.status_code)
-            mime = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-            if mime not in _MIME:
-                raise CatalogImageError("invalid_output")
-            size = response.headers.get("content-length")
-            if size is not None and (not size.isdigit() or int(size) > MAX_IMAGE_BYTES):
-                raise CatalogImageError("invalid_output")
-            chunks = []
-            total = 0
-            async for chunk in response.aiter_bytes():
-                total += len(chunk)
-                if total > MAX_IMAGE_BYTES:
+        current_url = url
+        for hop in range(max_redirects + 1):
+            await validate_public_https_url(current_url)
+            async with client.stream("GET", current_url, follow_redirects=False,
+                                     headers={"Accept": "image/png, image/jpeg, image/webp"}) as response:
+                if response.status_code in (301, 302, 303, 307, 308):
+                    location = response.headers.get("location")
+                    if hop == max_redirects or not location:
+                        raise CatalogImageError("invalid_output")
+                    current_url = urljoin(current_url, location)
+                    continue
+                if response.status_code != 200:
+                    raise CatalogImageError("download_failed", status_code=response.status_code)
+                mime = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+                if mime not in _MIME:
                     raise CatalogImageError("invalid_output")
-                chunks.append(chunk)
-            return validate_image_bytes(b"".join(chunks), mime)
+                size = response.headers.get("content-length")
+                if size is not None and (not size.isdigit() or int(size) > MAX_IMAGE_BYTES):
+                    raise CatalogImageError("invalid_output")
+                chunks = []
+                total = 0
+                async for chunk in response.aiter_bytes():
+                    total += len(chunk)
+                    if total > MAX_IMAGE_BYTES:
+                        raise CatalogImageError("invalid_output")
+                    chunks.append(chunk)
+                return validate_image_bytes(b"".join(chunks), mime)
     except CatalogImageError:
         raise
     except (httpx.HTTPError, ValueError):

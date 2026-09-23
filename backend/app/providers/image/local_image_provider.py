@@ -7,12 +7,18 @@ Generates visual scenery image using Picsum sceneries or FFmpeg dark gradient ca
 from __future__ import annotations
 
 import random
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
 
+from app.config import get_settings
 from app.core import get_logger
+from app.providers.image.catalog_media import (
+    download_image, validate_image_bytes,
+)
 from app.media.ffmpeg_process import get_ffmpeg_executable, run_ffmpeg_with_progress_async
 from app.providers.base import (
     GenerationResult,
@@ -57,58 +63,54 @@ class LocalImageProvider(ImageProvider):
     ) -> GenerationResult:
         options = options or {}
         seed = options.get("seed") or random.randint(1000, 999999)
-        output_path = options.get("output_path")
-
-        if output_path:
-            out_file = Path(output_path)
-        else:
-            out_file = Path("data") / "tmp_thumbnail.jpg"
-
-        out_file.parent.mkdir(parents=True, exist_ok=True)
-        image_bytes = None
+        # No application caller needs a local-provider output path. Refusing it
+        # avoids partial FFmpeg output overwriting an existing caller file.
+        if options.get("output_path") is not None:
+            return GenerationResult(False, provider_id=self.provider_id,
+                                    error_code="INVALID_OUTPUT_PATH",
+                                    error_message="Local image output path is not supported.")
 
         # 1. Try fetching high-res scenery image from Picsum
         try:
             picsum_url = f"https://picsum.photos/seed/{seed}/{width}/{height}"
-            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-                res = await client.get(picsum_url)
-                if res.status_code == 200 and len(res.content) > 5000:
-                    out_file.write_bytes(res.content)
-                    image_bytes = res.content
-        except Exception as ex:
-            logger.debug("Picsum scenery fetch bypassed", error=str(ex))
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+                image_bytes = await download_image(client, picsum_url, max_redirects=3)
+            return GenerationResult(
+                success=True, provider_id=self.provider_id,
+                metadata={"image_bytes": image_bytes, "width": width, "height": height,
+                          "aspect_ratio": aspect_ratio, "provider": self.provider_id,
+                          "model": model},
+            )
+        except Exception:
+            logger.debug("Picsum scenery fetch bypassed", code="provider_unavailable")
 
         # 2. Fallback to FFmpeg cinematic dark gradient canvas if completely offline
-        if not image_bytes:
-            try:
-                ffmpeg_bin = get_ffmpeg_executable()
-                cmd = [
-                    ffmpeg_bin, "-y",
-                    "-f", "lavfi",
-                    "-i", f"color=c=0x0f172a:s={width}x{height}:d=1",
-                    "-vframes", "1",
-                    str(out_file.resolve())
-                ]
-                await run_ffmpeg_with_progress_async(cmd, duration_sec=1.0)
-                if out_file.exists():
-                    image_bytes = out_file.read_bytes()
-            except Exception as ffmpeg_err:
-                logger.error("FFmpeg fallback thumbnail canvas failed", error=str(ffmpeg_err))
-
-        if image_bytes:
+        out_file = None
+        try:
+            root = get_settings().DATA_DIR.resolve()
+            root.mkdir(parents=True, exist_ok=True)
+            descriptor, path = tempfile.mkstemp(prefix="thumbnail_", suffix=".jpg", dir=root)
+            os.close(descriptor)
+            out_file = Path(path)
+            ffmpeg_bin = get_ffmpeg_executable()
+            cmd = [
+                ffmpeg_bin, "-y", "-f", "lavfi",
+                "-i", f"color=c=0x0f172a:s={width}x{height}:d=1",
+                "-vframes", "1", str(out_file.resolve()),
+            ]
+            await run_ffmpeg_with_progress_async(cmd, duration_sec=1.0)
+            image_bytes = validate_image_bytes(out_file.read_bytes())
             return GenerationResult(
-                success=True,
-                file_path=out_file,
-                provider_id=self.provider_id,
-                metadata={
-                    "image_bytes": image_bytes,
-                    "width": width,
-                    "height": height,
-                    "aspect_ratio": aspect_ratio,
-                    "provider": self.provider_id,
-                    "model": model,
-                },
+                success=True, provider_id=self.provider_id,
+                metadata={"image_bytes": image_bytes, "width": width, "height": height,
+                          "aspect_ratio": aspect_ratio, "provider": self.provider_id,
+                          "model": model},
             )
+        except Exception:
+            logger.error("FFmpeg fallback thumbnail canvas failed", code="provider_unavailable")
+        finally:
+            if out_file is not None:
+                out_file.unlink(missing_ok=True)
 
         return GenerationResult(
             success=False,

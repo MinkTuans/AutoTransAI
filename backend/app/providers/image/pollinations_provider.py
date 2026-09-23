@@ -14,7 +14,9 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from app.config import get_settings
 from app.core import get_logger
+from app.providers.image.catalog_media import CatalogImageError, download_image, validated_output_path
 from app.providers.base import (
     GenerationResult,
     ImageProvider,
@@ -76,48 +78,32 @@ class PollinationsImageProvider(ImageProvider):
             width=width,
             height=height,
             seed=seed,
-            prompt_preview=cleaned_prompt[:80],
         )
 
         try:
-            async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
-                res = await client.get(url)
-                if res.status_code == 200 and len(res.content) > 5000:
-                    output_path = options.get("output_path")
-                    if output_path:
-                        output_path = Path(output_path)
-                        output_path.parent.mkdir(parents=True, exist_ok=True)
-                        output_path.write_bytes(res.content)
-
-                    return GenerationResult(
-                        success=True,
-                        file_path=output_path if output_path else None,
-                        provider_id=self.provider_id,
-                        metadata={
-                            "image_bytes": res.content,
-                            "width": width,
-                            "height": height,
-                            "aspect_ratio": aspect_ratio,
-                            "seed": seed,
-                            "provider": self.provider_id,
-                            "model": model,
-                            "content_type": res.headers.get("content-type", "image/jpeg"),
-                        },
-                    )
-                else:
-                    err_msg = f"Pollinations AI returned HTTP {res.status_code}"
-                    logger.warning(err_msg, status=res.status_code)
-                    return GenerationResult(
-                        success=False,
-                        error_message=err_msg,
-                        error_code=f"HTTP_{res.status_code}",
-                        provider_id=self.provider_id,
-                    )
-        except Exception as ex:
-            logger.error("Pollinations AI image generation error", error=str(ex))
+            output_path = validated_output_path(options.get("output_path"), get_settings().DATA_DIR)
+            async with httpx.AsyncClient(timeout=25.0, follow_redirects=False) as client:
+                image_bytes = await download_image(client, url, max_redirects=3)
+            if output_path:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_bytes(image_bytes)
+            return GenerationResult(
+                success=True, file_path=output_path, provider_id=self.provider_id,
+                metadata={"image_bytes": image_bytes, "width": width, "height": height,
+                          "aspect_ratio": aspect_ratio, "seed": seed,
+                          "provider": self.provider_id, "model": model},
+            )
+        except CatalogImageError as error:
+            return GenerationResult(
+                success=False, provider_id=self.provider_id,
+                error_code=f"HTTP_{error.status_code}" if error.status_code else error.code.upper(),
+                error_message=str(error),
+            )
+        except Exception:
+            logger.error("Pollinations AI image generation error", code="provider_unavailable")
             return GenerationResult(
                 success=False,
-                error_message=f"Pollinations AI request failed: {str(ex)}",
+                error_message="Pollinations AI request failed.",
                 error_code="NETWORK_ERROR",
                 provider_id=self.provider_id,
             )
