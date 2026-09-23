@@ -14,7 +14,10 @@ def utcnow() -> datetime:
 
 class APIKey(Base):
     __tablename__ = "api_keys"
-    __table_args__ = (UniqueConstraint("provider_id", "fingerprint", name="uq_api_keys_provider_fingerprint"),)
+    __table_args__ = (
+        UniqueConstraint("provider_id", "fingerprint", name="uq_api_keys_provider_fingerprint"),
+        UniqueConstraint("id", "provider_id", name="uq_api_keys_id_provider"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     provider_id: Mapped[str] = mapped_column(ForeignKey("providers.id", ondelete="RESTRICT"), index=True)

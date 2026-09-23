@@ -25,6 +25,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.UniqueConstraint("provider_id", "fingerprint", name="uq_api_keys_provider_fingerprint"),
+        sa.UniqueConstraint("id", "provider_id", name="uq_api_keys_id_provider"),
     )
     op.create_index("ix_api_keys_provider_id", "api_keys", ["provider_id"])
     op.create_table(
@@ -41,13 +42,23 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.UniqueConstraint("provider_id", "remote_model_id", name="uq_catalog_provider_remote"),
+        sa.UniqueConstraint("id", "provider_id", name="uq_catalog_id_provider"),
     )
     op.create_index("ix_ai_catalog_models_provider_id", "ai_catalog_models", ["provider_id"])
     op.create_table(
         "ai_key_model_access",
-        sa.Column("key_id", sa.String(36), sa.ForeignKey("api_keys.id", ondelete="CASCADE"), primary_key=True),
-        sa.Column("model_id", sa.String(36), sa.ForeignKey("ai_catalog_models.id", ondelete="CASCADE"), primary_key=True),
+        sa.Column("key_id", sa.String(36), primary_key=True),
+        sa.Column("model_id", sa.String(36), primary_key=True),
+        sa.Column("provider_id", sa.String(50), nullable=False),
         sa.Column("discovered_at", sa.DateTime(), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["key_id", "provider_id"], ["api_keys.id", "api_keys.provider_id"],
+            name="fk_access_key_provider", ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["model_id", "provider_id"], ["ai_catalog_models.id", "ai_catalog_models.provider_id"],
+            name="fk_access_model_provider", ondelete="CASCADE",
+        ),
     )
     op.create_index("ix_ai_key_model_access_model_id", "ai_key_model_access", ["model_id"])
 

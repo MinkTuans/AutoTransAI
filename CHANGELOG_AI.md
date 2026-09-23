@@ -1,3 +1,7 @@
+- **Catalog Access Provider Integrity (2026-09-23)**:
+  - Fixed cross-provider access associations with non-null provider identity and composite foreign keys in `ai_catalog.py`, `api_key.py`, and additive revision `20260923_ai_catalog`.
+  - Added validated, idempotent `grant_model_access` in `catalog_access_service.py`. Expanded ORM-created and migration-created SQLite regressions plus offline MySQL checks; 32 focused tests pass. Key deletion still retains catalog models. Updated knowledge base; no real database migration performed.
+
 - **Encrypted Credential Domain (2026-09-23)**:
   - Added `backend/app/services/credential_service.py` with stable IDs, masked immutable DTOs, provider-scoped keyed duplicate detection, authenticated payload binding, and fail-closed decryption.
   - Supports explicit Fernet master keys or first-use private `.api_key_master_key` generation; missing/invalid master keys cannot overwrite existing encrypted credentials. No legacy credential reads or migration.

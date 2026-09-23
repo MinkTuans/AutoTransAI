@@ -19,14 +19,19 @@ def catalog():
     return models.CatalogModel, models.APIKey, models.KeyModelAccess
 
 
-@pytest.fixture
-def db(catalog):
+@pytest.fixture(params=["orm", "migration"])
+def db(catalog, request):
     engine = create_engine("sqlite://")
     event.listen(engine, "connect", lambda connection, _: connection.execute("PRAGMA foreign_keys=ON"))
     models.Provider.__table__.create(engine)
-    for model in catalog[:2]:
-        model.__table__.create(engine)
-    catalog[2].__table__.create(engine)
+    if request.param == "migration":
+        with engine.begin() as connection:
+            with Operations.context(MigrationContext.configure(connection)):
+                migration().upgrade()
+    else:
+        for model in catalog[:2]:
+            model.__table__.create(engine)
+        catalog[2].__table__.create(engine)
     with Session(engine) as session:
         session.add_all([models.Provider(id=p, name=p, provider_type="llm") for p in ("one", "two")])
         session.commit()
@@ -51,7 +56,7 @@ def test_multiple_keys_share_models_and_key_deletion_preserves_catalog(catalog, 
     db.add_all([model, *keys])
     db.flush()
     model_id = model.id
-    db.add_all([Access(key_id=key.id, model_id=model.id) for key in keys])
+    db.add_all([Access(key_id=key.id, model_id=model.id, provider_id="one") for key in keys])
     db.commit()
     db.delete(keys[0])
     db.commit()
@@ -70,13 +75,13 @@ def test_access_pair_is_unique_and_cannot_reference_missing_rows(catalog, db):
     db.add_all([key, model])
     db.flush()
     ids = key.id, model.id
-    db.add(Access(key_id=ids[0], model_id=ids[1]))
+    db.add(Access(key_id=ids[0], model_id=ids[1], provider_id="one"))
     db.commit()
-    db.add(Access(key_id=ids[0], model_id=ids[1]))
+    db.add(Access(key_id=ids[0], model_id=ids[1], provider_id="one"))
     with pytest.raises(IntegrityError):
         db.commit()
     db.rollback()
-    db.add(Access(key_id="missing", model_id=ids[1]))
+    db.add(Access(key_id="missing", model_id=ids[1], provider_id="one"))
     with pytest.raises(IntegrityError):
         db.commit()
 
@@ -89,6 +94,20 @@ def test_remote_ids_keep_case_and_prefix_and_require_provider(catalog, db):
     db.add(Model(provider_id="absent", remote_model_id="remote"))
     with pytest.raises(IntegrityError):
         db.commit()
+
+
+@pytest.mark.parametrize("claimed_provider", ["one", "two"])
+def test_cross_provider_access_is_rejected_by_database(catalog, db, claimed_provider):
+    Model, Key, Access = catalog
+    key = Key(provider_id="one", ciphertext="encrypted", fingerprint="f", masked_key="****")
+    model = Model(provider_id="two", remote_model_id="remote")
+    db.add_all([key, model])
+    db.flush()
+    access = Access(key_id=key.id, model_id=model.id)
+    access.provider_id = claimed_provider
+    db.add(access)
+    with pytest.raises(IntegrityError):
+        db.flush()
 
 
 def migration():
@@ -124,4 +143,6 @@ def test_migration_emits_mysql_ddl_without_connecting():
     assert "CREATE TABLE ai_catalog_models" in sql
     assert "UNIQUE (provider_id, remote_model_id)" in sql
     assert "ON DELETE CASCADE" in sql
+    assert "FOREIGN KEY(key_id, provider_id) REFERENCES api_keys (id, provider_id)" in sql
+    assert "FOREIGN KEY(model_id, provider_id) REFERENCES ai_catalog_models (id, provider_id)" in sql
     assert "DROP " not in sql and "ALTER " not in sql

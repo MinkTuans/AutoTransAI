@@ -102,7 +102,7 @@ async def test_delete_credential_preserves_catalog_and_other_access(credentials,
     model = CatalogModel(provider_id="one", remote_model_id="models/CaseSensitive")
     db.add(model)
     await db.flush()
-    db.add_all([KeyModelAccess(key_id=k.id, model_id=model.id) for k in (first, second)])
+    db.add_all([KeyModelAccess(key_id=k.id, model_id=model.id, provider_id="one") for k in (first, second)])
     await db.commit()
     assert await service.delete(first.id)
     await db.commit()
@@ -172,3 +172,36 @@ async def test_fingerprint_depends_on_master_key(credentials, db, tmp_path):
     second = await credentials.CredentialService.open(db, tmp_path, master_key=Fernet.generate_key())
     replacement = await second.create("one", "same-synthetic-secret")
     assert (await db.get(APIKey, replacement.id)).fingerprint != fingerprint
+
+
+async def test_validated_access_writer_rejects_provider_mismatch_and_missing_rows(credentials, db, tmp_path):
+    assert importlib.util.find_spec("app.services.catalog_access_service") is not None, "validated access writer is missing"
+    from app.services.catalog_access_service import CatalogAccessError, grant_model_access
+    service = await credentials.CredentialService.open(db, tmp_path)
+    key = await service.create("one", "synthetic-key")
+    model = CatalogModel(provider_id="two", remote_model_id="remote")
+    db.add(model)
+    await db.flush()
+    with pytest.raises(CatalogAccessError):
+        await grant_model_access(db, key.id, model.id)
+    with pytest.raises(CatalogAccessError):
+        await grant_model_access(db, "absent", model.id)
+    with pytest.raises(CatalogAccessError):
+        await grant_model_access(db, key.id, "absent")
+    assert (await db.scalars(select(KeyModelAccess))).all() == []
+
+
+async def test_validated_access_writer_is_idempotent_and_obeys_caller_rollback(credentials, db, tmp_path):
+    assert importlib.util.find_spec("app.services.catalog_access_service") is not None, "validated access writer is missing"
+    from app.services.catalog_access_service import grant_model_access
+    service = await credentials.CredentialService.open(db, tmp_path)
+    key = await service.create("one", "synthetic-key")
+    model = CatalogModel(provider_id="one", remote_model_id="remote")
+    db.add(model)
+    await db.commit()
+    await grant_model_access(db, key.id, model.id)
+    await grant_model_access(db, key.id, model.id)
+    rows = (await db.scalars(select(KeyModelAccess))).all()
+    assert len(rows) == 1 and rows[0].provider_id == "one"
+    await db.rollback()
+    assert (await db.scalars(select(KeyModelAccess))).all() == []
