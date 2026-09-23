@@ -199,6 +199,38 @@ def test_partial_installation_is_not_silently_completed(db):
     assert sa.inspect(db).get_table_names() == ['projects']
 
 
+@pytest.mark.parametrize("column, literal", [
+    ("llm_provider_id", "'(openai)'"),
+    ("llm_provider_id", "'openai)'"),
+    ("llm_provider_id", "'''openai'''"),
+    ("stage_progress_pct", "'(0.0)'"),
+])
+def test_literal_characters_in_existing_default_are_not_discarded(db, column, literal):
+    fixture_schema(db)
+    kind = ADDITIONS['video_translation_jobs'][column]
+    db.exec_driver_sql(f"ALTER TABLE video_translation_jobs ADD COLUMN {column} {kind} DEFAULT {literal}")
+    before = snapshot(db)
+    schema = db.exec_driver_sql("SELECT name, sql FROM sqlite_master ORDER BY name").all()
+    statements = []
+    sa.event.listen(db, "before_cursor_execute", lambda c, cur, sql, p, ctx, many: statements.append(sql))
+    with pytest.raises(RuntimeError, match="Historical schema mismatch.*inspect.*before retrying"):
+        traverse(db)
+    assert snapshot(db) == before
+    assert db.exec_driver_sql("SELECT name, sql FROM sqlite_master ORDER BY name").all() == schema
+    assert not any(s.lstrip().upper().startswith(("ALTER", "CREATE", "DROP")) for s in statements)
+
+
+@pytest.mark.parametrize("view", ['video_translation_jobs', 'unrelated_view'])
+def test_view_only_database_is_not_blank_and_fails_before_creating_tables(db, view):
+    db.exec_driver_sql(f"CREATE VIEW {view} AS SELECT 'private-fixture' AS id")
+    schema = db.exec_driver_sql("SELECT name, sql FROM sqlite_master ORDER BY name").all()
+    with pytest.raises(RuntimeError, match="Historical schema mismatch.*inspect.*before retrying") as exc:
+        traverse(db)
+    assert 'private-fixture' not in str(exc.value)
+    assert sa.inspect(db).get_table_names() == []
+    assert db.exec_driver_sql("SELECT name, sql FROM sqlite_master ORDER BY name").all() == schema
+
+
 def test_generated_ddl_compiles_for_mysql_without_execution(db):
     compiled = []
 

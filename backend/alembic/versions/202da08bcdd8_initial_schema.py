@@ -121,8 +121,10 @@ def upgrade() -> None:
     tables = _prerequisites()
     names = {t.name for t in tables}
     existing = set(inspector.get_table_names()) - {'alembic_version'}
+    views = set(inspector.get_view_names())
     # A partial installation needs operator reconciliation, never guessed repairs.
-    if existing and not names <= existing:
+    # Views also make a database nonblank and may occupy a prerequisite name.
+    if names & views or ((existing or views) and not names <= existing):
         _mismatch()
     for table in tables if existing else []:
         columns = {c['name']: c for c in inspector.get_columns(table.name)}

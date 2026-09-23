@@ -1,4 +1,5 @@
 - **First historical Alembic link repair (2026-09-23, Task 9D1)**:
+  - Review fix: compare complete SQL default literals without discarding quoted characters, and preflight views before classifying a database as blank. Added regressions for literal parentheses/quotes and view-only schemas; mismatches leave data and schema unchanged.
   - Reconstructed only four prerequisite tables in `202da08bcdd8` from frozen Git schema definitions; preserved published revision identity and ancestry. Existing schemas are inspected before changes and unknown partial structures fail closed.
   - Made `20260822_sync_schema` validate existing columns and add only missing equivalents without overwriting rows or rebuilding populated tables. Both revisions refuse ambiguous downgrades and require online schema inspection.
   - Added isolated first-link tests and a frozen SQL fixture for blank/pre-sync/startup-created/mismatched states, data/FK preservation, direct-operation idempotence, and offline MySQL DDL compilation. Updated the knowledge base. No current ORM imports, real database, secrets, network traffic, stamp, or full-chain deployment claim.

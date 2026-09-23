@@ -80,11 +80,15 @@ def upgrade() -> None:
             # defaults must agree with the published migration, never be rewritten.
             default = actual.get('default')
             if default is not None:
-                value = str(default).strip("()'\"")
                 allowed = ({str(expected.server_default.arg)} if expected.server_default else set())
                 if allowed & {'0', '0.0'}:
                     allowed |= {'0', '0.0'}
-                if value not in allowed:
+                # Compare complete SQL literals; quote/parenthesis characters
+                # inside a literal are data. Unknown expressions fail closed.
+                allowed_sql = {"'" + value.replace("'", "''") + "'" for value in allowed}
+                if isinstance(expected.type, (sa.Integer, sa.Float, sa.Boolean)):
+                    allowed_sql |= allowed
+                if str(default).strip() not in allowed_sql:
                     _mismatch()
     for table, column in missing:
         op.add_column(table, column)
