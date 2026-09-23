@@ -191,7 +191,19 @@ async def invoke_route(route: RoutePlan, transport: Callable[[RouteTarget, str |
     if max_attempts < 1 or max_attempts > 5 or timeout <= 0:
         raise ValueError("Route retry or timeout limit is invalid.")
     failures: list[str] = []
+    rejected_key_ids: set[str] = set()
+
+    def error_status(error: BaseException | None) -> int | None:
+        status = getattr(error, "status_code", None)
+        if status is None:
+            status = getattr(error, "http_status", None)
+        if status is None:
+            status = getattr(getattr(error, "response", None), "status_code", None)
+        return status if isinstance(status, int) else None
+
     for target in route.targets:
+        if target.key_id is not None and target.key_id in rejected_key_ids:
+            continue
         try:
             for attempt in range(max_attempts):
                 # Recheck before every transport, including a retry after sleep.
@@ -222,17 +234,12 @@ async def invoke_route(route: RoutePlan, transport: Callable[[RouteTarget, str |
                                   error: BaseException | None = None) -> None:
                     if target.key_id is None or revision is None:
                         return
-                    status = getattr(error, "status_code", None)
-                    if status is None:
-                        status = getattr(error, "http_status", None)
-                    if status is None:
-                        status = getattr(getattr(error, "response", None), "status_code", None)
                     try:
                         async with sessions.begin() as accounting_db:
                             credentials = await CredentialService.open(accounting_db, data_dir)
                             await credentials.record_result(
                                 target.key_id, revision, success=success, code=code,
-                                http_status=status if isinstance(status, int) else None,
+                                http_status=error_status(error),
                                 quota_exhausted=getattr(error, "code", None) == "insufficient_quota",
                             )
                     except Exception:
@@ -246,6 +253,11 @@ async def invoke_route(route: RoutePlan, transport: Callable[[RouteTarget, str |
                     raise
                 except Exception as error:
                     code = classify_failure(error)
+                    if target.key_id is not None and (
+                        code == "rate_limit" or error_status(error) == 401
+                        or getattr(error, "code", None) == "insufficient_quota"
+                    ):
+                        rejected_key_ids.add(target.key_id)
                     await account(success=False, code=code, error=error)
                     if code not in ("timeout", "provider_unavailable") or attempt + 1 == max_attempts:
                         failures.append(code)

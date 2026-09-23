@@ -647,6 +647,39 @@ async def test_failed_attempt_with_accounting_failure_keeps_error_sanitized(rout
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status,code,expected", [
+    (429, None, "rate_limit"), (401, None, "auth"), (429, "insufficient_quota", "quota"),
+])
+async def test_rejected_key_is_not_reused_after_accounting_failure(routing_db, monkeypatch, status, code, expected):
+    from app.services.ai_routing import RouteExhausted, build_route, invoke_route
+    sessions, path = routing_db
+    async with sessions.begin() as db:
+        first = await add_model(db, "openai", "one", caps=["STT"], status="KNOWN")
+        second = await add_model(db, "openai", "two", caps=["STT"], status="KNOWN")
+        key = await add_key(db, path, "openai", [first, second], "synthetic-shared")
+    async with sessions() as db:
+        route = await build_route(db, "STT")
+    assert [target.key_id for target in route.targets] == [key.id, key.id]
+    calls = []
+
+    async def transport(target, secret):
+        calls.append(target.remote_model_id)
+        error = RuntimeError("synthetic-upstream-secret")
+        error.status_code = status
+        error.code = code
+        raise error
+
+    async def broken(*args, **kwargs):
+        raise RuntimeError("synthetic-accounting-secret")
+
+    monkeypatch.setattr(CredentialService, "record_result", broken)
+    with pytest.raises(RouteExhausted, match=expected) as exc:
+        await invoke_route(route, transport, sessions, path)
+    assert calls == ["one"]
+    assert "synthetic-upstream-secret" not in str(exc.value)
+
+
+@pytest.mark.asyncio
 async def test_preferred_key_hook_and_auth_falls_through_all_keys(routing_db):
     from app.services.ai_routing import build_route, invoke_route
     sessions, path = routing_db
