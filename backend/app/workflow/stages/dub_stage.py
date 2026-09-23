@@ -105,8 +105,7 @@ class DubStage:
                 ctx.speaker_voice_map[m.speaker_id] = {
                     "provider": provider,
                     "voice_id": m.voice_id,
-                    "confirmed_by_user": bool(m.voice_id and not m.needs_review) or bool(
-                        profile and profile.confirmed_by_user),
+                    "confirmed_by_user": bool(profile and profile.confirmed_by_user),
                     "gender": profile.gender if profile else "unknown",
                     "settings": m.voice_settings or {},
                 }
@@ -139,11 +138,13 @@ class DubStage:
                     raise RouteConfigurationError("TTS default is not configured.")
                 route = await build_route(catalog_db, "TTS")
                 rows = (await catalog_db.scalars(select(VoicePoolEntry).where(
-                    VoicePoolEntry.enabled.is_(True)))).all()
+                    VoicePoolEntry.provider.in_(("edge_tts", "elevenlabs", "google_cloud_tts"))))).all()
                 pool = [{"provider": r.provider, "voice_id": r.voice_id,
-                         "language": r.language, "gender": r.gender} for r in rows]
+                         "language": r.language, "gender": r.gender} for r in rows if r.enabled]
+                disabled = {(r.provider, r.voice_id) for r in rows if not r.enabled}
 
         audio_info = []
+        edge_verified: dict[str, dict[str, str | None] | None] = {}
         segments = ctx.translated_segments or ctx.source_segments or []
         ctx.audio_segments_info = []
         for index, seg in enumerate(segments, start=1):
@@ -159,7 +160,30 @@ class DubStage:
                            "voice_id": spk_info.get("voice_id") or ctx.tts_voice_id,
                            "confirmed_by_user": bool(spk_info.get("confirmed_by_user")),
                            "gender": spk_info.get("gender") or seg.get("gender")}
-                segment_route, voices = select_segment_route(route, segment, pool, ctx.target_language)
+                requested_edge = (segment["voice_id"] if segment["voice_provider"] == "edge_tts"
+                                  else ctx.tts_voice_id)
+                segment_pool = pool
+                if (requested_edge and any(t.provider_id == "edge_tts" for t in route.targets)
+                        and (not segment["confirmed_by_user"] or segment["voice_provider"] == "edge_tts")
+                        and ("edge_tts", requested_edge) not in disabled
+                        and not any(v["provider"] == "edge_tts" and v["voice_id"] == requested_edge
+                                    for v in pool)):
+                    if requested_edge not in edge_verified:
+                        edge_provider = registry.get_audio("edge_tts")
+                        try:
+                            listed = (await asyncio.wait_for(edge_provider.get_voices(), timeout=5.0)
+                                      if edge_provider else [])
+                        except Exception:
+                            listed = []
+                        verified = next((voice for voice in listed if voice.id == requested_edge), None)
+                        edge_verified[requested_edge] = (
+                            {"provider": "edge_tts", "voice_id": verified.id,
+                             "language": verified.language, "gender": verified.gender}
+                            if verified else None
+                        )
+                    if edge_verified[requested_edge]:
+                        segment_pool = pool + [edge_verified[requested_edge]]
+                segment_route, voices = select_segment_route(route, segment, segment_pool, ctx.target_language)
                 if out_clip.is_file() and out_clip.stat().st_size and meta_path.is_file():
                     try:
                         cached = json.loads(meta_path.read_text(encoding="utf-8"))

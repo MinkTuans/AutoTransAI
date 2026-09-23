@@ -15,7 +15,7 @@ from app.models import APIKey, CatalogModel, Provider
 from app.models.project import Project
 from app.models.settings import AIFunctionConfig
 from app.models.workflow_engine import CharacterVoiceProfile, SpeakerVoiceMapping, VoicePoolEntry
-from app.providers.base import GenerationResult
+from app.providers.base import GenerationResult, VoiceInfo
 from app.services.credential_service import CredentialService
 from app.services.ai_routing import RouteConfigurationError
 from app.workflow.stages.dub_stage import DubStage
@@ -201,7 +201,12 @@ async def test_unified_edge_default_is_keyless_and_preserves_saved_voice(catalog
         (await db.get(AIFunctionConfig, "tts")).model_id = edge_id
         (await db.get(AIFunctionConfig, "tts")).primary_provider_id = "edge_tts"
         db.add(SpeakerVoiceMapping(id="edge-map", project_id="project-a", speaker_id="Speaker 1",
-                                   voice_provider="edge", voice_id="vi-VN-HoaiMyNeural"))
+                                   character_id="edge-character", voice_provider="edge",
+                                   voice_id="vi-VN-HoaiMyNeural"))
+        db.add(CharacterVoiceProfile(id="edge-profile", project_id="project-a",
+                                     character_id="edge-character", name="Speaker", gender="female",
+                                     voice_provider="edge", voice_id="vi-VN-HoaiMyNeural",
+                                     confirmed_by_user=True))
     calls = []
     class Edge:
         async def generate_audio(self, text, voice_id, output_path, *, route_target, api_key):
@@ -351,3 +356,144 @@ async def test_unmapped_speaker_can_fallback_to_keyless_edge_without_reusing_ele
                      ("elevenlabs", "voice-a", "synthetic-secret"),
                      ("edge_tts", "vi-VN-HoaiMyNeural", None)]
     assert ctx.audio_segments_info[0]["voice_provider"] == "edge_tts"
+
+
+@pytest.mark.asyncio
+async def test_high_confidence_auto_mapping_can_fallback_but_confirmed_profile_stays_pinned(catalog, monkeypatch):
+    import app.workflow.stages.dub_stage as dub_module
+
+    sessions, path, *_ = catalog
+    async with sessions.begin() as db:
+        db.add(SpeakerVoiceMapping(id="auto-map", project_id="project-a", speaker_id="Speaker 1",
+                                   character_id="character-a", voice_provider="elevenlabs",
+                                   voice_id="voice-a", confidence=0.99, needs_review=False))
+    calls = []
+    class Eleven:
+        async def generate_audio(self, text, voice_id, output_path, *, route_target, api_key):
+            calls.append((route_target.provider_id, voice_id))
+            return GenerationResult(success=False, error_code="HTTP_401")
+    class Edge:
+        async def generate_audio(self, text, voice_id, output_path, *, route_target, api_key):
+            calls.append((route_target.provider_id, voice_id))
+            output_path.write_bytes(b"edge")
+            return GenerationResult(success=True, file_path=output_path)
+    monkeypatch.setattr(dub_module, "get_registry", lambda: Registry({"elevenlabs": Eleven(), "edge_tts": Edge()}))
+    monkeypatch.setattr(dub_module, "probe_duration_async", _duration)
+    stage = DubStage()
+    auto = context(path / "auto.mp4")
+    async with sessions() as db:
+        await stage.execute_step("speaker_to_voice_mapping", auto, db)
+    assert auto.speaker_voice_map["Speaker 1"]["confirmed_by_user"] is False
+    await stage.execute_step("tts_generation", auto, None)
+    assert calls[-1] == ("edge_tts", "vi-VN-HoaiMyNeural")
+
+    async with sessions.begin() as db:
+        db.add(CharacterVoiceProfile(id="confirmed", project_id="project-a", character_id="character-a",
+                                     name="Speaker", gender="female", voice_provider="elevenlabs",
+                                     voice_id="voice-a", confirmed_by_user=True))
+    confirmed = context(path / "confirmed.mp4")
+    async with sessions() as db:
+        await stage.execute_step("speaker_to_voice_mapping", confirmed, db)
+    assert confirmed.speaker_voice_map["Speaker 1"]["confirmed_by_user"] is True
+    prior = len(calls)
+    with pytest.raises(Exception, match="auth"):
+        await stage.execute_step("tts_generation", confirmed, None)
+    assert all(provider == "elevenlabs" for provider, _ in calls[prior:])
+
+
+@pytest.mark.asyncio
+async def test_clean_canonical_edge_catalog_validates_default_voice_without_pool_seed(catalog, monkeypatch):
+    import app.workflow.stages.dub_stage as dub_module
+
+    sessions, path, _, _, edge_id = catalog
+    async with sessions.begin() as db:
+        config = await db.get(AIFunctionConfig, "tts")
+        config.model_id = edge_id
+        config.primary_provider_id = "edge_tts"
+        await db.delete(await db.get(VoicePoolEntry, "voice-edge"))
+    calls = []
+    class Edge:
+        async def get_voices(self):
+            calls.append("lookup")
+            return [VoiceInfo(id="vi-VN-HoaiMyNeural", name="Hoai My", language="vi-VN", gender="female")]
+        async def generate_audio(self, text, voice_id, output_path, *, route_target, api_key):
+            calls.append((voice_id, api_key))
+            output_path.write_bytes(b"edge")
+            return GenerationResult(success=True, file_path=output_path)
+    monkeypatch.setattr(dub_module, "get_registry", lambda: Registry({"edge_tts": Edge()}))
+    monkeypatch.setattr(dub_module, "probe_duration_async", _duration)
+    ctx = context(path / "fresh-edge.mp4")
+    ctx.speaker_voice_map = {"Speaker 1": {"provider": "edge_tts", "voice_id": "vi-VN-HoaiMyNeural",
+                                           "confirmed_by_user": True}}
+    await DubStage().execute_step("tts_generation", ctx, None)
+    assert calls == ["lookup", ("vi-VN-HoaiMyNeural", None)]
+    assert ctx.audio_segments_info[0]["voice_provider"] == "edge_tts"
+
+
+@pytest.mark.asyncio
+async def test_explicitly_disabled_edge_voice_cannot_be_revalidated(catalog, monkeypatch):
+    import app.workflow.stages.dub_stage as dub_module
+
+    sessions, path, _, _, edge_id = catalog
+    async with sessions.begin() as db:
+        config = await db.get(AIFunctionConfig, "tts")
+        config.model_id = edge_id
+        config.primary_provider_id = "edge_tts"
+        (await db.get(VoicePoolEntry, "voice-edge")).enabled = False
+    class Edge:
+        async def get_voices(self):
+            raise AssertionError("Disabled voice must not be looked up")
+    monkeypatch.setattr(dub_module, "get_registry", lambda: Registry({"edge_tts": Edge()}))
+    ctx = context(path / "disabled-edge.mp4")
+    ctx.speaker_voice_map = {"Speaker 1": {"provider": "edge_tts", "voice_id": "vi-VN-HoaiMyNeural",
+                                           "confirmed_by_user": True}}
+    with pytest.raises(RouteConfigurationError, match="compatible TTS voice"):
+        await DubStage().execute_step("tts_generation", ctx, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language,gender", [("en-US", "female"), ("vi-VN", "male")])
+async def test_edge_voice_lookup_rejects_wrong_language_or_gender(catalog, monkeypatch, language, gender):
+    import app.workflow.stages.dub_stage as dub_module
+
+    sessions, path, _, _, edge_id = catalog
+    async with sessions.begin() as db:
+        config = await db.get(AIFunctionConfig, "tts")
+        config.model_id = edge_id
+        config.primary_provider_id = "edge_tts"
+        await db.delete(await db.get(VoicePoolEntry, "voice-edge"))
+    class Edge:
+        async def get_voices(self):
+            return [VoiceInfo(id="vi-VN-HoaiMyNeural", name="Hoai My", language=language, gender=gender)]
+        async def generate_audio(self, *args, **kwargs):
+            raise AssertionError("Ineligible voice must not synthesize")
+    monkeypatch.setattr(dub_module, "get_registry", lambda: Registry({"edge_tts": Edge()}))
+    ctx = context(path / f"wrong-{language}-{gender}.mp4")
+    ctx.speaker_voice_map = {"Speaker 1": {"provider": "edge_tts", "voice_id": "vi-VN-HoaiMyNeural",
+                                           "confirmed_by_user": True, "gender": "female"}}
+    with pytest.raises(RouteConfigurationError, match="compatible TTS voice"):
+        await DubStage().execute_step("tts_generation", ctx, None)
+
+
+@pytest.mark.asyncio
+async def test_unlisted_edge_voice_lookup_has_finite_timeout(catalog, monkeypatch):
+    import app.workflow.stages.dub_stage as dub_module
+
+    sessions, path, _, _, edge_id = catalog
+    async with sessions.begin() as db:
+        config = await db.get(AIFunctionConfig, "tts")
+        config.model_id = edge_id
+        config.primary_provider_id = "edge_tts"
+        await db.delete(await db.get(VoicePoolEntry, "voice-edge"))
+    class Edge:
+        async def get_voices(self):
+            await asyncio.sleep(60)
+            return []
+    monkeypatch.setattr(dub_module, "get_registry", lambda: Registry({"edge_tts": Edge()}))
+    ctx = context(path / "hung-edge.mp4")
+    ctx.speaker_voice_map = {"Speaker 1": {"provider": "edge_tts", "voice_id": "vi-VN-HoaiMyNeural",
+                                           "confirmed_by_user": True}}
+    start = asyncio.get_running_loop().time()
+    with pytest.raises(RouteConfigurationError, match="compatible TTS voice"):
+        await DubStage().execute_step("tts_generation", ctx, None)
+    assert asyncio.get_running_loop().time() - start < 7
