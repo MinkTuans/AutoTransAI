@@ -5,10 +5,8 @@ import './FunctionRouting.css';
 
 const PAGE_SIZE = 25;
 
-function canSelect(model, capability) {
-  return model.status === 'active' && model.enabled
-    && !model.capability?.incompatible_capabilities?.includes(capability)
-    && (model.access_scope === 'keyless' || model.available_key_count > 0);
+function canSelect(model) {
+  return model.selectable === true;
 }
 
 function accessLabel(model) {
@@ -116,7 +114,7 @@ function ModelPicker({ selectedFunction, onClose, onChoose, saving, saveError })
                   <button type="button" className="btn btn-secondary" aria-label={`Details for ${label}`}
                     onClick={() => setDetailId(model.id)}>Details</button>
                   <button type="button" className="btn btn-primary" aria-label={`Select ${label}`}
-                    disabled={saving || !canSelect(model, selectedFunction.capability)}
+                    disabled={saving || !canSelect(model)}
                     onClick={() => onChoose(model)}>Select</button>
                 </td>
               </tr>;
@@ -157,7 +155,7 @@ export default function FunctionRouting() {
   }, [retry]);
 
   const choose = async model => {
-    if (!selectedFunction || !canSelect(model, selectedFunction.capability)) return;
+    if (!selectedFunction || !canSelect(model)) return;
     setSaving(true);
     setSaveError('');
     try {

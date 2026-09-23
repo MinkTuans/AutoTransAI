@@ -1,5 +1,6 @@
 """Canonical catalog GET contracts against disposable SQLite and synthetic credentials."""
 from datetime import datetime
+import socket
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -13,7 +14,9 @@ from app.models.settings import AIFunctionConfig
 
 
 @pytest.fixture
-async def catalog_api(tmp_path):
+async def catalog_api(tmp_path, monkeypatch):
+    monkeypatch.setattr(socket.socket, "connect", lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        AssertionError("Unexpected outbound connection")))
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'catalog.db'}")
     event.listen(engine.sync_engine, "connect", lambda conn, _: conn.execute("PRAGMA foreign_keys=ON"))
     async with engine.begin() as conn:
@@ -63,6 +66,10 @@ async def test_dynamic_provider_counts_and_distinct_enabled_key_access(catalog_a
     public_row = next(m for m in models if m["id"] == "model-public")
     assert public_row["available_key_count"] == 1
     assert public_row["access_scope"] == "catalog_unverified"
+    stt_rows = {m["id"]: m for m in (await client.get(
+        "/api/ai/models", params={"capability": "STT"})).json()["data"]["items"]}
+    assert stt_rows["model-one"]["capability"]["status"] == "FULL_UNKNOWN"
+    assert stt_rows["model-one"]["selectable"] is True
     assert "secret" not in str(providers) + str(models)
     assert "fingerprint" not in str(providers) + str(models)
 
@@ -118,6 +125,48 @@ async def test_keyless_system_provider_is_ready_without_credentials(catalog_api)
     model = (await client.get("/api/ai/models/edge")).json()["data"]
     assert provider["status"] == "ready"
     assert model["access_scope"] == "keyless"
+
+
+async def test_capability_filtered_keyless_eligibility_matches_function_write(catalog_api):
+    client, sessions = catalog_api
+    async with sessions.begin() as db:
+        db.add_all([Provider(id="pollinations", name="Pollinations", provider_type="image"),
+                    Provider(id="local_image", name="Local Image", provider_type="image"),
+                    Provider(id="edge_tts", name="Edge", provider_type="audio")])
+        await db.flush()
+        db.add_all([
+            CatalogModel(id="pollinations-model", provider_id="pollinations", remote_model_id="image-default",
+                         source="system", capability_status="FULL_UNKNOWN"),
+            CatalogModel(id="local-model", provider_id="local_image", remote_model_id="local-default",
+                         source="system", capability_status="FULL_UNKNOWN"),
+            CatalogModel(id="edge-model", provider_id="edge_tts", remote_model_id="edge-tts",
+                         source="system", capability_status="FULL_UNKNOWN"),
+        ])
+
+    stt = {m["id"]: m for m in (await client.get("/api/ai/models", params={"capability": "STT"})).json()["data"]["items"]}
+    for model_id in ("pollinations-model", "local-model"):
+        assert stt[model_id]["capability"]["status"] == "FULL_UNKNOWN"
+        assert stt[model_id]["selectable"] is False
+        assert stt[model_id]["access_scope"] == "none"
+    assert "edge-model" not in stt  # Known TTS-only evidence is filtered out.
+
+    image = {m["id"]: m for m in (await client.get("/api/ai/models", params={"capability": "IMAGE_GENERATION"})).json()["data"]["items"]}
+    for model_id in ("pollinations-model", "local-model"):
+        assert image[model_id]["selectable"] is True
+        assert image[model_id]["access_scope"] == "keyless"
+    assert "edge-model" not in image
+
+    tts = {m["id"]: m for m in (await client.get("/api/ai/models", params={"capability": "TTS"})).json()["data"]["items"]}
+    assert tts["edge-model"]["selectable"] is True
+    assert tts["edge-model"]["access_scope"] == "keyless"
+    for model_id in ("pollinations-model", "local-model"):
+        assert tts[model_id]["selectable"] is False
+
+    unfiltered = {m["id"]: m for m in (await client.get("/api/ai/models")).json()["data"]["items"]}
+    assert unfiltered["pollinations-model"]["access_scope"] == "keyless"
+    assert unfiltered["pollinations-model"]["selectable"] is None
+    detail = (await client.get("/api/ai/models/pollinations-model")).json()["data"]
+    assert detail["access_scope"] == "keyless" and detail["selectable"] is None
 
 
 async def test_unexpected_read_error_does_not_expose_credential_text(catalog_api, caplog):

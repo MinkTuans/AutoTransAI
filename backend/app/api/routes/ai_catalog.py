@@ -79,6 +79,7 @@ class ModelView(BaseModel):
     access_scope: str
     capability: CapabilityView
     default_for: list[str]
+    selectable: bool | None = None
 
 
 class ModelDetail(ModelView):
@@ -164,25 +165,30 @@ async def _inventory(db: AsyncSession):
     return providers, models, keys, edges, configs
 
 
-def _model_view(model, providers, context) -> ModelView:
+def _model_view(model, providers, context, capability: str | None = None) -> ModelView:
     key_counts, access, seen, defaults = context
     provider = providers[model.provider_id]
     active = provider.enabled and model.enabled and model.retired_at is None
     public = model.provider_id in _PUBLIC_CATALOG_PROVIDERS
-    keyless = any(_keyless_allowed(model, capability) for capability in CAPABILITIES)
+    keyless = (_keyless_allowed(model, capability) if capability else
+               any(_keyless_allowed(model, candidate) for candidate in CAPABILITIES))
     if public:
         count = key_counts.get(model.provider_id, 0)
     else:
         count = len(access.get(model.id, ()))
+    available_count = count if active else 0
+    summary = catalog_capability_summary(model)
     return ModelView(
         id=model.id, provider_id=model.provider_id, provider_name=provider.name,
         remote_model_id=model.remote_model_id, display_name=model.display_name,
         source=model.source, status="retired" if model.retired_at else "disabled" if not active else "active",
         enabled=model.enabled, retired_at=model.retired_at, last_seen=seen.get(model.id),
-        available_key_count=count if active else 0,
+        available_key_count=available_count,
         access_scope="keyless" if keyless else "catalog_unverified" if public else "listing_unverified" if count else "none",
-        capability=CapabilityView(**catalog_capability_summary(model)),
+        capability=CapabilityView(**summary),
         default_for=sorted(defaults.get((model.id, model.provider_id), ())),
+        selectable=(active and capability not in summary["incompatible_capabilities"]
+                    and (keyless or available_count > 0)) if capability else None,
     )
 
 
@@ -255,7 +261,7 @@ async def list_models(provider_id: str | None = None, capability: str | None = N
                               .where(KeyModelAccess.model_id.in_(ids)))).all()
     configs = (await db.scalars(select(AIFunctionConfig).where(AIFunctionConfig.model_id.in_(ids)))).all()
     context = _view_context(keys, edges, configs)
-    return Envelope(data=ModelPage(items=[_model_view(model, providers, context) for model in selected],
+    return Envelope(data=ModelPage(items=[_model_view(model, providers, context, capability) for model in selected],
                                    page=page, limit=limit, total=total))
 
 

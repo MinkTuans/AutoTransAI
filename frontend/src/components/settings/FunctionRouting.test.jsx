@@ -24,7 +24,8 @@ const model = {
   id: 'new-model', provider_id: 'openai', provider_name: 'OpenAI',
   remote_model_id: 'speech-v2', display_name: 'Speech V2', source: 'discovered',
   status: 'active', enabled: true, retired_at: null, last_seen: '2026-09-23T10:00:00',
-  available_key_count: 1, access_scope: 'listing_unverified', default_for: ['translation'],
+  available_key_count: 1, access_scope: 'listing_unverified', selectable: true,
+  default_for: ['translation'],
   capability: { status: 'KNOWN', capabilities: ['STT'], incompatible_capabilities: [], unknown_capabilities: [] },
 };
 const page = (items, number = 1, total = items.length) => ({ success: true, data: {
@@ -87,29 +88,51 @@ describe('FunctionRouting', () => {
       q: undefined, page: 2, limit: 25 });
   });
 
-  it('blocks inactive, incompatible, and no-key entries but allows unknown and public candidates', async () => {
+  it('uses capability-specific eligibility for inactive, incompatible, no-key and keyless entries', async () => {
     aiApi.listModels.mockResolvedValue(page([
-      { ...model, id: 'retired', display_name: 'Retired', status: 'retired' },
-      { ...model, id: 'disabled', display_name: 'Disabled', status: 'disabled' },
+      { ...model, id: 'retired', display_name: 'Retired', status: 'retired', selectable: false },
+      { ...model, id: 'disabled', display_name: 'Disabled', status: 'disabled', selectable: false },
       { ...model, id: 'incompatible', display_name: 'Incompatible', capability: {
-        status: 'KNOWN', capabilities: [], incompatible_capabilities: ['STT'], unknown_capabilities: [] } },
-      { ...model, id: 'no-key', display_name: 'No Key', available_key_count: 0, access_scope: 'none' },
+        status: 'KNOWN', capabilities: [], incompatible_capabilities: ['STT'], unknown_capabilities: [] }, selectable: false },
+      { ...model, id: 'no-key', display_name: 'No Key', available_key_count: 0,
+        access_scope: 'none', selectable: false },
       { ...model, id: 'unknown', display_name: 'Unknown', capability: {
         status: 'FULL_UNKNOWN', capabilities: [], incompatible_capabilities: [], unknown_capabilities: ['STT'] } },
       { ...model, id: 'public', display_name: 'Public Candidate', access_scope: 'catalog_unverified' },
-      { ...model, id: 'keyless', display_name: 'Keyless Candidate', access_scope: 'keyless', available_key_count: 0 },
+      { ...model, id: 'keyless', display_name: 'Keyless Candidate', access_scope: 'keyless',
+        available_key_count: 0, selectable: false, capability: {
+          status: 'FULL_UNKNOWN', capabilities: [], incompatible_capabilities: [], unknown_capabilities: ['STT'] } },
     ]));
     render(<FunctionRouting />);
     fireEvent.click(await screen.findByRole('button', { name: 'Choose model for Speech to Text' }));
     const picker = await screen.findByRole('dialog');
-    for (const name of ['Retired', 'Disabled', 'Incompatible', 'No Key']) {
+    for (const name of ['Retired', 'Disabled', 'Incompatible', 'No Key', 'Keyless Candidate']) {
       expect(within(picker).getByRole('button', { name: `Select ${name}` }).disabled).toBe(true);
     }
-    for (const name of ['Unknown', 'Public Candidate', 'Keyless Candidate']) {
+    for (const name of ['Unknown', 'Public Candidate']) {
       expect(within(picker).getByRole('button', { name: `Select ${name}` }).disabled).toBe(false);
     }
-    expect(within(picker).getByText('Capabilities unknown')).toBeTruthy();
+    expect(within(picker).getAllByText('Capabilities unknown').length).toBeGreaterThan(0);
     expect(within(picker).getByText(/entitlement unverified/i)).toBeTruthy();
+  });
+
+  it('allows backend-eligible keyless TTS and image candidates', async () => {
+    aiApi.listFunctions.mockResolvedValue({ success: true, data: [
+      { ...speech, function_id: 'tts', function_name: 'Speech Output', capability: 'TTS' },
+      { ...speech, function_id: 'image_generation', function_name: 'Image', capability: 'IMAGE_GENERATION' },
+    ] });
+    aiApi.listModels.mockImplementation(async ({ capability }) => page([{ ...model,
+      id: capability === 'TTS' ? 'edge' : 'pollinations',
+      display_name: capability === 'TTS' ? 'Edge Voice' : 'Pollinations Image',
+      access_scope: 'keyless', available_key_count: 0, selectable: true,
+      capability: { status: 'FULL_UNKNOWN', capabilities: [], incompatible_capabilities: [], unknown_capabilities: [capability] },
+    }]));
+    render(<FunctionRouting />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose model for Speech Output' }));
+    expect((await screen.findByRole('button', { name: 'Select Edge Voice' })).disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Close model picker' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Choose model for Image' }));
+    expect((await screen.findByRole('button', { name: 'Select Pollinations Image' })).disabled).toBe(false);
   });
 
   it('sets exact catalog ID and updates the visible default only after successful PUT', async () => {
