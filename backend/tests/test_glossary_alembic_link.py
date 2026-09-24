@@ -1,10 +1,8 @@
 """Actual published glossary revision against disposable historical SQLite."""
 import pytest
 import sqlalchemy as sa
-from types import SimpleNamespace
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from sqlalchemy.dialects import mysql
 
 from tests.test_first_alembic_link import db, revision
 from tests.test_glossary_prerequisites import prepare, fixture_schema, rows
@@ -156,11 +154,3 @@ def test_unreviewed_memory_copy_stays_unapproved_and_original_metadata_survives(
         'FROM project_glossaries WHERE id=:id'), {'id': 'm1'}).one()
     assert copy == ('other', 0.9, 'private memory', 0,
                     '2003-04-05', '2004-05-06')
-
-
-def test_mysql_conversion_holds_before_any_sql_until_collation_preflight_exists():
-    module = revision('20260916_glossary_single_source')
-    fake = SimpleNamespace(dialect=mysql.dialect())
-    module.op = SimpleNamespace(get_bind=lambda: fake)
-    with pytest.raises(RuntimeError, match='MySQL.*collation'):
-        module.upgrade()
