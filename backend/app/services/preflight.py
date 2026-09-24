@@ -341,26 +341,102 @@ async def run_video_translator_preflight(
     # 7. LLM & STT AI Provider Routing Check (CRITICAL)
     registry = get_registry()
     from app.providers.ai_router import AIRouter
-    resolved_stt = await AIRouter.resolve_stt_model(db)
-    active_stt_model = resolved_stt["model_id"]
-    stt_source = resolved_stt["source"]
+    from app.core.pipeline_errors import PipelineError
+    from app.models import APIKey, CatalogModel
+    from app.models.settings import AIFunctionConfig
 
-    llm_provider = registry.get_llm(llm_provider_id)
+    active_stt_model = "—"
+    stt_source = "Settings Database"
     llm_ok = False
-    if llm_provider:
+    stt_provider_id = llm_provider_id
+    config = await db.get(AIFunctionConfig, "stt") if db is not None else None
+    translation_config = await db.get(AIFunctionConfig, "translation") if db is not None else None
+    stt_model = (await db.get(CatalogModel, config.model_id)
+                 if config is not None and config.model_id else None)
+    translation_model = (await db.get(CatalogModel, translation_config.model_id)
+                         if translation_config is not None and translation_config.model_id else None)
+    catalog_active = False
+    key_active = False
+    if db is not None:
+        catalog_active = await db.scalar(select(CatalogModel.id).where(
+            CatalogModel.source.not_in(("system", "legacy_import")),
+            CatalogModel.provider_id.in_(("gemini", "openai")),
+        ).limit(1)) is not None
+        key_active = await db.scalar(select(APIKey.id).where(
+            APIKey.provider_id.in_(("gemini", "openai")),
+        ).limit(1)) is not None
+    canonical_stt = (catalog_active or key_active or
+                     stt_model is not None and stt_model.source != "legacy_import")
+    canonical_translation = (catalog_active or key_active or
+                             translation_model is not None and translation_model.source != "legacy_import")
+    if canonical_stt:
+        stt_source = "Canonical catalog"
         try:
-            llm_ok = await llm_provider.validate_configuration()
-        except Exception:
-            llm_ok = False
+            if config is not None and config.model_id:
+                route = await build_route(db, "STT")
+                target = next((item for item in route.targets
+                               if item.provider_id in ("gemini", "openai")
+                               and registry.get_llm(item.provider_id) is not None), None)
+                if target is not None:
+                    stt_provider_id = target.provider_id
+                    active_stt_model = target.remote_model_id
+                    llm_ok = True
+        except RouteConfigurationError:
+            pass
+    else:
+        try:
+            resolved_stt = await AIRouter.resolve_stt_model(db)
+            active_stt_model = resolved_stt["model_id"]
+            stt_source = resolved_stt["source"]
+            llm_provider = registry.get_llm(llm_provider_id)
+            if llm_provider:
+                try:
+                    llm_ok = await llm_provider.validate_configuration()
+                except Exception:
+                    pass
+        except PipelineError:
+            pass
+    stt_error = None
+    if not llm_ok:
+        stt_error = ("Không có route STT khả dụng. Vui lòng kiểm tra model và API key trong Cài đặt AI."
+                     if canonical_stt else
+                     f"Không thể kết nối LLM Provider '{llm_provider_id}' với model '{active_stt_model}'. "
+                     "Vui lòng kiểm tra API Key.")
     checks.append(PreflightCheck(
         name="llm_provider_health",
-        description=f"STT/LLM Provider '{llm_provider_id.upper()}' (Model: {active_stt_model} [{stt_source}]) sẵn sàng",
+        description=f"STT/LLM Provider '{stt_provider_id.upper()}' (Model: {active_stt_model} "
+                    f"[{stt_source}]) {'sẵn sàng' if llm_ok else 'không khả dụng'}",
         passed=llm_ok,
         required=True,
         category="critical",
         error_code="LLM_PROVIDER_FAILED" if not llm_ok else None,
-        error_message=f"Không thể kết nối LLM Provider '{llm_provider_id}' với model '{active_stt_model}'. Vui lòng kiểm tra API Key." if not llm_ok else None,
+        error_message=stt_error,
     ))
+
+    if canonical_translation:
+        translation_ok = False
+        translation_model_id = "—"
+        try:
+            if translation_config is not None and translation_config.model_id:
+                route = await build_route(db, "TRANSLATION")
+                target = next((item for item in route.targets
+                               if registry.get_llm(item.provider_id) is not None), None)
+                if target is not None:
+                    translation_ok = True
+                    translation_model_id = target.remote_model_id
+        except RouteConfigurationError:
+            pass
+        checks.append(PreflightCheck(
+            name="translation_route_available",
+            description=f"Translation route (Model: {translation_model_id}) "
+                        f"{'đã cấu hình' if translation_ok else 'không khả dụng'}",
+            passed=translation_ok,
+            required=True,
+            category="critical",
+            error_code=None if translation_ok else "TRANSLATION_ROUTE_UNAVAILABLE",
+            error_message=None if translation_ok else
+                          "Không có route Translation khả dụng. Vui lòng kiểm tra model và API key trong Cài đặt AI.",
+        ))
 
     # 8. TTS Audio Provider Check (CRITICAL)
     audio_provider = registry.get_audio(audio_provider_id)

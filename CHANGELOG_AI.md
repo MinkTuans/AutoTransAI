@@ -1,3 +1,6 @@
+- **Unified Pre-flight canonical STT and Translation routing (2026-09-24)**:
+  - Unified workflow Pre-flight now checks the selected canonical STT and Translation routes when the Gemini/OpenAI catalog is active. It uses catalog model IDs and eligible stored key access without a separate `.env` key probe. An unavailable or missing canonical default becomes a critical Pre-flight result instead of an HTTP 500 or a fallback to archival `ai_models`. Legacy-only installations retain their existing resolver and provider check. Disposable SQLite endpoint regressions cover ready routes, disabled keys and missing defaults; no live provider or configured database was used.
+
 - **Fresh database Function page (2026-09-24)**:
   - Canonical `GET /api/ai/functions` now shows the six built-in Function identities as `unconfigured` when no row has been saved. The read creates no database rows or model defaults. Choosing a verified catalog model through canonical PUT creates only that Function row; existing choices remain intact and unrelated Functions stay visible. Disposable SQLite API tests and a disposable MySQL 8.4 startup, GET, and keyless TTS PUT check passed; no configured database or live provider was used.
 
