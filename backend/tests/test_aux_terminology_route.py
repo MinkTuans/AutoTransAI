@@ -52,7 +52,7 @@ async def add_model(db, path, provider, remote, secret, *, metadata=None):
     return model
 
 
-def term_response(source="Alice", translated="An"): 
+def term_response(source="Alice", translated="An"):
     return json.dumps({"terms": [{"source_term": source, "suggested_term": translated,
                                     "term_type": "character", "confidence": 0.9}]})
 

@@ -121,4 +121,3 @@
 - [ ] Remove legacy writers and hardcoded remote seeds only after all consumers use the new catalog.
 - [ ] Update project knowledge base and AI changelog.
 - [ ] Review the full diff and commit.
-

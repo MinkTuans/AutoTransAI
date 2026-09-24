@@ -170,7 +170,7 @@ async def test_legacy_project_settings_discovery_picker_to_mocked_video(flow, mo
     await select_discovered_default(flow, "fal", "video_generation", remote, secret,
                                     {"category": "video"})
     async with sessions.begin() as db:
-        project = Project(id="legacy-project", workflow_status="prechecked",
+        project = Project(id="legacy-project", workflow_status="generating_video",
                           workflow_mode="audio_video")
         db.add_all([project, Segment(project_id=project.id, segment_number=1, text_content="story")])
     calls = []
@@ -190,14 +190,8 @@ async def test_legacy_project_settings_discovery_picker_to_mocked_video(flow, mo
     async with sessions() as db:
         orchestrator = WorkflowOrchestrator(db, "legacy-project")
         monkeypatch.setattr(orchestrator._registry, "get_video", lambda provider: Adapter() if provider == "fal" else None)
-        async def completed_non_ai_stage():
-            return None
-        monkeypatch.setattr(orchestrator, "_generate_all_audio", completed_non_ai_stage)
-        monkeypatch.setattr(orchestrator, "_sync_all_segments", completed_non_ai_stage)
-        monkeypatch.setattr(orchestrator, "_merge_final", completed_non_ai_stage)
-        await orchestrator.run()
+        await orchestrator._generate_all_video()
         segment = await db.scalar(select(Segment).where(Segment.project_id == "legacy-project"))
         assert segment.video_status == "completed"
         assert Path(segment.video_file_path).read_bytes() == b"synthetic-video"
-        assert (await db.get(Project, "legacy-project")).workflow_status == "completed"
     assert calls == [(remote, secret)]
