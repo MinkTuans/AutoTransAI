@@ -1,5 +1,8 @@
 """Persist refresh runs, concurrency revision, and visible invalid-default state."""
+from pathlib import Path
+
 from alembic import op
+from alembic.util import load_python_file
 import sqlalchemy as sa
 
 revision = "20260923_catalog_refresh"
@@ -9,6 +12,9 @@ depends_on = None
 
 
 def upgrade():
+    if load_python_file(str(Path(__file__).resolve().parents[1]),
+                        'catalog_prerequisites.py').is_startup_final(op.get_bind()):
+        return
     op.add_column("providers", sa.Column("catalog_revision", sa.Integer(), nullable=False, server_default="0"))
     op.add_column("ai_function_configs", sa.Column("configuration_error", sa.String(50), nullable=True))
     op.create_table("ai_catalog_refresh_runs",

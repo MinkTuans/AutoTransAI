@@ -16,8 +16,10 @@ depends_on = None
 
 
 def upgrade() -> None:
-    load_python_file(str(Path(__file__).resolve().parents[1]), 'catalog_prerequisites.py').ensure(
-        op.get_bind())
+    helper = load_python_file(str(Path(__file__).resolve().parents[1]), 'catalog_prerequisites.py')
+    if helper.is_startup_final(op.get_bind()):
+        return
+    helper.ensure(op.get_bind())
     op.create_table(
         "api_keys",
         sa.Column("id", sa.String(36), primary_key=True),

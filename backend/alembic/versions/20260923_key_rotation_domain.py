@@ -1,5 +1,8 @@
 """Add safe canonical key rotation metadata and merge the two catalog heads."""
+from pathlib import Path
+
 from alembic import op
+from alembic.util import load_python_file
 import sqlalchemy as sa
 
 revision = "20260923_key_rotation_domain"
@@ -9,6 +12,9 @@ depends_on = None
 
 
 def upgrade():
+    if load_python_file(str(Path(__file__).resolve().parents[1]),
+                        'catalog_prerequisites.py').is_startup_final(op.get_bind()):
+        return
     op.add_column("api_keys", sa.Column("priority", sa.Integer(), nullable=False, server_default="100"))
     op.add_column("api_keys", sa.Column("runtime_status", sa.String(20), nullable=False, server_default="ready"))
     op.add_column("api_keys", sa.Column("cooldown_until", sa.DateTime(), nullable=True))

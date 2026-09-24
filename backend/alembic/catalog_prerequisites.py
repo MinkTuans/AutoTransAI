@@ -1,4 +1,5 @@
 """Frozen pre-catalog provider and legacy settings tables from 08ea050^."""
+import hashlib
 import re
 
 from alembic import op
@@ -7,6 +8,78 @@ from sqlalchemy.dialects.mysql.reflection import MySQLTableDefinitionParser
 
 
 _CANONICAL = {'api_keys', 'ai_catalog_models', 'ai_key_model_access'}
+
+# Exact SQLite DDL emitted by the startup ORM at this plan's cutover. Keeping
+# these fingerprints here makes no-stamp startup adoption independent of mutable
+# application models. Any schema drift fails closed before a catalog revision
+# tries to create, alter, or overwrite an existing canonical table.
+_STARTUP_SQLITE_DDL = {
+    'providers': '1c45aee6e03ab458958aebc63ba490c48a58c4da376346c6ff2487bd47069a78',
+    'ai_function_configs': 'd9833f7da4b7dd15a4a7ee1cf19d06a6a97160a8d39f2deabf3ae03518fc1fb9',
+    'ai_models': 'e068ddf1e91c1fda6bd74f4aa5915d7282f5e35b692634e07852a9f1c98538a0',
+    'api_keys': '86558a12db845fa36b7406f2f8d8e9bf952939079b38fa20d74f99c60a8d98e5',
+    'ai_catalog_models': '85a9b8cfc423e74b49afae2e42cee6b9cd93b5490211c565501fb5b608e2f71b',
+    'ai_key_model_access': '8266eb1e8603a2bdfc4c2109c8064604db5f96eeb10431f235ea6d32af37230b',
+    'ai_catalog_refresh_runs': '349b26065ec88ccbc0f8c54490abe33241537ea4b63714834d3a0996c1520191',
+}
+_STARTUP_SQLITE_INDEX_DDL = {
+    'ix_api_keys_provider_id': '4973f02052037d82256c941ede23b30730b1567539c2c6beb7cee068a46e332c',
+    'ix_ai_catalog_models_provider_id': '3fd3cff6879c81bf6a0149982587e626c4d13d8fc9b9964861ce2b672db3b088',
+    'ix_ai_key_model_access_model_id': 'fd304b79c3effdf7105ff4b134e0204e91f1bc7aa8801c10bf7fa7ca019234bc',
+}
+_STARTUP_SQLITE_AUTOINDEX_COUNTS = {
+    'providers': 1, 'ai_function_configs': 1, 'ai_models': 1,
+    'api_keys': 3, 'ai_catalog_models': 3, 'ai_key_model_access': 1,
+    'ai_catalog_refresh_runs': 1,
+}
+
+
+def is_startup_final(bind):
+    """Accept only the complete frozen SQLite startup catalog, without writes."""
+    if not isinstance(bind, sa.engine.Connection) or bind.dialect.name != 'sqlite':
+        return False
+    inspector = sa.inspect(bind)
+    names = set(inspector.get_table_names())
+    if not _CANONICAL <= names:
+        return False
+    expected_names = set(_STARTUP_SQLITE_DDL)
+    if not expected_names <= names:
+        return False
+    final_columns = {
+        'providers': 'requires_api_key', 'ai_function_configs': 'configuration_error',
+        'api_keys': 'priority', 'ai_catalog_models': 'discovery_metadata',
+    }
+    if any(column not in {item['name'] for item in inspector.get_columns(table)}
+           for table, column in final_columns.items()):
+        return False
+    reserved = expected_names | set(_STARTUP_SQLITE_INDEX_DDL)
+    if any(name.lower() in reserved for name in inspector.get_view_names()):
+        _mismatch()
+    if bind.execute(sa.text(
+        "SELECT 1 FROM sqlite_temp_master WHERE lower(name) IN ("
+        + ','.join(f"'{name}'" for name in sorted(reserved)) + ') LIMIT 1')).first():
+        _mismatch()
+    for table, digest in _STARTUP_SQLITE_DDL.items():
+        objects = bind.execute(sa.text(
+            "SELECT type, name, sql FROM sqlite_master WHERE tbl_name=:table "
+            "AND type IN ('table', 'index', 'trigger')"), {'table': table}).all()
+        expected = {('table', table)}
+        expected |= {('index', f'sqlite_autoindex_{table}_{i}')
+                     for i in range(1, _STARTUP_SQLITE_AUTOINDEX_COUNTS[table] + 1)}
+        expected |= {('index', name) for name in _STARTUP_SQLITE_INDEX_DDL
+                     if name.startswith('ix_' + table + '_')}
+        if {(kind, name) for kind, name, _ in objects} != expected:
+            _mismatch()
+        for kind, name, sql in objects:
+            known = digest if kind == 'table' else _STARTUP_SQLITE_INDEX_DDL.get(name)
+            if (sql is None and known is not None or sql is not None and
+                    (known is None or hashlib.sha256(sql.encode()).hexdigest() != known)):
+                _mismatch()
+    for table in expected_names:
+        if bind.execute(sa.text('SELECT 1 FROM pragma_foreign_key_check(:table) LIMIT 1'),
+                        {'table': table}).first():
+            _mismatch()
+    return True
 
 
 def _tables():

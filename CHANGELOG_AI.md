@@ -1,3 +1,6 @@
+- **Startup-created canonical catalog replay (2026-09-24, Task 9 schema batch)**:
+  - The catalog revisions now recognize only a complete frozen SQLite startup profile across seven legacy/canonical tables and their indexes. Exact DDL fingerprints, object inventory, shadow checks, and scoped foreign-key integrity are validated before those revisions skip already-applied DDL. A populated disposable startup database reaches Alembic head without rebuilding or changing catalog rows; a partial index is rejected before catalog writes. Blank-chain catalog tests still pass. MySQL startup adoption remains pending.
+
 - **Startup-created converted glossary replay (2026-09-24, Task 9 schema batch)**:
   - The published glossary revision accepts a fully validated, already-converted SQLite glossary when the current startup ORM never created the removed terminology-memory table. It checks every stored normalized key and makes no schema or row writes. Historical incomplete children still refuse; existing terminology tables remain preserved. Disposable tests include populated replay and corrupt-key refusal without term leakage.
 
