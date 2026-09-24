@@ -1,3 +1,7 @@
+- **Glossary migration audit checkpoint (2026-09-24, Task 9D4B1)**:
+  - Added migration-owned text normalization and read-only copy audit with fixed, sanitized conflict codes. Cross-table equivalents remain in terminology memory; duplicate or invalid mappings block the planned conversion without selecting rows for deletion.
+  - Added seven focused RED→GREEN tests and updated the knowledge base. Published revision, application services, schema, and database contents remain unchanged; wiring and data migration are Task 9D4B2.
+
 - **Frozen historical glossary prerequisites (2026-09-24, Task 9D4A)**:
   - Review fix: SQLite uses raw FK action metadata and comment-aware deferred-constraint inspection so post-comment `ON UPDATE CASCADE` or `DEFERRABLE` cannot evade preflight. MySQL parses actual `SHOW CREATE TABLE` PK keys for the parent and both children to reject an invisible key prefix. Added RED→GREEN populated SQLite and offline real-parser regressions; compatible comments still pass.
   - Added migration-owned `backend/alembic/glossary_prerequisites.py`, frozen from Git `93200e6^`, and independent SQL fixture/disposable tests. It validates the existing project PK and both child schemas before creating either table; only both-absent or both-compatible populated states are accepted. Replays issue no DDL or row writes; partial, incompatible, and namespace-colliding states fail with fixed guidance.
