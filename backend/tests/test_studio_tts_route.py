@@ -425,7 +425,8 @@ async def test_review_confirmed_edge_voice_outside_pool_revalidates_and_times_ou
 
 def target(provider, remote, key_id=None, model_id=None):
     return RouteTarget(model_id or f"id-{remote}", provider, remote, key_id, "TTS",
-                       "catalog_unverified" if provider == "elevenlabs" else "listing_unverified")
+                       "catalog_unverified" if provider == "elevenlabs" else "keyless" if provider == "edge_tts"
+                       else "listing_unverified")
 
 
 def plan(*targets):
@@ -578,7 +579,7 @@ async def test_failed_generation_result_is_classified_and_falls_back(catalog, co
     assert calls == ([("model-a", "request-key-a", "voice-a"),
                       ("model-a", "request-key-a", "voice-a"),
                       ("model-b", "request-key-b", "voice-b")]
-                     if code in ("HTTP_429", "TTS_TIMEOUT") else
+                     if code == "TTS_TIMEOUT" else
                      [("model-a", "request-key-a", "voice-a"),
                       ("model-b", "request-key-b", "voice-b")])
 

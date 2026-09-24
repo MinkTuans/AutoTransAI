@@ -12,32 +12,59 @@ Tests:
 """
 
 import pytest
+import pytest_asyncio
 import shutil
 import uuid
+import wave
 from pathlib import Path
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.database import init_db, async_session_factory
+from app import database
 from app.models.project import Project, WorkflowStatus
 from app.models.segment import Segment
 from app.providers.audio.edge_tts_provider import EdgeTTSProvider
-from app.providers.registry import get_registry
+from app.providers.base import GenerationResult
 from app.services.script_parser import parse_script
 from app.services.estimator import estimate_project
 from app.services.preflight import run_preflight
 from app.services.file_manager import get_segment_audio_path, get_manifest_path, get_project_dir
+from app.services import file_manager
 from app.services.manifest import read_manifest
 from app.media.ffprobe import is_ffmpeg_installed, probe_duration
 
 
-@pytest.mark.asyncio
-async def test_full_audio_pipeline():
-    # Initialize DB
-    await init_db()
+@pytest_asyncio.fixture
+async def isolated_audio_database(tmp_path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'audio.sqlite'}")
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    patch = pytest.MonkeyPatch()
+    patch.setattr(database, "engine", engine)
+    patch.setattr(database, "async_session_factory", sessions)
+    patch.setattr(file_manager.settings, "STORAGE_ROOT", tmp_path / "storage")
+    try:
+        await database.init_db()
+        yield sessions
+    finally:
+        patch.undo()
+        await engine.dispose()
 
-    # Register Edge TTS
-    registry = get_registry()
+
+@pytest.mark.asyncio
+async def test_full_audio_pipeline(monkeypatch, isolated_audio_database):
+    async def synthetic_edge_audio(self, text, voice_id, output_path, **kwargs):
+        assert text and voice_id == "en-US-AriaNeural"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with wave.open(str(output_path), "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(8000)
+            audio.writeframes(b"\x00\x00" * 800)
+        return GenerationResult(success=True, file_path=output_path,
+                                duration=0.1, provider_id="edge_tts")
+
+    monkeypatch.setattr(EdgeTTSProvider, "generate_audio", synthetic_edge_audio)
+    # Use the synthetic Edge TTS transport for the provider boundary.
     provider = EdgeTTSProvider()
-    registry.register_audio(provider)
 
     project_id = f"test_e2e_{uuid.uuid4().hex[:6]}"
     script = """Phân đoạn 1: Hello world, this is an automated integration test for audio generation.
@@ -48,7 +75,7 @@ Phân đoạn 2: Second segment verifying local file storage and manifest recove
     assert len(parsed) == 2
 
     # 2. Persist Project & Segments
-    async with async_session_factory() as session:
+    async with isolated_audio_database() as session:
         project = Project(
             id=project_id,
             title="E2E Test Project",

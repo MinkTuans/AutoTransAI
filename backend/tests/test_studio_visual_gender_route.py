@@ -106,8 +106,7 @@ async def test_failed_default_advances_to_same_provider_then_cross_provider(cata
 
     monkeypatch.setattr(httpx.AsyncClient, "post", post)
     assert await service.detect_speakers_gender(video, segments, sessions=sessions, data_dir=path) == {"S1": "male"}
-    assert calls == (["a-primary", "a-primary", "b-backup", "b-backup", "c-final"]
-                     if status == 429 else ["a-primary", "b-backup", "c-final"])
+    assert calls == ["a-primary", "b-backup", "c-final"]
 
 
 @pytest.mark.asyncio

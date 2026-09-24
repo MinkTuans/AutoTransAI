@@ -107,7 +107,7 @@ async def test_unified_dub_uses_exact_default_then_same_provider_fallback_and_re
         async def generate_audio(self, text, voice_id, output_path, *, route_target, api_key):
             calls.append((route_target.remote_model_id, api_key, voice_id))
             if route_target.remote_model_id == "model-one":
-                return GenerationResult(success=False, error_code="HTTP_401",
+                return GenerationResult(success=False, error_code="HTTP_404",
                                         error_message="synthetic-secret")
             output_path.write_bytes(b"synthetic-audio")
             return GenerationResult(success=True, file_path=output_path)
@@ -187,7 +187,7 @@ async def test_unified_dub_failure_is_redacted_and_google_not_used(catalog, monk
         await stage.execute_step("speaker_to_voice_mapping", ctx, db)
     with pytest.raises(Exception, match="rate_limit") as error:
         await stage.execute_step("tts_generation", ctx, None)
-    assert calls == ["elevenlabs"] * 4
+    assert calls == ["elevenlabs"]
     assert "synthetic-secret" not in str(error.value) + caplog.text + json.dumps(ctx.to_dict())
     assert not ctx.audio_segments_info
 
@@ -367,7 +367,6 @@ async def test_unmapped_speaker_can_fallback_to_keyless_edge_without_reusing_ele
     ctx = context(path / "unmapped.mp4")
     await DubStage().execute_step("tts_generation", ctx, None)
     assert calls == [("elevenlabs", "voice-a", "synthetic-secret"),
-                     ("elevenlabs", "voice-a", "synthetic-secret"),
                      ("edge_tts", "vi-VN-HoaiMyNeural", None)]
     assert ctx.audio_segments_info[0]["voice_provider"] == "edge_tts"
 
@@ -385,7 +384,7 @@ async def test_high_confidence_auto_mapping_can_fallback_but_confirmed_profile_s
     class Eleven:
         async def generate_audio(self, text, voice_id, output_path, *, route_target, api_key):
             calls.append((route_target.provider_id, voice_id))
-            return GenerationResult(success=False, error_code="HTTP_401")
+            return GenerationResult(success=False, error_code="HTTP_404")
     class Edge:
         async def generate_audio(self, text, voice_id, output_path, *, route_target, api_key):
             calls.append((route_target.provider_id, voice_id))
@@ -410,7 +409,7 @@ async def test_high_confidence_auto_mapping_can_fallback_but_confirmed_profile_s
         await stage.execute_step("speaker_to_voice_mapping", confirmed, db)
     assert confirmed.speaker_voice_map["Speaker 1"]["confirmed_by_user"] is True
     prior = len(calls)
-    with pytest.raises(Exception, match="auth"):
+    with pytest.raises(Exception, match="model_unavailable"):
         await stage.execute_step("tts_generation", confirmed, None)
     assert all(provider == "elevenlabs" for provider, _ in calls[prior:])
 

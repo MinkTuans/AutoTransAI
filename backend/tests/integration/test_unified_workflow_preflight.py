@@ -1,16 +1,42 @@
 """Integration tests for Unified Workflow Pre-flight Check, Project Settings, and Glossary."""
 
 import pytest
+import pytest_asyncio
+import importlib
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.main import app
-from app.database import async_session_factory, init_db
+from app import database
 from app.models.project import Project
+from app.services.settings_service import SettingsService
+
+
+@pytest_asyncio.fixture
+async def isolated_preflight_database(tmp_path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'preflight.sqlite'}")
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    patch = pytest.MonkeyPatch()
+    patch.setattr(database, "engine", engine)
+    patch.setattr(database, "async_session_factory", sessions)
+    for name in ("app.services.file_manager", "app.services.storage_service",
+                 "app.core.job_logger", "app.api.routes.projects",
+                 "app.api.routes.video_translator"):
+        module = importlib.import_module(name)
+        patch.setattr(module.settings, "DATA_DIR", tmp_path / "data")
+        patch.setattr(module.settings, "STORAGE_ROOT", tmp_path / "storage")
+    try:
+        await database.init_db()
+        async with sessions() as session:
+            await SettingsService.ensure_defaults_seeded(session)
+        yield
+    finally:
+        patch.undo()
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
-async def test_preflight_and_project_settings_flow():
-    await init_db()
+async def test_preflight_and_project_settings_flow(isolated_preflight_database):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         # 1. Create a real project via API

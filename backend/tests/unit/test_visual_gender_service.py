@@ -3,6 +3,7 @@ import asyncio
 from unittest.mock import patch, AsyncMock, MagicMock
 from pathlib import Path
 import json
+import shutil
 
 from app.services.video_translator.visual_gender_service import (
     detect_speakers_gender,
@@ -16,6 +17,16 @@ from app.models.workflow_engine import CharacterVoiceProfile
 from app.database import Base
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 import pytest_asyncio
+
+
+@pytest.fixture
+def mock_contact_sheet(monkeypatch):
+    async def create_sheet(image_paths, output_path):
+        Path(output_path).write_bytes(b'synthetic-contact-sheet')
+        return output_path
+
+    monkeypatch.setattr(
+        'app.services.video_translator.visual_gender_service.create_contact_sheet', create_sheet)
 
 
 @pytest_asyncio.fixture
@@ -32,7 +43,7 @@ async def async_db():
 
 
 @pytest.mark.asyncio
-async def test_detect_speakers_gender_logic(tmp_path):
+async def test_detect_speakers_gender_logic(tmp_path, mock_contact_sheet):
     """
     Standard test: 4 frames extracted per speaker, 1 contact sheet per speaker,
     and 1 Vision API call per speaker.
@@ -112,7 +123,7 @@ def test_case_7_female_male_substring_regression():
 
 
 @pytest.mark.asyncio
-async def test_case_1_4_frames_male(tmp_path):
+async def test_case_1_4_frames_male(tmp_path, mock_contact_sheet):
     """Case 1: 4 frames indicate male speaker -> result male."""
     dummy_video = tmp_path / "dummy.mp4"
     dummy_video.touch()
@@ -128,7 +139,7 @@ async def test_case_1_4_frames_male(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_case_2_4_frames_female(tmp_path):
+async def test_case_2_4_frames_female(tmp_path, mock_contact_sheet):
     """Case 2: 4 frames indicate female speaker -> result female."""
     dummy_video = tmp_path / "dummy.mp4"
     dummy_video.touch()
@@ -155,7 +166,7 @@ def test_case_3_and_4_prompt_selection_rules():
 
 
 @pytest.mark.asyncio
-async def test_case_8_vision_api_error_fallback(tmp_path):
+async def test_case_8_vision_api_error_fallback(tmp_path, mock_contact_sheet):
     """Case 8: Vision API error -> graceful fallback to unknown without crashing other speakers."""
     dummy_video = tmp_path / "dummy.mp4"
     dummy_video.touch()
@@ -182,7 +193,7 @@ async def test_case_8_vision_api_error_fallback(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_case_9_invalid_vision_response_fallback(tmp_path):
+async def test_case_9_invalid_vision_response_fallback(tmp_path, mock_contact_sheet):
     """Case 9: Vision returns unparseable text -> result unknown."""
     dummy_video = tmp_path / "dummy.mp4"
     dummy_video.touch()
@@ -274,7 +285,7 @@ def test_case_11_insufficient_frames_or_single_short_segment():
 
 
 @pytest.mark.asyncio
-async def test_case_12_very_short_video_no_crash(tmp_path):
+async def test_case_12_very_short_video_no_crash(tmp_path, mock_contact_sheet):
     """Case 12: Very short video (under 1s) -> does not crash."""
     dummy_video = tmp_path / "very_short.mp4"
     dummy_video.touch()
@@ -305,6 +316,7 @@ def test_caching_behavior():
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(shutil.which('ffmpeg') is None, reason='FFmpeg is optional in unit-test environments')
 async def test_create_contact_sheet_ffmpeg_real(tmp_path):
     """Verify real FFmpeg command creates a 2x2 contact sheet from real image frames."""
     import subprocess
@@ -327,7 +339,7 @@ async def test_create_contact_sheet_ffmpeg_real(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_request_count_is_one_per_speaker(tmp_path):
+async def test_request_count_is_one_per_speaker(tmp_path, mock_contact_sheet):
     """
     Verify performance requirement:
     N speakers x 1 Vision API request (NOT N x 4 requests).

@@ -1200,3 +1200,8 @@
   - Parsed bounded legacy dotenv variables without interpolation, rejected ambiguous/malformed input, and reused encrypted disabled-key mutation with per-provider deduplication, safe defaults, and caller-owned transaction semantics.
   - Added disposable SQLite and synthetic source tests; no schema, API, provider, model/default, startup, source-file, or runtime cutover change. Updated the knowledge base.
   - Review fix round 1: both importer entrypoints now reject missing or invalid explicit master keys with a fixed safe status before any source read or database access. Added disposable regressions proving no source changes, canonical rows, or generated master-key file.
+
+# Offline backend test isolation (2026-09-24, Task 10)
+
+- Redirected backend test defaults to disposable SQLite/data/storage and scrubbed configured credentials before app import. Settings API, preflight, audio pipeline and auto-confirm integration tests now isolate their database; Settings also isolates its key JSON and dotenv files. Visual gender orchestration tests use a synthetic contact sheet; the real FFmpeg check skips if the binary is unavailable. The audio pipeline uses synthetic Edge TTS WAV output, and Gemini STT tests supply request-local synthetic route credentials.
+- Updated Studio/Unified route test expectations to the current one-attempt and rejected-key policy: HTTP 429 and 401 do not retry the same key, and a model-level 404 can advance to another model on that key. The Edge test target now carries keyless access scope. These are test changes only; provider, route, API and schema code are unchanged.

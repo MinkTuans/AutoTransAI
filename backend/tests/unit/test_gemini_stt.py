@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services.video_translator.translator_service import transcribe_audio_with_gemini
+from app.services.ai_routing import RouteTarget
 from app.media.ffmpeg_process import run_ffmpeg_with_progress_async
 
 
@@ -41,11 +42,14 @@ async def test_transcribe_audio_with_gemini_mocked(tmp_path):
     mock_res.status_code = 200
     mock_res.json.return_value = mock_gemini_response
 
-    with patch("app.services.video_translator.translator_service.settings.GEMINI_API_KEY", "mock_key"), \
-         patch("app.services.video_translator.translator_service.probe_duration_async", AsyncMock(return_value=2.5)), \
+    with patch("app.services.video_translator.translator_service.probe_duration_async", AsyncMock(return_value=2.5)), \
          patch("httpx.AsyncClient.post", AsyncMock(return_value=mock_res)):
 
-        segments, lang = await transcribe_audio_with_gemini(dummy_audio, job_id="VT-TEST-GEMINI")
+        segments, lang = await transcribe_audio_with_gemini(
+            dummy_audio, job_id="VT-TEST-GEMINI",
+            route_target=RouteTarget("model-id", "gemini", "gemini-2.0-flash", "key-id", "STT"),
+            api_key="mock_key",
+        )
 
         assert lang == "English"
         assert len(segments) == 1
@@ -85,12 +89,15 @@ async def test_transcribe_audio_with_gemini_large_audio_chunking(tmp_path):
         out_chunk.write_bytes(b"RIFF chunk wav data")
         return {"status": "COMPLETED", "progress_pct": 100.0}
 
-    with patch("app.services.video_translator.translator_service.settings.GEMINI_API_KEY", "mock_key"), \
-         patch("app.services.video_translator.translator_service.probe_duration_async", AsyncMock(return_value=350.0)), \
+    with patch("app.services.video_translator.translator_service.probe_duration_async", AsyncMock(return_value=350.0)), \
          patch("app.services.video_translator.translator_service.run_ffmpeg_with_progress_async", side_effect=mock_run_ffmpeg) as mock_ffmpeg, \
          patch("httpx.AsyncClient.post", AsyncMock(return_value=mock_res)):
 
-        segments, lang = await transcribe_audio_with_gemini(dummy_large_audio, job_id="VT-TEST-CHUNK")
+        segments, lang = await transcribe_audio_with_gemini(
+            dummy_large_audio, job_id="VT-TEST-CHUNK",
+            route_target=RouteTarget("model-id", "gemini", "gemini-2.0-flash", "key-id", "STT"),
+            api_key="mock_key",
+        )
 
         assert mock_ffmpeg.called
         assert len(segments) > 0
@@ -107,14 +114,16 @@ async def test_transcribe_audio_with_gemini_chunk_creation_failure(tmp_path):
         # Do NOT create the chunk file
         return {"status": "FAILED", "progress_pct": 0.0}
 
-    with patch("app.services.video_translator.translator_service.settings.GEMINI_API_KEY", "mock_key"), \
-         patch("app.services.video_translator.translator_service.probe_duration_async", AsyncMock(return_value=350.0)), \
+    with patch("app.services.video_translator.translator_service.probe_duration_async", AsyncMock(return_value=350.0)), \
          patch("app.services.video_translator.translator_service.run_ffmpeg_with_progress_async", side_effect=mock_run_ffmpeg_fail):
 
         with pytest.raises(RuntimeError, match="Audio chunk file lost or failed to generate"):
-            await transcribe_audio_with_gemini(dummy_large_audio, job_id="VT-TEST-FAIL")
+            await transcribe_audio_with_gemini(
+                dummy_large_audio, job_id="VT-TEST-FAIL",
+                route_target=RouteTarget("model-id", "gemini", "gemini-2.0-flash", "key-id", "STT"),
+                api_key="mock_key",
+            )
 
     # Confirm temp chunk directory was cleaned up
     temp_dir = dummy_large_audio.parent / "gemini_chunks_VT-TEST-FAIL"
     assert not temp_dir.exists()
-

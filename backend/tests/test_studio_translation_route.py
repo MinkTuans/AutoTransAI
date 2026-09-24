@@ -202,7 +202,7 @@ async def test_all_target_errors_hide_secret_and_provider_text(catalog, monkeypa
         await service.translate_transcript_segments(segments(), "en", "vi", sessions=sessions, data_dir=path)
     assert "synthetic-secret-123" not in str(exc.value) + caplog.text
     assert "raw provider body" not in str(exc.value) + caplog.text
-    assert len(calls) == 2  # initial call plus one bounded single-item recovery
+    assert len(calls) == 1  # a rejected key is not reused for recovery
 
 
 @pytest.mark.asyncio

@@ -102,7 +102,7 @@ async def test_studio_advances_from_failed_model_to_same_provider_then_other(stu
     monkeypatch.setattr(httpx.AsyncClient, "post", post)
     result = await service.speech_to_text_and_detect_language(audio, sessions=sessions, data_dir=path)
     assert result[0][0]["text"] == "Hi"
-    assert calls == (["a-first", "a-first", "b-second"] if status == 429 else ["a-first", "b-second"])
+    assert calls == ["a-first", "b-second"]
 
 
 @pytest.mark.asyncio

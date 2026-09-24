@@ -3,10 +3,41 @@ Unit & Integration tests for Settings API, AI Function configurations, and Key M
 """
 
 import pytest
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.main import app
+from app import config as app_config
+from app import database
+from app.services import key_manager
 from app.services.key_manager import get_key_manager, KeyStatus
+from app.services.settings_service import SettingsService
+
+
+@pytest_asyncio.fixture(scope="module", autouse=True)
+async def initialized_settings_database(tmp_path_factory):
+    """Keep this legacy API module's writes out of every other test."""
+    root = tmp_path_factory.mktemp("settings-api")
+    engine = create_async_engine(f"sqlite+aiosqlite:///{root / 'settings.sqlite'}")
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    patch = pytest.MonkeyPatch()
+    patch.setattr(database, "engine", engine)
+    patch.setattr(database, "async_session_factory", sessions)
+    patch.setattr(key_manager, "STORAGE_FILE", root / "api_keys.json")
+    patch.setattr(key_manager.KeyManager, "_instance", None)
+    module_env = root / ".env"
+    module_env.write_text("", encoding="utf-8")
+    patch.setattr(app_config, "ENV_FILE_PATH", module_env)
+    patch.setattr(key_manager, "settings", app_config.get_settings())
+    try:
+        await database.init_db()
+        async with sessions() as session:
+            await SettingsService.ensure_defaults_seeded(session)
+        yield
+    finally:
+        patch.undo()
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
