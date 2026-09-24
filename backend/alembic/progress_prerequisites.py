@@ -144,6 +144,34 @@ def _validate_table(inspector, table, additions, dialect):
     expected_fks = {(fk.parent.name, fk.column.table.name, fk.column.name)
                     for fk in table.foreign_keys}
     actual_fks = inspector.get_foreign_keys(table.name)
+    if table.name == 'youtube_publications' and len(actual_fks) == 3:
+        # The later startup ORM has project/job references already in place.
+        # Accept only the complete profile; the historical one has channel only.
+        jobs = 'jobs' in inspector.get_table_names() and 'jobs' not in inspector.get_view_names()
+        if not jobs or 'project_id' not in columns:
+            _mismatch()
+        job_columns = {column['name']: column for column in inspector.get_columns('jobs')}
+        if (inspector.get_pk_constraint('jobs')['constrained_columns'] != ['id']
+                or 'id' not in job_columns):
+            _mismatch()
+        _validate_column(job_columns['id'], sa.Column('id', sa.String(36), nullable=False), dialect)
+        if dialect.name == 'sqlite':
+            parent = sa.Table('jobs', sa.MetaData(), sa.Column('id', sa.String(36), primary_key=True))
+            load_python_file(str(Path(__file__).parent), 'historical_sqlite_pk.py').validate_primary_key(
+                inspector.bind, parent, _mismatch)
+        expected_fks |= {('job_id', 'jobs', 'id'), ('project_id', 'projects', 'id')}
+        if not any(index['name'] == 'ix_youtube_publications_project_id'
+                   and index['column_names'] == ['project_id'] and not index['unique']
+                   and not index.get('dialect_options') and not index.get('column_sorting')
+                   for index in inspector.get_indexes(table.name)):
+            _mismatch()
+        if dialect.name == 'sqlite':
+            keys = inspector.bind.execute(sa.text(
+                'SELECT name, "desc", coll FROM '
+                'pragma_index_xinfo(:name) WHERE key = 1'),
+                {'name': 'ix_youtube_publications_project_id'}).all()
+            if keys != [('project_id', 0, 'BINARY')]:
+                _mismatch()
     if len(actual_fks) != len(expected_fks):
         _mismatch()
     for fk in actual_fks:
@@ -156,6 +184,10 @@ def _validate_table(inspector, table, additions, dialect):
                 or options.get('onupdate', 'NO ACTION').upper() != 'NO ACTION'
                 or options.get('deferrable')):
             _mismatch()
+    actual_fk_targets = {(fk['constrained_columns'][0], fk['referred_table'],
+                          fk['referred_columns'][0]) for fk in actual_fks}
+    if actual_fk_targets != expected_fks:
+        _mismatch()
     indexes = inspector.get_indexes(table.name)
     for index in table.indexes:
         if not any(i['column_names'] == [c.name for c in index.columns]
