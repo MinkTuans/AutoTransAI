@@ -8,6 +8,7 @@ import re
 
 from alembic.util import load_python_file
 import sqlalchemy as sa
+from sqlalchemy.dialects.mysql.reflection import MySQLTableDefinitionParser
 
 
 def _tables():
@@ -72,6 +73,17 @@ def _validate_identity(bind, inspector, table):
     if bind.dialect.name == 'sqlite':
         load_python_file(str(Path(__file__).parent), 'historical_sqlite_pk.py').validate_primary_key(
             bind, table, _mismatch)
+    elif bind.dialect.name == 'mysql':
+        # MySQL's portable PK reflection reports the column name but drops a
+        # prefix length, so inspect the real SHOW CREATE key definition too.
+        try:
+            ddl = bind.exec_driver_sql(f'SHOW CREATE TABLE `{table.name}`').one()[1]
+            parser = MySQLTableDefinitionParser(bind.dialect, bind.dialect.identifier_preparer)
+            keys = [key for key in parser.parse(ddl, None).keys if key['type'] == 'PRIMARY']
+            if len(keys) != 1 or keys[0]['columns'] != [('id', None, '')]:
+                _mismatch()
+        except (IndexError, KeyError, TypeError, ValueError):
+            _mismatch()
     return columns
 
 
@@ -107,6 +119,19 @@ def _validate_table(bind, inspector, table):
         tokens = [token.upper() for token in re.findall(
             r'''--[^\r\n]*|/\*.*?\*/|'(?:''|[^'])*'|"(?:""|[^"])*"|`(?:``|[^`])*`|\[[^\]]*\]|[A-Za-z_][A-Za-z_0-9$]*|\S''',
             ddl, re.DOTALL) if not token.startswith(('--', '/*'))]
+        if 'DEFERRABLE' in tokens or 'INITIALLY' in tokens:
+            _mismatch()
+        # SQLAlchemy's SQLite FK parser can stop at a comment and omit later
+        # ON UPDATE clauses. PRAGMA reports the actual referential actions.
+        raw_fks = bind.execute(sa.text('SELECT * FROM pragma_foreign_key_list(:table)'),
+                               {'table': table.name}).mappings().all()
+        if (len(raw_fks) != 1 or raw_fks[0]['seq'] != 0
+                or raw_fks[0]['table'] != 'projects'
+                or raw_fks[0]['from'] != 'project_id' or raw_fks[0]['to'] != 'id'
+                or raw_fks[0]['on_delete'].upper() != 'CASCADE'
+                or raw_fks[0]['on_update'].upper() != 'NO ACTION'
+                or raw_fks[0]['match'].upper() != 'NONE'):
+            _mismatch()
         for offset, token in enumerate(tokens):
             if token == 'COLLATE':
                 collation = tokens[offset + 1]

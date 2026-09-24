@@ -153,6 +153,33 @@ def test_column_collation_drift_cannot_hide_behind_binary_index(db):
     reject_without_writes(db)
 
 
+@pytest.mark.parametrize('suffix', [
+    ' /* legacy */ ON UPDATE CASCADE',
+    ' /* legacy */ DEFERRABLE INITIALLY DEFERRED',
+    ' -- legacy comment\n DEFERRABLE INITIALLY DEFERRED',
+])
+def test_populated_post_comment_fk_options_fail_closed(db, suffix):
+    prepare(db)
+    fixture_schema(db, ('REFERENCES projects(id) ON DELETE CASCADE',
+                        'REFERENCES projects(id) ON DELETE CASCADE' + suffix))
+    populate(db)
+    reject_without_writes(db)
+
+
+@pytest.mark.parametrize('comment', [' /* DEFERRABLE historical marker */',
+                                     ' -- DEFERRABLE historical marker\n'])
+def test_fk_comment_without_semantic_change_remains_compatible(db, comment):
+    prepare(db)
+    fixture_schema(db, ('REFERENCES projects(id) ON DELETE CASCADE',
+                        'REFERENCES projects(id) ON DELETE CASCADE' + comment))
+    populate(db)
+    before = rows(db)
+    statements = record_sql(db)
+    helper().ensure(db)
+    assert rows(db) == before
+    assert_no_writes(statements)
+
+
 @pytest.mark.parametrize('name', ['projects', *TABLES, 'ix_project_glossaries_project_id',
                                   'ix_project_terminology_memory_project_id'])
 def test_temporary_shadow_fails_closed(db, name):
@@ -218,6 +245,60 @@ def test_mysql_ddl_compiles_offline(db):
     assert 'ix_project_terminology_memory_project_id' in ddl
 
 
+def mysql_show_create(prefix_table=None):
+    seen = []
+    def run(sql, *args, **kwargs):
+        if not sql.startswith('SHOW CREATE TABLE `') or not sql.endswith('`'):
+            raise AssertionError('Offline MySQL reflection permits only SHOW CREATE TABLE')
+        table = sql[len('SHOW CREATE TABLE `'):-1]
+        if table not in ('projects', *TABLES):
+            raise AssertionError('Unknown metadata table')
+        prefix = '(10)' if table == prefix_table else ''
+        ddl = (f'CREATE TABLE `{table}` (\n  `id` varchar(36) NOT NULL,\n'
+               f'  PRIMARY KEY (`id`{prefix})\n) ENGINE=InnoDB')
+        seen.append(table)
+        return SimpleNamespace(one=lambda: (table, ddl))
+    return run, seen
+
+
+@pytest.mark.parametrize('target', ['projects', *TABLES])
+def test_mysql_primary_key_prefix_is_rejected_for_parent_or_child(db, monkeypatch, target):
+    prepare(db)
+    fixture_schema(db)
+    populate(db)
+    before = rows(db)
+    inspector = sa.inspect(db)
+    names = inspector.get_table_names()
+    columns = {name: [{key: value for key, value in column.items() if key != 'primary_key'}
+                      for column in inspector.get_columns(name)] for name in names}
+    pks = {name: inspector.get_pk_constraint(name) for name in names}
+    fks = {name: inspector.get_foreign_keys(name) for name in names}
+    indexes = {name: inspector.get_indexes(name) for name in names}
+    dialect = mysql.dialect()
+    parser = MySQLTableDefinitionParser(dialect, dialect.identifier_preparer)
+    raw, seen = mysql_show_create(prefix_table=target)
+    parsed = parser.parse(raw(f'SHOW CREATE TABLE `{target}`').one()[1], 'utf8mb4')
+    assert parsed.keys[0]['columns'] == [('id', 10, '')]
+    # Portable reflection reports only the PK membership, losing the length.
+    assert pks[target]['constrained_columns'] == ['id']
+    reflected = SimpleNamespace(
+        default_schema_name=None, get_table_names=lambda: names, get_view_names=lambda: [],
+        get_columns=columns.__getitem__, get_pk_constraint=pks.__getitem__,
+        get_foreign_keys=fks.__getitem__, get_indexes=indexes.__getitem__,
+        get_check_constraints=lambda name: [], get_unique_constraints=lambda name: [],
+    )
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Offline MySQL ensure must not run data SQL')
+    with monkeypatch.context() as patch:
+        patch.setattr(db, 'dialect', dialect)
+        patch.setattr(sa, 'inspect', lambda connection: reflected)
+        patch.setattr(db, 'execute', forbidden)
+        patch.setattr(db, 'exec_driver_sql', raw)
+        with pytest.raises(RuntimeError, match='Historical schema mismatch'):
+            helper().ensure(db)
+    assert rows(db) == before
+
+
 def test_mysql_boolean_alias_reflection_is_compatible_offline(db, monkeypatch):
     prepare(db)
     fixture_schema(db)
@@ -247,12 +328,14 @@ def test_mysql_boolean_alias_reflection_is_compatible_offline(db, monkeypatch):
     )
     def forbidden(*args, **kwargs):
         raise AssertionError('Offline MySQL ensure must not issue SQL')
+    raw, seen = mysql_show_create()
     with monkeypatch.context() as patch:
         patch.setattr(db, 'dialect', dialect)
         patch.setattr(sa, 'inspect', lambda connection: reflected)
         patch.setattr(db, 'execute', forbidden)
-        patch.setattr(db, 'exec_driver_sql', forbidden)
+        patch.setattr(db, 'exec_driver_sql', raw)
         helper().ensure(db)
+    assert seen == ['projects', *TABLES]
 
 
 @pytest.mark.parametrize('column_sql,compatible', [
@@ -285,11 +368,12 @@ def test_mysql_reflected_identity_profile_is_checked_offline(db, monkeypatch, co
     )
     def forbidden(*args, **kwargs):
         raise AssertionError('Offline MySQL ensure must not issue SQL')
+    raw, seen = mysql_show_create()
     with monkeypatch.context() as patch:
         patch.setattr(db, 'dialect', dialect)
         patch.setattr(sa, 'inspect', lambda connection: reflected)
         patch.setattr(db, 'execute', forbidden)
-        patch.setattr(db, 'exec_driver_sql', forbidden)
+        patch.setattr(db, 'exec_driver_sql', raw)
         if compatible:
             helper().ensure(db)
         else:
