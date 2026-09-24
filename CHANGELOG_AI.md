@@ -1,3 +1,6 @@
+- **MySQL glossary collision probe (2026-09-24, Task 9D4B4 checkpoint)**:
+  - Added migration-owned, read-only cross-table ID and project-collation collision probes with fixed codes. A review fix rejects mixed MySQL column collations before probing because `_bin` precedence could hide a destination-key collision. Four focused regressions pass; a separate disposable MySQL 8.4 instance confirmed case and PAD SPACE behavior. The probe is not yet wired to the published revision; MySQL upgrade remains held before SQL pending a recovery-safe copy/swap design.
+
 - **MySQL glossary replay guard (2026-09-24, Task 9D4B3 checkpoint)**:
   - Converted-schema validation now parses real MySQL unique-key definitions and rejects prefixes on either canonical key. Added failing-first offline parser regressions and a compatible control. MySQL revision execution remains held before SQL pending collation-aware data preflight and a recovery-safe conversion path.
 
