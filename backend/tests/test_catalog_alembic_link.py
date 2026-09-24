@@ -87,6 +87,50 @@ def test_blank_mysql_traverses_all_published_revisions(mysql_db, tmp_path):
         '20260923_key_rotation_domain')
 
 
+def test_blank_sqlite_head_downgrade_and_reupgrade_rehearsal(tmp_path):
+    url = f'sqlite:///{tmp_path / "rollback.sqlite"}'
+    config = config_for(url, tmp_path)
+    command.upgrade(config, 'head')
+    command.downgrade(config, '20260923_thumbnail_model_length')
+    engine = sa.create_engine(url)
+    try:
+        with engine.connect() as db:
+            versions = set(db.exec_driver_sql('SELECT version_num FROM alembic_version').scalars())
+            assert '20260923_thumbnail_model_length' in versions
+            assert '20260923_key_rotation_domain' not in versions
+            assert 'priority' not in {c['name'] for c in sa.inspect(db).get_columns('api_keys')}
+    finally:
+        engine.dispose()
+    command.upgrade(config, 'head')
+    engine = sa.create_engine(url)
+    try:
+        with engine.connect() as db:
+            assert db.exec_driver_sql('SELECT version_num FROM alembic_version').scalar_one() == (
+                '20260923_key_rotation_domain')
+            assert 'priority' in {c['name'] for c in sa.inspect(db).get_columns('api_keys')}
+    finally:
+        engine.dispose()
+
+
+def test_blank_mysql_head_downgrade_and_reupgrade_rehearsal(mysql_db, tmp_path):
+    db = mysql_db
+    db.exec_driver_sql('DROP TABLE video_translation_jobs')
+    db.exec_driver_sql('DROP TABLE projects')
+    config = config_for(db.engine.url.render_as_string(hide_password=False), tmp_path)
+    command.upgrade(config, 'head')
+    command.downgrade(config, '20260923_thumbnail_model_length')
+    versions = set(db.exec_driver_sql('SELECT version_num FROM alembic_version').scalars())
+    assert '20260923_thumbnail_model_length' in versions
+    assert '20260923_key_rotation_domain' not in versions
+    assert 'priority' not in {c['name'] for c in sa.inspect(db).get_columns('api_keys')}
+    db.rollback()  # End the MySQL REPEATABLE READ snapshot before external Alembic writes.
+    command.upgrade(config, 'head')
+    db.rollback()
+    assert db.exec_driver_sql('SELECT version_num FROM alembic_version').scalar_one() == (
+        '20260923_key_rotation_domain')
+    assert 'priority' in {c['name'] for c in sa.inspect(db).get_columns('api_keys')}
+
+
 def test_partial_legacy_catalog_group_refuses_before_canonical_tables(tmp_path):
     engine = sa.create_engine(f'sqlite:///{tmp_path / "partial.sqlite"}')
     try:

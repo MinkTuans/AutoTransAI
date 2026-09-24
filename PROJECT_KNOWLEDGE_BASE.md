@@ -47,10 +47,10 @@ AutoTransAI uses a **Local-First Client-Server Architecture** designed for stand
                    ▼                                                     ▼
 ┌───────────────────────────────────────┐  ┌─────────────────────────────┐
 │            Database Layer             │  │     Local Disk Storage      │
-│  Primary: Laragon MySQL (3306)        │  │  Root: ./storage/ (SSOT)    │
-│    (mysql+aiomysql://root:...@3306)   │  │  - projects/<id>/           │
-│  Fallback: Local SQLite               │  │  - translator/jobs/<id>/    │
-│    (sqlite+aiosqlite:///workflow.db)  │  │  - translator/assets/<id>/  │
+│  Configured DATABASE_URL or local     │  │  Root: ./storage/ (SSOT)    │
+│  SQLite in DATA_DIR by default        │  │  - projects/<id>/           │
+│  No automatic DB fallback             │  │  - translator/jobs/<id>/    │
+│  (startup fails on configured error)  │  │  - translator/assets/<id>/  │
 │  0% Supabase / Cloud DB dependency    │  │  - merger/jobs/<id>/        │
 └───────────────────────────────────────┘  └─────────────────────────────┘
 ```
@@ -60,7 +60,7 @@ AutoTransAI uses a **Local-First Client-Server Architecture** designed for stand
 - **Two-Phase Translation Pipeline**:
   - **Phase 1 (STT & Translation)**: Ingest, Audio Extraction, STT, Diarization, Terminology & Glossary, LLM Translation, Verbatim Echo Detection & Targeted Recovery.
   - **Phase 2 (TTS & Production)**: Voice assignment & Character Review, Post-TTS Scheduling, Audio Normalization, FFmpeg Video Muxing, Subtitle/Watermark burning, AI Thumbnail.
-- **Failover & Resiliency**: Automatic database failover from MySQL to SQLite; API key rotation and cooldown management via `KeyManager`; dual confirmation gates (`auto_confirm_translation`, `auto_confirm_voice`).
+- **Failover & Resiliency**: Configured database startup errors are explicit; canonical key routing records result/cooldown state in the database, while historical provider paths retain `KeyManager`; dual confirmation gates (`auto_confirm_translation`, `auto_confirm_voice`) remain.
 - **Memory Safety & Streaming**: Heavy binary ingest pipelines (like video generation and external downloads) rely strictly on chunked async byte streaming (`httpx.AsyncClient.stream`) instead of in-memory buffering to prevent Out-Of-Memory (OOM) crashes on large multi-gigabyte video files.
 - **Clean Subprocess Handling**: Windows ProactorEventLoopPolicy initialized on startup; explicit process tree termination on window close.
 
@@ -123,8 +123,8 @@ C:\Hack\AutoTransAI\
 │       └── components/                # WorkflowTimeline, ProjectGlossaryManager, ...
 │
 ├── data/                              # Persistent local application data
-│   ├── api_keys.json                  # Encrypted/masked provider API key pool
-│   ├── workflow.db                    # Fallback SQLite database
+│   ├── api_keys.json                  # Legacy plaintext key pool (migration source)
+│   ├── workflow.db                    # Default local SQLite database
 │   └── launcher_logs/                 # backend.log, frontend.log from desktop launcher
 │
 └── storage/                           # Local file storage root (STORAGE_ROOT)
@@ -166,9 +166,9 @@ Configuration is loaded centrally via `shared.config.load_root_env()` and parsed
 
 | Environment Variable | Type | Default | Description |
 |---|---|---|---|
-| `DATABASE_URL` | str | `mysql+aiomysql://root:210606@127.0.0.1:3306/autotransai` | Primary DB connection string (Laragon MySQL) |
+| `DATABASE_URL` | str | empty (local SQLite in `DATA_DIR`) | Explicit database URL; a configured connection failure stops startup without fallback |
 | `STORAGE_DRIVER` | str | `local` | Storage driver (`local`) |
-| `DATA_DIR` | Path | `./data` | Credential, encryption-key, and fallback database directory; must resolve outside `STORAGE_ROOT` |
+| `DATA_DIR` | Path | `./data` | Credential, encryption-key, and default SQLite directory; must resolve outside `STORAGE_ROOT` |
 | `STORAGE_ROOT` | Path | `./storage` | Base path for project media files |
 | `DEFAULT_LLM_PROVIDER` | str | `gemini` | Default text processing provider |
 | `ENABLE_OPENAI_FALLBACK` | bool | `false` | Enable automatic OpenAI fallback |
@@ -202,6 +202,8 @@ Configuration is loaded centrally via `shared.config.load_root_env()` and parsed
 **Offline backend test isolation (2026-09-24, Task 10):** `backend/tests/conftest.py` redirects default database, data, storage and root dotenv paths to a process-specific temporary directory before app modules are imported, and removes configured credential environment variables, including indexed provider keys. The legacy Settings API tests use their own SQLite database, key JSON file and dotenv file; the auto-confirm integration test uses an isolated database and storage root and mocks its render task. The preflight and audio pipeline integration tests use their own disposable database and storage; audio output is a synthetic Edge TTS WAV. Gemini STT unit tests supply request-local synthetic credentials. No configured database or live provider should be used for plan verification.
 
 **Three-pipeline Settings verification (2026-09-24, Task 10):** `backend/tests/test_three_pipeline_e2e.py` uses one disposable SQLite/API fixture per test and injected discovery to exercise Add Key → canonical Function default selection → actual Studio STT, Unified DUB, and legacy Project video callers. Synthetic adapters assert the exact remote model, request-local credential, voice/media output, and absence of raw keys in API responses or workflow snapshots. Socket connections are blocked. These tests prove the Settings-to-caller wiring without exercising a live provider or configured database.
+
+**Task 9–10 offline verification status (2026-09-24):** An isolated backend run completed with 1,750 passed, 44 skipped and one warning; frontend tests and production build completed with 30 passed. A separate disposable SQLite/MySQL migration and cutover rehearsal completed with 52 passed and one skipped. Actual Alembic `head → 20260923_thumbnail_model_length → head` downgrade/reupgrade passed on empty disposable SQLite and MySQL databases; it does not authorize rollback of populated production data. The three Settings-to-caller tests cover each historical pipeline at its routed AI boundary (the legacy Project case also traverses `WorkflowOrchestrator.run` with non-AI stages mocked); they do not render full media outputs end to end. Published revisions and the explicit `legacy_data_cutover` service are ready for operator review on a copied database, but no configured/production database was upgraded, stamped or cut over. The legacy `/api/settings` model/function writers and `/api/providers` JSON-key compatibility paths remain because legacy backend consumers still use `KeyManager` and archival model/function state. Remove those writers and fixed remote seeds only after their remaining consumers are migrated and historical snapshots have been reconciled; a code-only deletion would break compatibility.
 
 **Legacy default shadow comparison (2026-09-24, Task 9 data batch):** Call `remap_legacy_function_defaults(session, dry_run=True)` on an explicit clean database session to preview how many archival function defaults are resolvable, unresolved, already canonical, or conflicting. The preview returns only aggregate counts and fixed issue codes. It rejects pending ORM changes before any read, uses a separate identity map on the caller's connection, and issues nonlocking reads without flushing or writing. The ordinary call remains caller-transactional and locks rows while writing remaps. This is an advisory comparison: under MySQL REPEATABLE READ the preview can use an older snapshot than a later locking remap after another transaction commits. Rerun preview near cutover and inspect the actual remap result before committing.
 
