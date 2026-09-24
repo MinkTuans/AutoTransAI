@@ -32,11 +32,23 @@ _STARTUP_SQLITE_AUTOINDEX_COUNTS = {
     'api_keys': 3, 'ai_catalog_models': 3, 'ai_key_model_access': 1,
     'ai_catalog_refresh_runs': 1,
 }
+_STARTUP_MYSQL_DDL = {
+    # SHOW CREATE TABLE on a disposable MySQL 8.4 database created by the
+    # startup ORM, using utf8mb4_0900_ai_ci. Other profiles refuse safely.
+    'providers': 'd7d211c20b9e032271e9cad08cf5bee867130115d3855fdf7f8af609265fd7f0',
+    'ai_function_configs': 'f9ed5adfc63f6120f19a0c537ccb08be47a174dde2ad3647e37096a8c2c70e7c',
+    'ai_models': 'b0ecfde92a5992db762218b6c2651fa557f22358578f5c6b8b686f90db34226c',
+    'api_keys': '7addc2c9c6d4824ea7896b4837b3fda9dafb22fd27ff56e0b97a5637be6ec63f',
+    'ai_catalog_models': '465fdcce4a1ae2b882b89c78d11e2a980be8e5ad7269dd5c5554a01d9d058887',
+    'ai_key_model_access': '9935e8206750c429695daa81a4bc2a8f5745a5cdb5d02863ba1067513f7d6270',
+    'ai_catalog_refresh_runs': '72a7b4563260b0787f0bad138efc6a7da61fceb8424a1d98a44e7687d79a5f3e',
+}
 
 
 def is_startup_final(bind):
-    """Accept only the complete frozen SQLite startup catalog, without writes."""
-    if not isinstance(bind, sa.engine.Connection) or bind.dialect.name != 'sqlite':
+    """Accept only a complete frozen startup catalog, without writes."""
+    if (not isinstance(bind, sa.engine.Connection)
+            or bind.dialect.name not in ('sqlite', 'mysql')):
         return False
     inspector = sa.inspect(bind)
     names = set(inspector.get_table_names())
@@ -52,6 +64,37 @@ def is_startup_final(bind):
     if any(column not in {item['name'] for item in inspector.get_columns(table)}
            for table, column in final_columns.items()):
         return False
+    if any(name.lower() in expected_names and name not in expected_names
+           for name in names | set(inspector.get_view_names())):
+        _mismatch()
+    if bind.dialect.name == 'mysql':
+        if any(name in inspector.get_view_names() for name in expected_names):
+            _mismatch()
+        triggers = bind.execute(sa.text(
+            'SELECT 1 FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=DATABASE() '
+            'AND EVENT_OBJECT_TABLE IN ('
+            + ','.join(f"'{name}'" for name in sorted(expected_names)) + ') LIMIT 1')).first()
+        if triggers:
+            _mismatch()
+        for table, digest in _STARTUP_MYSQL_DDL.items():
+            ddl = bind.exec_driver_sql(f'SHOW CREATE TABLE `{table}`').one()[1]
+            if hashlib.sha256(ddl.encode()).hexdigest() != digest:
+                _mismatch()
+        for query in (
+            'SELECT 1 FROM api_keys AS child LEFT JOIN providers AS parent '
+            'ON parent.id=child.provider_id WHERE parent.id IS NULL LIMIT 1',
+            'SELECT 1 FROM ai_catalog_models AS child LEFT JOIN providers AS parent '
+            'ON parent.id=child.provider_id WHERE parent.id IS NULL LIMIT 1',
+            'SELECT 1 FROM ai_key_model_access AS child LEFT JOIN api_keys AS parent '
+            'ON parent.id=child.key_id AND parent.provider_id=child.provider_id '
+            'WHERE parent.id IS NULL LIMIT 1',
+            'SELECT 1 FROM ai_key_model_access AS child LEFT JOIN ai_catalog_models AS parent '
+            'ON parent.id=child.model_id AND parent.provider_id=child.provider_id '
+            'WHERE parent.id IS NULL LIMIT 1',
+        ):
+            if bind.execute(sa.text(query)).first():
+                _mismatch()
+        return True
     reserved = expected_names | set(_STARTUP_SQLITE_INDEX_DDL)
     if any(name.lower() in reserved for name in inspector.get_view_names()):
         _mismatch()

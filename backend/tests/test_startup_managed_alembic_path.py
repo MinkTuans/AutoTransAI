@@ -231,6 +231,8 @@ def test_mysql_current_startup_glossary_without_memory_replays_read_only(mysql_d
     db.exec_driver_sql('DROP TABLE projects')
     Base.metadata.create_all(db)
     assert 'project_terminology_memory' not in sa.inspect(db).get_table_names()
+
+
     if row_state != 'empty':
         with Session(db) as session:
             session.add(Project(id='project', title='Private project'))
@@ -256,3 +258,81 @@ def test_mysql_current_startup_glossary_without_memory_replays_read_only(mysql_d
     assert db.exec_driver_sql('SHOW CREATE TABLE project_glossaries').one()[1] == before
     assert db.exec_driver_sql('SELECT * FROM project_glossaries').all() == rows_before
     assert 'project_terminology_memory' not in sa.inspect(db).get_table_names()
+
+
+def test_mysql_current_startup_schema_traverses_catalog_chain(mysql_db, tmp_path):
+    db = mysql_db
+    db.exec_driver_sql('DROP TABLE video_translation_jobs')
+    db.exec_driver_sql('DROP TABLE projects')
+    Base.metadata.create_all(db)
+    with Session(db) as session:
+        session.add(Provider(id='p1', name='Private provider', provider_type='llm'))
+        session.add(AIModel(id='remote', provider_id='p1', model_name='Private model',
+                            capabilities='["LLM"]'))
+        session.add(AIFunctionConfig(function_id='translation', function_name='Translation',
+                                     capability='LLM', primary_provider_id='p1', model_id='remote'))
+        session.flush()
+        session.add(APIKey(id='key1', provider_id='p1', ciphertext='synthetic-only',
+                           fingerprint='a' * 64, masked_key='****'))
+        session.add(CatalogModel(id='model1', provider_id='p1', remote_model_id='remote',
+                                 source='discovered', capabilities=['LLM'],
+                                 capability_status='KNOWN'))
+        session.add(CatalogRefreshRun(id='run1', mode='explicit', status='complete', summary={}))
+        session.flush()
+        session.add(KeyModelAccess(key_id='key1', model_id='model1', provider_id='p1'))
+        session.flush()
+    names = ('providers', 'ai_function_configs', 'ai_models', 'api_keys',
+             'ai_catalog_models', 'ai_key_model_access', 'ai_catalog_refresh_runs')
+    before = {name: db.exec_driver_sql(f'SHOW CREATE TABLE `{name}`').one()[1]
+              for name in names}
+    before_rows = {name: db.exec_driver_sql(f'SELECT * FROM `{name}` ORDER BY 1').all()
+                   for name in names}
+    db.commit()
+    url = db.engine.url.render_as_string(hide_password=False)
+    command.upgrade(config_for(url, tmp_path), 'head')
+    assert {name: db.exec_driver_sql(f'SHOW CREATE TABLE `{name}`').one()[1]
+            for name in names} == before
+    assert {name: db.exec_driver_sql(f'SELECT * FROM `{name}` ORDER BY 1').all()
+            for name in names} == before_rows
+    assert db.exec_driver_sql('SELECT version_num FROM alembic_version').scalar_one() == (
+        '20260923_key_rotation_domain')
+
+
+def test_mysql_current_startup_catalog_refuses_schema_drift_before_writes(mysql_db):
+    db = mysql_db
+    db.exec_driver_sql('DROP TABLE video_translation_jobs')
+    db.exec_driver_sql('DROP TABLE projects')
+    Base.metadata.create_all(db)
+    db.exec_driver_sql('ALTER TABLE ai_catalog_models ADD COLUMN rogue INT NULL')
+    module = load_python_file(str(Path(__file__).parents[1] / 'alembic' / 'versions'),
+                              '20260923_ai_catalog.py')
+    statements = []
+    sa.event.listen(db, 'before_cursor_execute',
+                    lambda c, cur, sql, p, ctx, many: statements.append(sql))
+    with Operations.context(MigrationContext.configure(db)):
+        with pytest.raises(RuntimeError, match='Historical schema mismatch'):
+            module.upgrade()
+    assert not any(sql.lstrip().upper().startswith(
+        ('CREATE', 'ALTER', 'DROP', 'INSERT', 'UPDATE', 'DELETE')) for sql in statements)
+
+
+def test_mysql_startup_catalog_refuses_orphan_key(mysql_db):
+    db = mysql_db
+    db.exec_driver_sql('DROP TABLE video_translation_jobs')
+    db.exec_driver_sql('DROP TABLE projects')
+    Base.metadata.create_all(db)
+    helper = load_python_file(str(Path(__file__).parents[1] / 'alembic'),
+                              'catalog_prerequisites.py')
+    assert helper.is_startup_final(db)
+    db.exec_driver_sql('SET foreign_key_checks=0')
+    try:
+        db.execute(sa.text(
+            "INSERT INTO api_keys (id, provider_id, ciphertext, fingerprint, masked_key, "
+            "enabled, priority, runtime_status, request_count, success_count, failure_count, "
+            "revision, created_at, updated_at) VALUES ('key', 'missing', 'synthetic', "
+            ":fingerprint, '****', 1, 100, 'ready', 0, 0, 0, 1, '2001-01-01', '2001-01-01')"),
+            {'fingerprint': 'a' * 64})
+    finally:
+        db.exec_driver_sql('SET foreign_key_checks=1')
+    with pytest.raises(RuntimeError, match='Historical schema mismatch'):
+        helper.is_startup_final(db)

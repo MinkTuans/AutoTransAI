@@ -1,3 +1,6 @@
+- **MySQL startup canonical catalog replay (2026-09-24, Task 9 schema batch)**:
+  - The five catalog/key revisions now accept a frozen exact MySQL 8.4 startup profile across seven tables, with trigger, table-name and scoped orphan-FK checks. A populated disposable startup database reaches Alembic head without catalog row or DDL changes; schema drift or an orphan key refuses before writes. The blank MySQL revision chain still passes. Other MySQL server/default-collation profiles fail closed until explicitly validated.
+
 - **MySQL startup converted glossary replay (2026-09-24, Task 9 schema batch)**:
   - The published MySQL glossary revision now validates an already-converted startup glossary with no terminology-memory table or migration backup before read-only replay. Stage/audit/backup namespace and incoming references are preflighted; stored normalized keys are checked. Disposable MySQL tests cover empty, populated, and corrupt-key cases, alongside the historical shadow-copy suite. The full MySQL startup Alembic chain next stops at catalog prerequisites.
 
