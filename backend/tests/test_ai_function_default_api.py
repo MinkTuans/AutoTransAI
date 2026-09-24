@@ -55,6 +55,7 @@ async def seed(sessions, path, *, provider="openai", capability="STT", model_id=
                                 configuration_error="catalog_model_retired", fallback_enabled=True,
                                 fallback_provider_id="historical"))
         db.add(CatalogModel(id=model_id, provider_id=provider, remote_model_id="remote-model",
+                            display_name="Readable Speech",
                             source=source, capability_status=status, capabilities=list(capabilities),
                             enabled=model_enabled, retired_at=datetime(2026, 1, 1) if retired else None))
     if with_key:
@@ -71,11 +72,14 @@ async def test_put_persists_exact_catalog_id_and_provider_clears_error_preserves
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["model_id"] == "catalog-id" and data["primary_provider_id"] == "openai"
+    assert data["model_display_name"] == "Readable Speech"
     assert data["default_status"] == "ready" and data["selectable"] is True
     assert data["configuration_error"] is None
     assert "synthetic-secret-key" not in response.text
     listed = (await client.get("/api/ai/functions")).json()["data"]
-    assert next(row for row in listed if row['function_id'] == 'stt')['model_id'] == 'catalog-id'
+    stored_view = next(row for row in listed if row['function_id'] == 'stt')
+    assert stored_view['model_id'] == 'catalog-id'
+    assert stored_view['model_display_name'] == 'Readable Speech'
     async with sessions() as db:
         config = await db.get(AIFunctionConfig, "stt")
         assert config.model_id == "catalog-id" and config.primary_provider_id == "openai"

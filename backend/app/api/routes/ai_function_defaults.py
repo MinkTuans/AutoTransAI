@@ -104,7 +104,9 @@ async def set_function_default(function_id: str, body: FunctionDefaultInput,
             await db.refresh(config)
             result = FunctionView(function_id=config.function_id, function_name=config.function_name,
                                   capability=config.capability, primary_provider_id=model.provider_id,
-                                  model_id=model.id, configuration_error=None, default_status="ready",
+                                  model_id=model.id,
+                                  model_display_name=model.display_name or model.remote_model_id,
+                                  configuration_error=None, default_status="ready",
                                   selectable=True, updated_at=config.updated_at)
     except IntegrityError:
         if creating:

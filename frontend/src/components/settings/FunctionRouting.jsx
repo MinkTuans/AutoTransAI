@@ -180,12 +180,12 @@ export default function FunctionRouting() {
         <button type="button" className="btn btn-secondary" onClick={() => setRetry(value => value + 1)}>Retry functions</button>
       </div> : !functions.length ? <p>No AI functions are configured yet.</p> :
         <div className="catalog-table-wrap"><table className="table function-routing-table">
-          <thead><tr><th>AI Function</th><th>Capability</th><th>Default provider</th><th>Default model ID</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>AI Function</th><th>Capability</th><th>Default provider</th><th>Default model</th><th>Status</th><th></th></tr></thead>
           <tbody>{functions.map(fn => <tr key={fn.function_id}>
             <td><strong>{fn.function_name}</strong></td>
             <td><span className="badge badge-neutral">{fn.capability}</span></td>
             <td>{fn.primary_provider_id || '—'}</td>
-            <td><code>{fn.model_id || '—'}</code></td>
+            <td>{fn.model_display_name || <code>{fn.model_id || '—'}</code>}</td>
             <td><span className={`badge ${fn.default_status === 'ready' ? 'badge-success' : 'badge-warning'}`}>{fn.default_status}</span>
               {fn.configuration_error && <small>Configuration issue: {fn.configuration_error}</small>}</td>
             <td><button type="button" className="btn btn-secondary"

@@ -101,6 +101,7 @@ class FunctionView(BaseModel):
     capability: str
     primary_provider_id: str
     model_id: str
+    model_display_name: str | None = None
     configuration_error: str | None
     default_status: str
     selectable: bool
@@ -312,6 +313,7 @@ async def list_functions(db: AsyncSession = Depends(get_db)):
         rows.append(FunctionView(function_id=c.function_id, function_name=c.function_name,
                                  capability=c.capability, primary_provider_id=c.primary_provider_id,
                                  model_id=c.model_id,
+                                 model_display_name=(model.display_name or model.remote_model_id) if model else None,
                                  configuration_error=("catalog_model_retired" if c.configuration_error == "catalog_model_retired"
                                                       else "configuration_error" if c.configuration_error else None),
                                  default_status="configuration_error" if c.configuration_error else status,

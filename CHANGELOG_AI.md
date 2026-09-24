@@ -1,3 +1,6 @@
+- **Function default model names (2026-09-24)**:
+  - Settings → Function displays the catalog model's readable name instead of its internal UUID. Canonical Function GET and PUT add `model_display_name` while preserving `model_id` for exact writes; models without a display name use their remote model ID, and missing legacy rows remain identifiable. Backend API and frontend regression tests cover initial load and immediate post-selection display. No database or provider configuration changes.
+
 - **Unified Pre-flight canonical STT and Translation routing (2026-09-24)**:
   - Unified workflow Pre-flight now checks the selected canonical STT and Translation routes when the Gemini/OpenAI catalog is active. It uses catalog model IDs and eligible stored key access without a separate `.env` key probe. An unavailable or missing canonical default becomes a critical Pre-flight result instead of an HTTP 500 or a fallback to archival `ai_models`. Legacy-only installations retain their existing resolver and provider check. Disposable SQLite endpoint regressions cover ready routes, disabled keys and missing defaults; no live provider or configured database was used.
 

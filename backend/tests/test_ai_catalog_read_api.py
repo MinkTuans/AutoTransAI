@@ -89,6 +89,8 @@ async def test_search_filter_pagination_status_defaults_and_read_only(catalog_ap
                                  source="manual", capability_status="KNOWN", capabilities=["TTS"], enabled=False)])
         db.add(AIFunctionConfig(function_id="visual_gender", function_name="Visual Gender",
                                 capability="VISUAL_GENDER", primary_provider_id="acme", model_id="one"))
+        db.add(AIFunctionConfig(function_id="stt", function_name="Speech to Text",
+                                capability="STT", primary_provider_id="acme", model_id="two"))
     for term in ("remote-alpha", "Vision Alpha", "VISUAL_GENDER"):
         result = (await client.get("/api/ai/models", params={"q": term})).json()["data"]
         assert [m["id"] for m in result["items"]] == ["one"]
@@ -109,10 +111,14 @@ async def test_search_filter_pagination_status_defaults_and_read_only(catalog_ap
     functions = (await client.get("/api/ai/functions")).json()["data"]
     visual = next(row for row in functions if row['function_id'] == 'visual_gender')
     assert visual["model_id"] == "one" and visual["configuration_error"] is None
+    assert visual["model_display_name"] == "Vision Alpha"
+    stt = next(row for row in functions if row['function_id'] == 'stt')
+    assert stt['model_display_name'] == 'remote-beta'
+    assert stt['default_status'] == 'retired'
     assert "secret-marker" not in str(detail)
     async with sessions() as db:
         assert len((await db.scalars(select(CatalogModel))).all()) == 3
-        assert len((await db.scalars(select(AIFunctionConfig))).all()) == 1
+        assert len((await db.scalars(select(AIFunctionConfig))).all()) == 2
 
 
 async def test_keyless_system_provider_is_ready_without_credentials(catalog_api):
@@ -135,7 +141,7 @@ async def test_fresh_function_inventory_is_visible_without_database_writes(catal
     assert {row['function_id'] for row in functions} == {
         'stt', 'translation', 'tts', 'video_generation', 'visual_gender', 'image_generation'
     }
-    assert all(row['default_status'] == 'unconfigured' and
+    assert all(row['default_status'] == 'unconfigured' and row['model_display_name'] is None and
                row['primary_provider_id'] == '' and row['model_id'] == '' for row in functions)
     async with sessions() as db:
         assert (await db.scalars(select(AIFunctionConfig))).all() == []

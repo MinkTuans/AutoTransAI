@@ -64,6 +64,16 @@ describe('FunctionRouting', () => {
     expect(screen.queryByText(/Fallback Provider|Fallback Enabled|Nhập model ID/)).toBeNull();
   });
 
+  it('shows the readable model name when the Function view contains one', async () => {
+    aiApi.listFunctions.mockResolvedValue({ success: true, data: [
+      { ...speech, model_id: 'catalog-uuid', model_display_name: 'Gemini Audio' },
+    ] });
+    render(<FunctionRouting />);
+    expect(await screen.findByText('Gemini Audio')).toBeTruthy();
+    expect(screen.getByText('Default model')).toBeTruthy();
+    expect(screen.queryByText('catalog-uuid')).toBeNull();
+  });
+
   it('opens capability-filtered picker and searches, filters, and pages on the server', async () => {
     aiApi.listModels.mockImplementation(async ({ provider_id, q, page: number }) => {
       if (q === 'speech') return page([{ ...model, id: 'search-model', display_name: 'Speech Search' }]);
@@ -136,12 +146,16 @@ describe('FunctionRouting', () => {
   });
 
   it('sets exact catalog ID and updates the visible default only after successful PUT', async () => {
+    aiApi.updateFunction.mockResolvedValue({ success: true, data: {
+      ...speech, model_id: 'new-model', model_display_name: 'Speech V2',
+    } });
     render(<FunctionRouting />);
     fireEvent.click(await screen.findByRole('button', { name: 'Choose model for Speech to Text' }));
     const picker = await screen.findByRole('dialog');
     fireEvent.click(await within(picker).findByRole('button', { name: 'Select Speech V2' }));
     await waitFor(() => expect(aiApi.updateFunction).toHaveBeenCalledWith('stt', { model_id: 'new-model' }));
-    expect(await screen.findByText('new-model')).toBeTruthy();
+    expect(await screen.findByText('Speech V2')).toBeTruthy();
+    expect(screen.queryByText('new-model')).toBeNull();
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
