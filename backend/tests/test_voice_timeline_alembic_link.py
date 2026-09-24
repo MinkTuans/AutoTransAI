@@ -321,11 +321,15 @@ def test_equivalent_sql_preserves_populated_posttimeline(db, replace):
     assert db.exec_driver_sql('SELECT original_start, original_end FROM video_translation_segments').one() == (0.5, 3.75)
 
 
-def test_backfill_trigger_cannot_rewrite_existing_user_data(db):
+@pytest.mark.parametrize('table_name', [
+    'video_translation_segments', 'VIDEO_TRANSLATION_SEGMENTS', 'Video_Translation_Segments',
+])
+@pytest.mark.parametrize('temporary', [False, True], ids=['permanent', 'temporary'])
+def test_backfill_trigger_cannot_rewrite_existing_user_data(db, table_name, temporary):
     prepare(db)
     fixture_schema(db)
     populate(db)
-    db.exec_driver_sql("CREATE TRIGGER corrupt_original AFTER UPDATE ON video_translation_segments "
+    db.exec_driver_sql(f"CREATE {'TEMP ' if temporary else ''}TRIGGER corrupt_original AFTER UPDATE ON {table_name} "
                        "BEGIN UPDATE video_translation_segments SET original_start = 99; END")
     reject_without_writes(db)
 

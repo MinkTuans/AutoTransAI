@@ -98,8 +98,8 @@ def upgrade():
     if bind.dialect.name == 'sqlite':
         for table in tables:
             if bind.execute(sa.text(
-                "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND tbl_name = :table "
-                "UNION ALL SELECT 1 FROM sqlite_temp_master WHERE type = 'trigger' AND tbl_name = :table"),
+                "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND tbl_name = :table COLLATE NOCASE "
+                "UNION ALL SELECT 1 FROM sqlite_temp_master WHERE type = 'trigger' AND tbl_name = :table COLLATE NOCASE"),
                 {'table': table.name}).first():
                 helper._mismatch()
     child_names = {table.name for table in tables[:2]}
