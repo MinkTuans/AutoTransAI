@@ -21,6 +21,11 @@ def _helper():
     return load_python_file(str(Path(__file__).resolve().parents[1]), 'voice_prerequisites.py')
 
 
+def _ensure_version_width(bind):
+    load_python_file(str(Path(__file__).resolve().parents[1]), 'version_table_width.py').ensure(
+        bind, down_revision, revision)
+
+
 def _tables(helper, startup=False):
     parents, children = helper._tables()
     mappings, segments = children
@@ -109,6 +114,7 @@ def upgrade():
             if table.name in present:
                 helper._validate_table(bind, inspector, table)
         # The entire namespace and existing group passed before any writes.
+        _ensure_version_width(bind)
         helper.ensure(bind)
         for old, new in zip(before, tables[:2]):
             for column in new.columns:
@@ -134,6 +140,7 @@ def upgrade():
             except RuntimeError:
                 if startup:
                     raise
+        _ensure_version_width(bind)
     else:
         helper._mismatch()
     # Preserve historical originals; avoid even a redundant UPDATE on replay.
