@@ -142,6 +142,8 @@ def _env_keys(data: bytes | None, counts: dict[str, int], issues: set[str]) -> d
 
 async def inventory_legacy_migration(
     db: AsyncSession, *, json_path: Path, env_path: Path | None = None,
+    _source_snapshot: tuple[tuple[bytes | None, str | None],
+                            tuple[bytes | None, str | None]] | None = None,
 ) -> dict[str, object]:
     """Inspect existing rows and explicitly supplied legacy files without writes."""
     counts = dict.fromkeys(COUNT_NAMES, 0)
@@ -189,8 +191,11 @@ async def inventory_legacy_migration(
                 or (provider, model) in catalog_identity):
             counts["unresolved_defaults"] += 1
 
-    json_data, json_error = _read_file(Path(json_path), "json")
-    env_data, env_error = _read_file(Path(env_path) if env_path is not None else None, "env")
+    if _source_snapshot is None:
+        json_data, json_error = _read_file(Path(json_path), "json")
+        env_data, env_error = _read_file(Path(env_path) if env_path is not None else None, "env")
+    else:
+        (json_data, json_error), (env_data, env_error) = _source_snapshot
     issues.update(error for error in (json_error, env_error) if error)
     json_keys = _json_keys(json_data, counts, issues)
     env_keys = _env_keys(env_data, counts, issues)

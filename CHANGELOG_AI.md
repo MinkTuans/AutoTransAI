@@ -1205,3 +1205,7 @@
 
 - Redirected backend test defaults to disposable SQLite/data/storage and scrubbed configured credentials before app import. Settings API, preflight, audio pipeline and auto-confirm integration tests now isolate their database; Settings also isolates its key JSON and dotenv files. Visual gender orchestration tests use a synthetic contact sheet; the real FFmpeg check skips if the binary is unavailable. The audio pipeline uses synthetic Edge TTS WAV output, and Gemini STT tests supply request-local synthetic route credentials.
 - Updated Studio/Unified route test expectations to the current one-attempt and rejected-key policy: HTTP 429 and 401 do not retry the same key, and a model-level 404 can advance to another model on that key. The Edge test target now carries keyless access scope. These are test changes only; provider, route, API and schema code are unchanged.
+
+# Explicit legacy data cutover batch (2026-09-24, Task 9)
+
+- Added caller-transactional orchestration for preview, disabled legacy key import, archival model copy and safe function-default remap. Source bytes are bounded, inventoried and imported as one snapshot; source changes or conflicts roll back the batch without exposing raw credentials. A real SQLite outer transaction protects caller rollback across the savepoint. Catalog-only imports work without a credential master key. Added disposable SQLite and MySQL rollback/replay regressions; no configured database, provider, startup hook or live credential was used.
