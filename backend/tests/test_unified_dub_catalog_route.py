@@ -7,7 +7,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from sqlalchemy import event, select
+from sqlalchemy import delete, event, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import Base
@@ -309,6 +309,20 @@ async def test_seeded_legacy_edge_default_retains_positional_call(catalog, monke
     await DubStage().execute_step("tts_generation", ctx, None)
     assert calls == [("Xin chào", "vi-VN-HoaiMyNeural")]
     assert "catalog_model_id" not in ctx.audio_segments_info[0]
+
+
+async def test_imported_archival_tts_row_does_not_activate_unified_catalog(catalog):
+    sessions, path, *_ = catalog
+    async with sessions.begin() as db:
+        await db.execute(delete(APIKey))
+        await db.execute(delete(CatalogModel))
+        db.add(CatalogModel(provider_id="elevenlabs", remote_model_id="archival-voice",
+                            source="legacy_import", capability_status="FULL_UNKNOWN"))
+        config = await db.get(AIFunctionConfig, "tts")
+        config.model_id = "archival-voice"
+    ctx = WorkflowContext(project_id="project-a", video_path=str(path / "legacy-import.mp4"),
+                          translated_segments=[])
+    assert await DubStage()._tts_generation(ctx) == {"tts_clips_generated": 0}
 
 
 @pytest.mark.asyncio

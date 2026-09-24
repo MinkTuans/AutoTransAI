@@ -397,7 +397,7 @@ async def llm_extract_terms(
     if sessions is not None:
         async with sessions() as catalog_db:
             catalog_model = await catalog_db.scalar(select(CatalogModel.id).where(
-                CatalogModel.source != "system",
+                CatalogModel.source.not_in(("system", "legacy_import")),
                 CatalogModel.provider_id.in_(("gemini", "openai", "anthropic")),
             ).limit(1))
             catalog_key = await catalog_db.scalar(select(APIKey.id).where(
@@ -407,7 +407,8 @@ async def llm_extract_terms(
             configured = await catalog_db.get(AIFunctionConfig, "translation")
             canonical_default = (await catalog_db.get(CatalogModel, configured.model_id)
                                  if configured and configured.model_id else None)
-            if catalog_model is not None or catalog_key is not None or canonical_default is not None:
+            if (catalog_model is not None or catalog_key is not None
+                    or canonical_default is not None and canonical_default.source != "legacy_import"):
                 if configured is None or not configured.model_id:
                     raise RouteConfigurationError("LLM default is not configured.")
                 route = await build_route(catalog_db, "LLM")

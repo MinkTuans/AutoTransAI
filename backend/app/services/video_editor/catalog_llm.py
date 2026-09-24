@@ -33,7 +33,8 @@ async def generate_catalog_json(
         return None
     async with sessions() as db:
         catalog_model = await db.scalar(select(CatalogModel.id).where(
-            CatalogModel.source != "system", CatalogModel.provider_id.in_(("gemini", "openai", "anthropic")),
+            CatalogModel.source.not_in(("system", "legacy_import")),
+            CatalogModel.provider_id.in_(("gemini", "openai", "anthropic")),
         ).limit(1))
         catalog_key = await db.scalar(select(APIKey.id).where(
             APIKey.provider_id.in_(("gemini", "openai", "anthropic")),
@@ -41,7 +42,8 @@ async def generate_catalog_json(
         await db.scalar(select(CatalogRefreshRun.id).limit(1))
         config = await db.get(AIFunctionConfig, "translation")
         selected = await db.get(CatalogModel, config.model_id) if config and config.model_id else None
-        if catalog_model is None and catalog_key is None and selected is None:
+        if (catalog_model is None and catalog_key is None
+                and (selected is None or selected.source == "legacy_import")):
             return None
         if config is None or not config.model_id:
             raise RouteConfigurationError("LLM default is not configured.")

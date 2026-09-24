@@ -694,7 +694,8 @@ async def speech_to_text_and_detect_language(
         async with sessions() as catalog_db:
             catalog_model = await catalog_db.scalar(
                 select(CatalogModel.id).where(
-                    CatalogModel.source != "system", CatalogModel.provider_id.in_(("gemini", "openai"))
+                    CatalogModel.source.not_in(("system", "legacy_import")),
+                    CatalogModel.provider_id.in_(("gemini", "openai"))
                 ).limit(1)
             )
             catalog_key = await catalog_db.scalar(
@@ -706,7 +707,7 @@ async def speech_to_text_and_detect_language(
             canonical_default = (await catalog_db.get(CatalogModel, stt_default.model_id)
                                  if stt_default and stt_default.model_id else None)
             initialized = (catalog_model is not None or catalog_key is not None or
-                           canonical_default is not None)
+                           canonical_default is not None and canonical_default.source != "legacy_import")
             if initialized:
                 if stt_default is None or not stt_default.model_id:
                     raise RouteConfigurationError("STT default is not configured.")
@@ -1260,7 +1261,8 @@ async def translate_transcript_segments(
         # OpenAI catalog must use the canonical default; missing tables propagate.
         async with sessions() as catalog_db:
             catalog_model = await catalog_db.scalar(select(CatalogModel.id).where(
-                CatalogModel.source != "system", CatalogModel.provider_id.in_(("gemini", "openai"))
+                CatalogModel.source.not_in(("system", "legacy_import")),
+                CatalogModel.provider_id.in_(("gemini", "openai"))
             ).limit(1))
             catalog_key = await catalog_db.scalar(select(APIKey.id).where(
                 APIKey.provider_id.in_(("gemini", "openai"))
@@ -1270,7 +1272,7 @@ async def translate_transcript_segments(
             canonical_default = (await catalog_db.get(CatalogModel, translation_default.model_id)
                                  if translation_default and translation_default.model_id else None)
             canonical = (catalog_model is not None or catalog_key is not None or
-                         canonical_default is not None)
+                         canonical_default is not None and canonical_default.source != "legacy_import")
             if canonical:
                 if translation_default is None or not translation_default.model_id:
                     raise RouteConfigurationError("TRANSLATION default is not configured.")

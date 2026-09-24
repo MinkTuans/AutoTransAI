@@ -81,7 +81,8 @@ async def set_function_default(function_id: str, body: FunctionDefaultInput,
             raise HTTPException(404, "Catalog model does not exist.")
         provider = await db.scalar(select(Provider).where(Provider.id == provider_id)
                                    .with_for_update().execution_options(populate_existing=True))
-        if (model.provider_id != provider_id or provider is None or not provider.enabled
+        if (model.provider_id != provider_id or model.source == "legacy_import"
+                or provider is None or not provider.enabled
                 or not model.enabled or model.retired_at is not None
                 or not compatible(config.capability, model_evidence(model))
                 or not await _available(db, model, config.capability)):

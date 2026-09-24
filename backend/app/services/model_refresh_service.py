@@ -192,8 +192,12 @@ class ModelRefreshService:
                     db.add(model)
                     await db.flush()
                     rows[model.remote_model_id] = model
-                # Non-discovered rows are curated: positive matches can establish
-                # listing edges, but cannot rewrite or reactivate the model row.
+                # An archival identity becomes discovered only after a real
+                # listing names the exact provider/model pair.
+                if model.source == "legacy_import":
+                    model.source = "discovered"
+                # Other non-discovered rows are curated: positive matches can
+                # establish listing edges, but cannot rewrite or reactivate them.
                 if model.source == "discovered":
                     model.retired_at = None
                     model.discovery_metadata = discovered.metadata

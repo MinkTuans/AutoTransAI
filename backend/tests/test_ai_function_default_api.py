@@ -115,6 +115,16 @@ async def test_public_catalog_and_keyless_availability_matches_router(default_ap
     assert "verified" not in response.text
 
 
+async def test_imported_archival_model_cannot_replace_function_default(default_api):
+    client, sessions, path = default_api
+    await seed(sessions, path, provider="fal", capability="IMAGE_GENERATION",
+               source="legacy_import", with_key=True, with_edge=False)
+    response = await client.put("/api/ai/functions/stt", json={"model_id": "catalog-id"})
+    assert response.status_code == 409
+    async with sessions() as db:
+        assert (await db.get(AIFunctionConfig, "stt")).model_id == "legacy-remote"
+
+
 async def test_unknown_function_model_and_remote_name_are_rejected(default_api):
     client, sessions, path = default_api
     await seed(sessions, path)

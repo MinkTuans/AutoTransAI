@@ -93,7 +93,8 @@ async def build_route(db: AsyncSession, capability: str, *, preferred_key_ids: t
     providers = {p.id: p for p in (await db.scalars(select(Provider))).all() if p.enabled}
     models = (await db.scalars(select(CatalogModel))).all()
     usable = {m.id: m for m in models if m.provider_id in providers and m.enabled
-              and m.retired_at is None and compatible(capability, model_evidence(m))}
+              and m.source != "legacy_import" and m.retired_at is None
+              and compatible(capability, model_evidence(m))}
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     keys = {k.id: k for k in (await db.scalars(select(APIKey))).all() if _key_eligible(k, now)}
     access: dict[str, list[str]] = {}

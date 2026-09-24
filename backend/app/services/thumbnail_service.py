@@ -238,13 +238,13 @@ class ThumbnailService:
             selected = (await catalog_db.get(CatalogModel, config.model_id)
                         if config and config.model_id else None)
             model = await catalog_db.scalar(select(CatalogModel.id).where(
-                CatalogModel.source != "system",
+                CatalogModel.source.not_in(("system", "legacy_import")),
                 CatalogModel.provider_id.in_(("openai", "fal")),
             ).limit(1))
             key = await catalog_db.scalar(select(APIKey.id).where(
                 APIKey.provider_id.in_(("openai", "fal")),
             ).limit(1))
-            if selected is None and model is None and key is None:
+            if (selected is None or selected.source == "legacy_import") and model is None and key is None:
                 return None
             if config is None or not config.model_id:
                 raise RouteConfigurationError("Image generation default is not configured.")

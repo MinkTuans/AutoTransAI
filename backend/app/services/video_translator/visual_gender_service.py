@@ -342,7 +342,8 @@ async def detect_speakers_gender(
         # provider calls. Missing tables are migration errors, not legacy mode.
         async with sessions() as catalog_db:
             catalog_model = await catalog_db.scalar(select(CatalogModel.id).where(
-                CatalogModel.source != "system", CatalogModel.provider_id.in_(("gemini", "openai"))
+                CatalogModel.source.not_in(("system", "legacy_import")),
+                CatalogModel.provider_id.in_(("gemini", "openai"))
             ).limit(1))
             catalog_key = await catalog_db.scalar(select(APIKey.id).where(
                 APIKey.provider_id.in_(("gemini", "openai"))
@@ -355,7 +356,8 @@ async def detect_speakers_gender(
             # off its historical default.
             canonical_default = (await catalog_db.get(CatalogModel, visual_default.model_id)
                                  if visual_default and visual_default.model_id else None)
-            if catalog_model is not None or catalog_key is not None or canonical_default is not None:
+            if (catalog_model is not None or catalog_key is not None
+                    or canonical_default is not None and canonical_default.source != "legacy_import"):
                 if visual_default is None or not visual_default.model_id:
                     raise RouteConfigurationError("VISUAL_GENDER default is not configured.")
                 route = await build_route(catalog_db, "VISUAL_GENDER")

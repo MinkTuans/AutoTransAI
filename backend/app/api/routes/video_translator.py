@@ -2036,7 +2036,7 @@ async def execute_job_render_pipeline(job_id: str) -> None:
             # An existing system Edge row alone does not activate catalog TTS.
             catalog_model = await init_session.scalar(select(CatalogModel.id).where(
                 CatalogModel.provider_id.in_(("edge_tts", "elevenlabs", "google_cloud_tts")),
-                CatalogModel.source != "system",
+                CatalogModel.source.not_in(("system", "legacy_import")),
             ).limit(1))
             catalog_key = await init_session.scalar(select(APIKey.id).where(
                 APIKey.provider_id.in_(("elevenlabs", "google_cloud_tts")),

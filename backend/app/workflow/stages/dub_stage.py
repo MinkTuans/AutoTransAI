@@ -121,7 +121,7 @@ class DubStage:
         async with async_session_factory() as catalog_db:
             catalog_model = await catalog_db.scalar(select(CatalogModel.id).where(
                 CatalogModel.provider_id.in_(("edge_tts", "elevenlabs", "google_cloud_tts")),
-                CatalogModel.source != "system",
+                CatalogModel.source.not_in(("system", "legacy_import")),
             ).limit(1))
             catalog_key = await catalog_db.scalar(select(APIKey.id).where(
                 APIKey.provider_id.in_(("elevenlabs", "google_cloud_tts")),
@@ -129,7 +129,8 @@ class DubStage:
             await catalog_db.scalar(select(CatalogRefreshRun.id).limit(1))
             config = await catalog_db.get(AIFunctionConfig, "tts")
             selected = await catalog_db.get(CatalogModel, config.model_id) if config and config.model_id else None
-            canonical = bool(catalog_model or catalog_key or selected)
+            canonical = bool(catalog_model or catalog_key or
+                             selected is not None and selected.source != "legacy_import")
             # The seeded legacy Edge string has no catalog UUID until migration.
             if config and config.primary_provider_id == "edge_tts" and config.model_id == "edge-tts":
                 canonical = False
