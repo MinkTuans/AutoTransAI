@@ -1,19 +1,15 @@
-"""make project glossary the single terminology source of truth
+"""Guarded glossary conversion; preserve all historical terminology rows.
 
 Revision ID: 20260916_glossary_single_source
 Revises: 20260916_character_voice_timeline
 """
-
-from __future__ import annotations
-
-import json
+from pathlib import Path
+import hashlib
 from typing import Sequence, Union
 
 from alembic import op
+from alembic.util import load_python_file
 import sqlalchemy as sa
-
-from app.services.glossary_migration import audit_legacy_glossary_rows
-from app.services.glossary_service import clean_glossary_text, glossary_key
 
 
 revision: str = "20260916_glossary_single_source"
@@ -22,158 +18,120 @@ branch_labels = None
 depends_on = None
 
 
-def _table_exists(bind, name: str) -> bool:
-    return name in sa.inspect(bind).get_table_names()
+def _helper(filename):
+    return load_python_file(str(Path(__file__).resolve().parents[1]), filename)
+
+
+def _key(audit, value):
+    return hashlib.sha256(audit.normalized(value).encode('utf-8')).hexdigest()
+
+
+def _preflight_writers(bind):
+    if bind.dialect.name != 'sqlite':
+        return
+    if bind.execute(sa.text(
+        "SELECT 1 FROM sqlite_master WHERE name = '_alembic_tmp_project_glossaries' COLLATE NOCASE "
+        "UNION ALL SELECT 1 FROM sqlite_temp_master "
+        "WHERE name = '_alembic_tmp_project_glossaries' COLLATE NOCASE")).first():
+        raise RuntimeError('Historical schema mismatch: reconcile glossary temporary objects from a backup.')
+    for catalog in ('sqlite_master', 'sqlite_temp_master'):
+        table_names = bind.execute(sa.text(
+            f"SELECT name FROM {catalog} WHERE type = 'table'")).scalars()
+        for table_name in table_names:
+            if table_name.lower() == 'project_glossaries':
+                continue
+            foreign_keys = bind.execute(sa.text('SELECT "table" FROM pragma_foreign_key_list(:name)'),
+                                        {'name': table_name}).scalars()
+            if any(referred.lower() == 'project_glossaries' for referred in foreign_keys):
+                raise RuntimeError('Historical schema mismatch: reconcile glossary references from a backup.')
+    for table in ('project_glossaries', 'project_terminology_memory'):
+        if bind.execute(sa.text(
+            "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND tbl_name = :table COLLATE NOCASE "
+            "UNION ALL SELECT 1 FROM sqlite_temp_master WHERE type = 'trigger' "
+            "AND tbl_name = :table COLLATE NOCASE"), {'table': table}).first():
+            raise RuntimeError('Historical schema mismatch: reconcile glossary triggers from a backup.')
+    for name in ('uq_project_glossary_source_key', 'uq_project_glossary_translation_key'):
+        if bind.execute(sa.text(
+            'SELECT 1 FROM sqlite_master WHERE name = :name COLLATE NOCASE '
+            'UNION ALL SELECT 1 FROM sqlite_temp_master WHERE name = :name COLLATE NOCASE'),
+            {'name': name}).first():
+            raise RuntimeError('Historical schema mismatch: reconcile glossary index names from a backup.')
+
+
+def _read_rows(bind):
+    glossary = [dict(table='project_glossaries', id=row.id, project_id=row.project_id,
+                     source_term=row.source_term, translated_term=row.translated_term)
+                for row in bind.execute(sa.text(
+                    'SELECT id, project_id, source_term, translated_term FROM project_glossaries'))]
+    memory = [dict(table='project_terminology_memory', id=row.id, project_id=row.project_id,
+                   source_term=row.source_term, translated_term=row.suggested_term)
+              for row in bind.execute(sa.text(
+                  'SELECT id, project_id, source_term, suggested_term FROM project_terminology_memory'))]
+    return glossary, memory
 
 
 def upgrade() -> None:
     bind = op.get_bind()
-    if not _table_exists(bind, "project_glossaries"):
-        return
-    inspector = sa.inspect(bind)
-    existing_columns = {column["name"] for column in inspector.get_columns("project_glossaries")}
-    existing_constraints = {
-        constraint.get("name")
-        for constraint in inspector.get_unique_constraints("project_glossaries")
-    }
-    memory_exists = _table_exists(bind, "project_terminology_memory")
-    if (
-        not memory_exists
-        and {"source_key", "translation_key"}.issubset(existing_columns)
-        and {
-            "uq_project_glossary_source_key",
-            "uq_project_glossary_translation_key",
-        }.issubset(existing_constraints)
-    ):
-        return
+    if bind.dialect.name == 'mysql':
+        raise RuntimeError('Historical schema mismatch: MySQL glossary collation preflight '
+                           'is required before conversion; reconcile from a verified backup.')
+    helper = _helper('glossary_prerequisites.py')
+    audit_helper = _helper('glossary_data_audit.py')
+    if 'project_glossaries' in sa.inspect(bind).get_table_names():
+        columns = {column['name'] for column in sa.inspect(bind).get_columns('project_glossaries')}
+        keys = {'source_key', 'translation_key'} & columns
+        if keys:
+            if len(keys) != 2:
+                helper._mismatch()
+            helper.validate_converted(bind)
+            glossary, _ = _read_rows(bind)
+            for row in glossary:
+                stored = bind.execute(sa.text(
+                    'SELECT source_key, translation_key FROM project_glossaries WHERE id=:id'),
+                    {'id': row['id']}).one()
+                if (stored.source_key != _key(audit_helper, row['source_term'])
+                        or stored.translation_key != _key(audit_helper, row['translated_term'])):
+                    helper._mismatch()
+            return
+    _preflight_writers(bind)
+    helper.ensure(bind)
+    glossary, memory = _read_rows(bind)
+    result = audit_helper.audit(glossary + memory)
+    if result.conflict_codes:
+        raise RuntimeError('GLOSSARY_MIGRATION_CONFLICT: ' + ', '.join(result.conflict_codes)
+                           + '; reconcile from a verified backup before retrying.')
 
-    glossary_rows = [
-        {
-            "table": "project_glossaries",
-            "id": row.id,
-            "project_id": row.project_id,
-            "source_term": row.source_term,
-            "translated_term": row.translated_term,
-        }
-        for row in bind.execute(
-            sa.text(
-                "SELECT id, project_id, source_term, translated_term "
-                "FROM project_glossaries"
-            )
-        )
-    ]
-    memory_rows = []
-    if memory_exists:
-        memory_rows = [
-            {
-                "table": "project_terminology_memory",
-                "id": row.id,
-                "project_id": row.project_id,
-                "source_term": row.source_term,
-                "translated_term": row.suggested_term,
-            }
-            for row in bind.execute(
-                sa.text(
-                    "SELECT id, project_id, source_term, suggested_term "
-                    "FROM project_terminology_memory"
-                )
-            )
-        ]
+    op.add_column('project_glossaries', sa.Column('source_key', sa.String(64), nullable=True))
+    op.add_column('project_glossaries', sa.Column('translation_key', sa.String(64), nullable=True))
+    for row in glossary:
+        bind.execute(sa.text(
+            'UPDATE project_glossaries SET source_key=:source_key, '
+            'translation_key=:translation_key WHERE id=:id'),
+            {'id': row['id'], 'source_key': _key(audit_helper, row['source_term']),
+             'translation_key': _key(audit_helper, row['translated_term'])})
 
-    all_rows = glossary_rows + memory_rows
-    audit = audit_legacy_glossary_rows(all_rows)
-    if audit.conflicts:
-        raise RuntimeError(
-            "GLOSSARY_MIGRATION_CONFLICT: resolve legacy data before migration: "
-            + json.dumps(audit.conflicts, ensure_ascii=False)
-        )
+    memory_by_id = {str(row['id']): row for row in memory}
+    for identity in result.import_ids:
+        row = memory_by_id[identity]
+        bind.execute(sa.text(
+            'INSERT INTO project_glossaries '
+            '(id, project_id, source_term, translated_term, term_type, confidence, '
+            'source_context, approved, created_at, updated_at, source_key, translation_key) '
+            'SELECT id, project_id, source_term, suggested_term, term_type, confidence, '
+            'source_context, CASE WHEN needs_review = 0 THEN 1 ELSE 0 END, '
+            'created_at, updated_at, :source_key, :translation_key '
+            'FROM project_terminology_memory WHERE id=:id'),
+            {'id': identity, 'source_key': _key(audit_helper, row['source_term']),
+             'translation_key': _key(audit_helper, row['translated_term'])})
 
-    if "source_key" not in existing_columns or "translation_key" not in existing_columns:
-        with op.batch_alter_table("project_glossaries") as batch_op:
-            if "source_key" not in existing_columns:
-                batch_op.add_column(sa.Column("source_key", sa.String(length=64), nullable=True))
-            if "translation_key" not in existing_columns:
-                batch_op.add_column(sa.Column("translation_key", sa.String(length=64), nullable=True))
-
-    glossary_ids = {str(row["id"]) for row in glossary_rows}
-    rows_by_id = {str(row["id"]): row for row in all_rows}
-    for canonical_id in audit.canonical_ids:
-        row = rows_by_id[canonical_id]
-        source = clean_glossary_text(row["source_term"])
-        target = clean_glossary_text(row["translated_term"])
-        if canonical_id in glossary_ids:
-            bind.execute(
-                sa.text(
-                    "UPDATE project_glossaries SET source_term=:source, translated_term=:target, "
-                    "source_key=:source_key, translation_key=:translation_key WHERE id=:id"
-                ),
-                {
-                    "id": canonical_id,
-                    "source": source,
-                    "target": target,
-                    "source_key": glossary_key(source),
-                    "translation_key": glossary_key(target),
-                },
-            )
-        else:
-            legacy = bind.execute(
-                sa.text(
-                    "SELECT term_type, confidence, source_context, created_at, updated_at "
-                    "FROM project_terminology_memory WHERE id=:id"
-                ),
-                {"id": canonical_id},
-            ).first()
-            bind.execute(
-                sa.text(
-                    "INSERT INTO project_glossaries "
-                    "(id, project_id, source_term, translated_term, source_key, translation_key, "
-                    "term_type, confidence, source_context, approved, created_at, updated_at) "
-                    "VALUES (:id, :project_id, :source, :target, :source_key, :translation_key, "
-                    ":term_type, :confidence, :source_context, :approved, :created_at, :updated_at)"
-                ),
-                {
-                    "id": canonical_id,
-                    "project_id": row["project_id"],
-                    "source": source,
-                    "target": target,
-                    "source_key": glossary_key(source),
-                    "translation_key": glossary_key(target),
-                    "term_type": legacy.term_type,
-                    "confidence": legacy.confidence,
-                    "source_context": legacy.source_context,
-                    "approved": True,
-                    "created_at": legacy.created_at,
-                    "updated_at": legacy.updated_at,
-                },
-            )
-
-    duplicate_glossary_ids = audit.duplicate_ids & glossary_ids
-    for duplicate_id in duplicate_glossary_ids:
-        bind.execute(
-            sa.text("DELETE FROM project_glossaries WHERE id=:id"), {"id": duplicate_id}
-        )
-
-    with op.batch_alter_table("project_glossaries") as batch_op:
-        batch_op.alter_column("source_key", existing_type=sa.String(length=64), nullable=False)
-        batch_op.alter_column("translation_key", existing_type=sa.String(length=64), nullable=False)
-        if "uq_project_glossary_source_key" not in existing_constraints:
-            batch_op.create_unique_constraint(
-                "uq_project_glossary_source_key", ["project_id", "source_key"]
-            )
-        if "uq_project_glossary_translation_key" not in existing_constraints:
-            batch_op.create_unique_constraint(
-                "uq_project_glossary_translation_key", ["project_id", "translation_key"]
-            )
-
-    if _table_exists(bind, "project_terminology_memory"):
-        op.drop_table("project_terminology_memory")
+    with op.batch_alter_table('project_glossaries') as batch:
+        batch.alter_column('source_key', existing_type=sa.String(64), nullable=False)
+        batch.alter_column('translation_key', existing_type=sa.String(64), nullable=False)
+        batch.create_unique_constraint('uq_project_glossary_source_key', ['project_id', 'source_key'])
+        batch.create_unique_constraint('uq_project_glossary_translation_key',
+                                       ['project_id', 'translation_key'])
 
 
 def downgrade() -> None:
-    bind = op.get_bind()
-    if _table_exists(bind, "project_glossaries"):
-        with op.batch_alter_table("project_glossaries") as batch_op:
-            batch_op.drop_constraint("uq_project_glossary_translation_key", type_="unique")
-            batch_op.drop_constraint("uq_project_glossary_source_key", type_="unique")
-            batch_op.drop_column("translation_key")
-            batch_op.drop_column("source_key")
+    raise RuntimeError('Cannot safely downgrade the glossary conversion; '
+                       'restore a verified backup instead.')

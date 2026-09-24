@@ -87,7 +87,7 @@ def _validate_identity(bind, inspector, table):
     return columns
 
 
-def _validate_table(bind, inspector, table):
+def _validate_table(bind, inspector, table, converted=False):
     columns = _validate_identity(bind, inspector, table)
     if set(columns) != set(table.c.keys()) or inspector.get_check_constraints(table.name):
         _mismatch()
@@ -141,9 +141,29 @@ def _validate_table(bind, inspector, table):
                     _mismatch()
         inventory = bind.execute(sa.text('SELECT * FROM pragma_index_list(:table)'),
                                  {'table': table.name}).mappings().all()
-        if any(index['origin'] == 'u' for index in inventory):
+        if any(index['origin'] not in ('pk', 'u', 'c') for index in inventory):
             _mismatch()
-        ordinary = [index for index in inventory if index['origin'] != 'pk']
+        unique_indexes = [index for index in inventory if index['origin'] == 'u']
+        if converted:
+            expected_unique = {tuple(constraint.columns.keys())
+                               for constraint in table.constraints
+                               if isinstance(constraint, sa.UniqueConstraint)}
+            actual_unique = set()
+            for index in unique_indexes:
+                if index['unique'] != 1 or index['partial'] != 0:
+                    _mismatch()
+                keys = bind.execute(sa.text(
+                    'SELECT name, "desc", coll FROM pragma_index_xinfo(:name) WHERE key = 1'),
+                    {'name': index['name']}).all()
+                if any(order != 0 or not isinstance(coll, str) or coll.lower() != 'binary'
+                       for _, order, coll in keys):
+                    _mismatch()
+                actual_unique.add(tuple(name for name, _, _ in keys))
+            if len(unique_indexes) != len(expected_unique) or actual_unique != expected_unique:
+                _mismatch()
+        elif unique_indexes:
+            _mismatch()
+        ordinary = [index for index in inventory if index['origin'] == 'c']
         if {index['name'] for index in ordinary} != set(expected_indexes):
             _mismatch()
         for index in ordinary:
@@ -156,9 +176,19 @@ def _validate_table(bind, inspector, table):
                     for name, order, coll in keys] != [
                         (name, 0, 'binary') for name in expected_indexes[index['name']]]:
                 _mismatch()
-    if inspector.get_unique_constraints(table.name):
+    expected_constraints = {
+        constraint.name: [column.name for column in constraint.columns]
+        for constraint in table.constraints if isinstance(constraint, sa.UniqueConstraint)
+    }
+    actual_constraints = inspector.get_unique_constraints(table.name)
+    if (len(actual_constraints) != len(expected_constraints)
+            or any(constraint.get('name') not in expected_constraints
+                   or constraint['column_names'] != expected_constraints[constraint['name']]
+                   for constraint in actual_constraints)):
         _mismatch()
     indexes = inspector.get_indexes(table.name)
+    if converted and bind.dialect.name == 'mysql':
+        indexes = [index for index in indexes if index['name'] not in expected_constraints]
     if len(indexes) != len(expected_indexes):
         _mismatch()
     for index in indexes:
@@ -168,13 +198,21 @@ def _validate_table(bind, inspector, table):
             _mismatch()
 
 
-def ensure(bind):
-    """Validate parent and both children before any write; never commit."""
+def _preflight(bind, converted=False):
+    """Validate parent and both children without writing; never commit."""
     if not isinstance(bind, sa.engine.Connection):
         raise RuntimeError('Historical schema validation requires an explicit online connection.')
     if bind.dialect.name not in ('sqlite', 'mysql'):
         _mismatch()
     parent, tables = _tables()
+    if converted:
+        glossary = tables[0]
+        glossary.append_column(sa.Column('source_key', sa.String(64), nullable=False))
+        glossary.append_column(sa.Column('translation_key', sa.String(64), nullable=False))
+        glossary.append_constraint(sa.UniqueConstraint(
+            'project_id', 'source_key', name='uq_project_glossary_source_key'))
+        glossary.append_constraint(sa.UniqueConstraint(
+            'project_id', 'translation_key', name='uq_project_glossary_translation_key'))
     inspector = sa.inspect(bind)
     existing = set(inspector.get_table_names())
     views = set(inspector.get_view_names())
@@ -206,10 +244,23 @@ def ensure(bind):
         _mismatch()
     for table in tables:
         if table.name in present:
-            _validate_table(bind, inspector, table)
+            _validate_table(bind, inspector, table, converted=converted and table is tables[0])
+    return tables, present
+
+
+def ensure(bind):
+    """Validate parent and both historical children before any write; never commit."""
+    tables, present = _preflight(bind)
     for table in tables:
         if table.name not in present:
             table.create(bind, checkfirst=False)
+
+
+def validate_converted(bind):
+    """Require the complete converted shape without writes."""
+    tables, present = _preflight(bind, converted=True)
+    if present != {table.name for table in tables}:
+        _mismatch()
 
 
 def refuse_downgrade():

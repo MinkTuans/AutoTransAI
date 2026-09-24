@@ -79,7 +79,7 @@ def _legacy_schema(connection):
     """))
 
 
-def test_alembic_upgrade_moves_clean_memory_rows_and_drops_legacy_table(tmp_path):
+def test_alembic_upgrade_rejects_incomplete_historical_schema_without_deleting_rows(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'migration.db'}")
     migration_path = (
         Path(__file__).resolve().parents[2]
@@ -98,14 +98,9 @@ def test_alembic_upgrade_moves_clean_memory_rows_and_drops_legacy_table(tmp_path
             VALUES ('m1','p1','李道天','Lý Đạo Thiên','character',0.9,0,NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
         """))
         migration.op = Operations(MigrationContext.configure(connection))
-        migration.upgrade()
-
-        assert "project_terminology_memory" not in inspect(connection).get_table_names()
-        saved = connection.execute(text(
-            "SELECT source_term, translated_term, source_key, translation_key FROM project_glossaries"
-        )).one()
-        assert saved.source_term == "李道天"
-        assert saved.translated_term == "Lý Đạo Thiên"
-        assert len(saved.source_key) == len(saved.translation_key) == 64
-        unique_indexes = [index for index in inspect(connection).get_unique_constraints("project_glossaries")]
-        assert len(unique_indexes) == 2
+        with pytest.raises(RuntimeError, match='Historical schema mismatch'):
+            migration.upgrade()
+        assert "project_terminology_memory" in inspect(connection).get_table_names()
+        assert connection.execute(text('SELECT id FROM project_terminology_memory')).all() == [('m1',)]
+        assert 'source_key' not in {column['name'] for column in
+                                    inspect(connection).get_columns('project_glossaries')}

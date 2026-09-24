@@ -1,3 +1,7 @@
+- **Guarded glossary conversion SQLite checkpoint (2026-09-24, Task 9D4B2)**:
+  - Reworked published glossary revision to wire frozen prerequisites and migration-owned audit. It preflights before data writes, copies only unique memory mappings, retains original glossary text and the terminology table/rows, and refuses ambiguous duplicates with sanitized codes. Unreviewed suggestions remain unapproved.
+  - Added disposable SQLite actual-revision regressions for preservation, conflicts, absent/partial children, replay and corrupt keys, incoming FKs and batch temporary-name collisions. Replaced the obsolete destructive unit-test expectation with schema rejection. Updated the knowledge base. MySQL upgrade deliberately stops before SQL pending collation-aware preflight and full-key validation; full version traversal, arbitrary production schemas and cutover remain pending.
+
 - **Glossary migration audit checkpoint (2026-09-24, Task 9D4B1)**:
   - Added migration-owned text normalization and read-only copy audit with fixed, sanitized conflict codes. Cross-table equivalents remain in terminology memory; duplicate or invalid mappings block the planned conversion without selecting rows for deletion.
   - Added seven focused RED→GREEN tests and updated the knowledge base. Published revision, application services, schema, and database contents remain unchanged; wiring and data migration are Task 9D4B2.
