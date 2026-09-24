@@ -300,8 +300,12 @@ def upgrade() -> None:
         if keys:
             if len(keys) != 2:
                 helper._mismatch()
-            helper.validate_converted(bind)
-            glossary, _ = _read_rows(bind)
+            if 'project_terminology_memory' in sa.inspect(bind).get_table_names():
+                helper.validate_converted(bind)
+                glossary, _ = _read_rows(bind)
+            else:
+                helper.validate_startup_converted(bind)
+                glossary = bind.execute(sa.text('SELECT * FROM project_glossaries')).mappings()
             for row in glossary:
                 stored = bind.execute(sa.text(
                     'SELECT source_key, translation_key FROM project_glossaries WHERE id=:id'),

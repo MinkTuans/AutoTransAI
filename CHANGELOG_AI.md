@@ -1,3 +1,6 @@
+- **Startup-created converted glossary replay (2026-09-24, Task 9 schema batch)**:
+  - The published glossary revision accepts a fully validated, already-converted SQLite glossary when the current startup ORM never created the removed terminology-memory table. It checks every stored normalized key and makes no schema or row writes. Historical incomplete children still refuse; existing terminology tables remain preserved. Disposable tests include populated replay and corrupt-key refusal without term leakage.
+
 - **Startup-created publication progress profile (2026-09-24, Task 9 schema batch)**:
   - The published YouTube progress revision now recognizes the complete current startup profile where `youtube_publications` already has cascading job/project foreign keys and the plain project index. It still validates the historical channel-only profile and refuses partial combinations, duplicate foreign keys, and unusable partial or collated project indexes. The current startup row and schema survive actual no-stamp Alembic traversal through `20260908_youtube_progress` on disposable SQLite; adjacent progress tests pass. The next startup-chain blocker is the already-converted glossary table without a terminology-memory table.
 

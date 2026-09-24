@@ -224,7 +224,7 @@ def _validate_table(bind, inspector, table, converted=False):
         _validate_mysql_converted_uniques(bind, table.name)
 
 
-def _preflight(bind, converted=False):
+def _preflight(bind, converted=False, allow_missing_memory=False):
     """Validate parent and both children without writing; never commit."""
     if not isinstance(bind, sa.engine.Connection):
         raise RuntimeError('Historical schema validation requires an explicit online connection.')
@@ -266,7 +266,8 @@ def _preflight(bind, converted=False):
         _mismatch()
     _validate_identity(bind, inspector, parent)
     present = {table.name for table in tables} & existing
-    if present and len(present) != len(tables):
+    if present and len(present) != len(tables) and not (
+            converted and allow_missing_memory and present == {tables[0].name}):
         _mismatch()
     for table in tables:
         if table.name in present:
@@ -286,6 +287,13 @@ def validate_converted(bind):
     """Require the complete converted shape without writes."""
     tables, present = _preflight(bind, converted=True)
     if present != {table.name for table in tables}:
+        _mismatch()
+
+
+def validate_startup_converted(bind):
+    """Validate current startup's converted glossary without legacy memory."""
+    tables, present = _preflight(bind, converted=True, allow_missing_memory=True)
+    if present != {tables[0].name}:
         _mismatch()
 
 

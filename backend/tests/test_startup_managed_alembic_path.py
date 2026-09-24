@@ -1,4 +1,5 @@
 """Actual Alembic traversal of an isolated startup-created schema."""
+import hashlib
 import sqlalchemy as sa
 from alembic import command
 from alembic.migration import MigrationContext
@@ -79,5 +80,48 @@ def test_current_startup_schema_traverses_youtube_progress_without_rebuild(tmp_p
                 "SELECT * FROM youtube_publications WHERE id='publication'").one() == before_row
             assert db.exec_driver_sql('SELECT version_num FROM alembic_version').scalar_one() == (
                 '20260908_youtube_progress')
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize('corrupt', [False, True])
+def test_current_startup_converted_glossary_without_memory_replays_read_only(corrupt):
+    engine = sa.create_engine('sqlite:///:memory:')
+    try:
+        with engine.begin() as db:
+            Base.metadata.create_all(db)
+            assert 'project_terminology_memory' not in sa.inspect(db).get_table_names()
+            source, target = 'private source', 'private target'
+            source_key = hashlib.sha256(source.encode()).hexdigest()
+            target_key = hashlib.sha256(target.encode()).hexdigest()
+            db.execute(sa.text(
+                'INSERT INTO project_glossaries '
+                '(id, project_id, source_term, translated_term, source_key, translation_key, '
+                'term_type, confidence, approved, created_at, updated_at) VALUES '
+                '(:id, :project, :source, :target, :source_key, :target_key, '
+                ":type, 1.0, 1, '2001-01-01', '2001-01-01')"),
+                {'id': 'g1', 'project': 'p1', 'source': source, 'target': target,
+                 'source_key': '0' * 64 if corrupt else source_key,
+                 'target_key': target_key, 'type': 'other'})
+            before = db.exec_driver_sql(
+                "SELECT sql FROM sqlite_master WHERE name='project_glossaries'").scalar_one()
+            row_before = db.exec_driver_sql('SELECT * FROM project_glossaries').one()
+            statements = []
+            sa.event.listen(db, 'before_cursor_execute',
+                            lambda c, cur, sql, p, ctx, many: statements.append(sql))
+            module = load_python_file(str(Path(__file__).parents[1] / 'alembic' / 'versions'),
+                                      '20260916_glossary_single_source.py')
+            with Operations.context(MigrationContext.configure(db)):
+                if corrupt:
+                    with pytest.raises(RuntimeError, match='Historical schema mismatch') as exc:
+                        module.upgrade()
+                    assert source not in str(exc.value) and target not in str(exc.value)
+                else:
+                    module.upgrade()
+            assert db.exec_driver_sql(
+                "SELECT sql FROM sqlite_master WHERE name='project_glossaries'").scalar_one() == before
+            assert db.exec_driver_sql('SELECT * FROM project_glossaries').one() == row_before
+            assert not any(sql.lstrip().upper().startswith(
+                ('CREATE', 'ALTER', 'DROP', 'INSERT', 'UPDATE', 'DELETE')) for sql in statements)
     finally:
         engine.dispose()
