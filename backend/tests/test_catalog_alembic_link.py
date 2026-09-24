@@ -63,6 +63,30 @@ def test_blank_mysql_traverses_catalog_refresh_with_legacy_prerequisites(mysql_d
         '20260923_catalog_refresh')
 
 
+def test_blank_sqlite_traverses_all_published_revisions(tmp_path):
+    url = f'sqlite:///{tmp_path / "head.sqlite"}'
+    config = config_for(url, tmp_path)
+    command.upgrade(config, 'head')
+    engine = sa.create_engine(url)
+    try:
+        with engine.connect() as db:
+            assert 'video_thumbnails' in sa.inspect(db).get_table_names()
+            assert sa.inspect(db).get_columns('video_thumbnails')[0]['name'] == 'id'
+    finally:
+        engine.dispose()
+
+
+def test_blank_mysql_traverses_all_published_revisions(mysql_db, tmp_path):
+    db = mysql_db
+    db.exec_driver_sql('DROP TABLE video_translation_jobs')
+    db.exec_driver_sql('DROP TABLE projects')
+    config = config_for(db.engine.url.render_as_string(hide_password=False), tmp_path)
+    command.upgrade(config, 'head')
+    assert 'video_thumbnails' in sa.inspect(db).get_table_names()
+    assert db.exec_driver_sql('SELECT version_num FROM alembic_version').scalar_one() == (
+        '20260923_key_rotation_domain')
+
+
 def test_partial_legacy_catalog_group_refuses_before_canonical_tables(tmp_path):
     engine = sa.create_engine(f'sqlite:///{tmp_path / "partial.sqlite"}')
     try:
