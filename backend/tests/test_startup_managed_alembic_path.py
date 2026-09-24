@@ -11,9 +11,11 @@ from sqlalchemy.orm import Session
 
 from app.database import Base
 import app.models  # noqa: F401 - register the startup ORM tables in Base metadata
-from app.models import APIKey, CatalogModel, CatalogRefreshRun, KeyModelAccess, Provider
+from app.models import (APIKey, CatalogModel, CatalogRefreshRun, KeyModelAccess,
+                        Project, ProjectGlossary, Provider)
 from app.models.settings import AIModel, AIFunctionConfig
 from tests.test_catalog_alembic_link import config_for
+from tests.test_voice_version_width import mysql_db
 
 
 def test_startup_profile_rejects_duplicate_job_fk_without_project_fk():
@@ -220,3 +222,37 @@ def test_startup_catalog_validation_checks_only_catalog_foreign_keys():
                 helper.is_startup_final(db)
     finally:
         engine.dispose()
+
+
+@pytest.mark.parametrize('row_state', ['empty', 'valid', 'corrupt'])
+def test_mysql_current_startup_glossary_without_memory_replays_read_only(mysql_db, row_state):
+    db = mysql_db
+    db.exec_driver_sql('DROP TABLE video_translation_jobs')
+    db.exec_driver_sql('DROP TABLE projects')
+    Base.metadata.create_all(db)
+    assert 'project_terminology_memory' not in sa.inspect(db).get_table_names()
+    if row_state != 'empty':
+        with Session(db) as session:
+            session.add(Project(id='project', title='Private project'))
+            session.flush()
+            session.add(ProjectGlossary(
+                id='glossary', project_id='project', source_term='private source',
+                translated_term='private target',
+                source_key=('0' * 64 if row_state == 'corrupt' else
+                            hashlib.sha256(b'private source').hexdigest()),
+                translation_key=hashlib.sha256(b'private target').hexdigest()))
+            session.flush()
+    before = db.exec_driver_sql('SHOW CREATE TABLE project_glossaries').one()[1]
+    rows_before = db.exec_driver_sql('SELECT * FROM project_glossaries').all()
+    module = load_python_file(str(Path(__file__).parents[1] / 'alembic' / 'versions'),
+                              '20260916_glossary_single_source.py')
+    with Operations.context(MigrationContext.configure(db)):
+        if row_state == 'corrupt':
+            with pytest.raises(RuntimeError, match='Historical schema mismatch') as exc:
+                module.upgrade()
+            assert 'private' not in str(exc.value).lower()
+        else:
+            module.upgrade()
+    assert db.exec_driver_sql('SHOW CREATE TABLE project_glossaries').one()[1] == before
+    assert db.exec_driver_sql('SELECT * FROM project_glossaries').all() == rows_before
+    assert 'project_terminology_memory' not in sa.inspect(db).get_table_names()

@@ -1,3 +1,6 @@
+- **MySQL startup converted glossary replay (2026-09-24, Task 9 schema batch)**:
+  - The published MySQL glossary revision now validates an already-converted startup glossary with no terminology-memory table or migration backup before read-only replay. Stage/audit/backup namespace and incoming references are preflighted; stored normalized keys are checked. Disposable MySQL tests cover empty, populated, and corrupt-key cases, alongside the historical shadow-copy suite. The full MySQL startup Alembic chain next stops at catalog prerequisites.
+
 - **Startup-created canonical catalog replay (2026-09-24, Task 9 schema batch)**:
   - The catalog revisions now recognize only a complete frozen SQLite startup profile across seven legacy/canonical tables and their indexes. Exact DDL fingerprints, object inventory, shadow checks, and scoped foreign-key integrity are validated before those revisions skip already-applied DDL. A populated disposable startup database reaches Alembic head without rebuilding or changing catalog rows; a partial index is rejected before catalog writes. Blank-chain catalog tests still pass. MySQL startup adoption remains pending.
 

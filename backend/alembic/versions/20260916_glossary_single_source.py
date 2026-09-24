@@ -235,7 +235,15 @@ def _mysql_upgrade(bind, helper, audit_helper):
             if len(keys) != 2:
                 helper._mismatch()
             if _MYSQL_BACKUP not in names:
-                helper._mismatch()
+                if 'project_terminology_memory' in names:
+                    helper._mismatch()
+                _mysql_preflight_objects(bind, names)
+                helper.validate_startup_converted(bind)
+                for row in bind.execute(sa.text('SELECT * FROM project_glossaries')).mappings():
+                    if (row['source_key'] != _key(audit_helper, row['source_term'])
+                            or row['translation_key'] != _key(audit_helper, row['translated_term'])):
+                        helper._mismatch()
+                return
             helper.validate_converted(bind)
             helper._validate_table(bind, inspector,
                                    _mysql_expected_alias(helper, _MYSQL_BACKUP))
