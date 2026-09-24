@@ -1,3 +1,6 @@
+- **Read-only legacy default shadow comparison (2026-09-24, Task 9 data batch)**:
+  - `remap_legacy_function_defaults(..., dry_run=True)` reports advisory remap counts and fixed issue codes through an isolated identity map on the caller connection. It requires a clean session, makes no writes or flushes, and uses nonlocking reads; normal remap retains row locks. Disposable tests cover clean-session parity, pending-state rejection, no MySQL `FOR UPDATE` in preview SQL, and MySQL REPEATABLE READ snapshot differences after concurrent commits.
+
 - **MySQL startup canonical catalog replay (2026-09-24, Task 9 schema batch)**:
   - The five catalog/key revisions now accept a frozen exact MySQL 8.4 startup profile across seven tables, with trigger, table-name and scoped orphan-FK checks. A populated disposable startup database reaches Alembic head without catalog row or DDL changes; schema drift or an orphan key refuses before writes. The blank MySQL revision chain still passes. Other MySQL server/default-collation profiles fail closed until explicitly validated.
 

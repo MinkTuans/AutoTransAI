@@ -10,6 +10,107 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.models import APIKey, CatalogModel, KeyModelAccess, Provider
 from app.models.settings import AIModel, AIFunctionConfig
 from app.services.legacy_default_remap import remap_legacy_function_defaults
+from tests.test_voice_version_width import mysql_db
+
+
+async def test_shadow_comparison_reports_remap_without_writing(db_factory):
+    async with db_factory.begin() as db:
+        await seed(db)
+    async with db_factory.begin() as db:
+        statements = []
+        event.listen(db_factory.kw['bind'].sync_engine, 'before_cursor_execute',
+                     lambda c, cur, sql, p, ctx, many: statements.append(sql))
+        preview = await remap_legacy_function_defaults(db, dry_run=True)
+        assert preview['counts']['resolved'] == 1 and preview['issues'] == []
+        row = await db.get(AIFunctionConfig, 'stt')
+        assert row.model_id == 'remote-stt' and row.configuration_error is None
+        assert not any(sql.lstrip().upper().startswith(('UPDATE', 'INSERT', 'DELETE'))
+                       for sql in statements)
+        actual = await remap_legacy_function_defaults(db)
+        assert actual == preview
+
+
+async def test_shadow_comparison_rejects_pending_writes_without_flushing(db_factory):
+    async with db_factory.begin() as db:
+        await seed(db, catalog=False)
+    async with db_factory() as db:
+        config = await db.get(AIFunctionConfig, 'stt')
+        config.function_name = 'uncommitted private name'
+        statements = []
+        event.listen(db_factory.kw['bind'].sync_engine, 'before_cursor_execute',
+                     lambda c, cur, sql, p, ctx, many: statements.append(sql))
+        with pytest.raises(RuntimeError, match='clean session'):
+            await remap_legacy_function_defaults(db, dry_run=True)
+        assert config.function_name == 'uncommitted private name'
+        assert not any(sql.lstrip().upper().startswith(('UPDATE', 'INSERT', 'DELETE'))
+                       for sql in statements)
+        await db.rollback()
+
+
+async def test_shadow_comparison_rejects_relevant_pending_default_change(db_factory):
+    async with db_factory.begin() as db:
+        model = await seed(db)
+    async with db_factory() as db:
+        config = await db.get(AIFunctionConfig, 'stt')
+        config.model_id = model.id
+        with pytest.raises(RuntimeError, match='clean session'):
+            await remap_legacy_function_defaults(db, dry_run=True)
+        assert config.model_id == model.id
+        await db.rollback()
+
+
+async def test_mysql_shadow_comparison_does_not_take_row_locks(mysql_db):
+    for model in (Provider, APIKey, CatalogModel, KeyModelAccess, AIModel, AIFunctionConfig):
+        model.__table__.create(mysql_db)
+    mysql_db.commit()
+    url = mysql_db.engine.url.set(drivername='mysql+aiomysql')
+    engine = create_async_engine(url)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with sessions.begin() as db:
+            await seed(db)
+        statements = []
+        event.listen(engine.sync_engine, 'before_cursor_execute',
+                     lambda c, cur, sql, p, ctx, many: statements.append(sql))
+        async with sessions() as db:
+            preview = await remap_legacy_function_defaults(db, dry_run=True)
+            assert preview['counts']['resolved'] == 1
+            assert not any('FOR UPDATE' in sql.upper() for sql in statements)
+            statements.clear()
+            await remap_legacy_function_defaults(db)
+            assert any('FOR UPDATE' in sql.upper() for sql in statements)
+            await db.rollback()
+    finally:
+        await engine.dispose()
+
+
+async def test_mysql_shadow_snapshot_can_differ_from_later_locked_execution(mysql_db):
+    for model in (Provider, APIKey, CatalogModel, KeyModelAccess, AIModel, AIFunctionConfig):
+        model.__table__.create(mysql_db)
+    mysql_db.commit()
+    engine = create_async_engine(mysql_db.engine.url.set(drivername='mysql+aiomysql'))
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with sessions.begin() as db:
+            await seed(db, catalog=False)
+        async with sessions() as caller:
+            assert (await caller.scalar(select(Provider.id))) == 'openai'
+            async with sessions.begin() as writer:
+                writer.add(CatalogModel(id='11111111-1111-4111-8111-111111111111',
+                                        provider_id='openai', remote_model_id='remote-stt',
+                                        source='discovered', capability_status='FULL_UNKNOWN',
+                                        capabilities=[]))
+                await writer.flush()
+                writer.add(KeyModelAccess(key_id='22222222-2222-4222-8222-222222222222',
+                                          model_id='11111111-1111-4111-8111-111111111111',
+                                          provider_id='openai'))
+            preview = await remap_legacy_function_defaults(caller, dry_run=True)
+            assert preview['issues'] == ['missing_catalog_model']
+            actual = await remap_legacy_function_defaults(caller)
+            assert actual['counts']['resolved'] == 1
+            await caller.rollback()
+    finally:
+        await engine.dispose()
 
 
 @pytest.fixture
