@@ -59,6 +59,12 @@ def _validate_column(actual, expected, dialect):
             or actual['nullable'] != expected.nullable or actual.get('default') is not None
             or actual.get('computed') or actual.get('identity')):
         _mismatch()
+    # MySQL reflection distinguishes integer PKs that generate an omitted ID
+    # from ordinary integer PKs. Only the frozen segment ID uses AUTO_INCREMENT;
+    # noninteger columns may omit the reflected flag entirely.
+    if (dialect.name == 'mysql'
+            and actual.get('autoincrement', False) is not (expected.autoincrement is True)):
+        _mismatch()
 
 
 def _validate_identity(bind, inspector, table):

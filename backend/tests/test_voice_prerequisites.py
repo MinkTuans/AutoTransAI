@@ -1,10 +1,12 @@
 """Frozen pre-timeline prerequisites only; no published voice revision activation."""
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import sqlalchemy as sa
 from alembic.util import load_python_file
 from sqlalchemy.dialects import mysql
+from sqlalchemy.dialects.mysql.reflection import MySQLTableDefinitionParser
 from sqlalchemy.exc import IntegrityError
 
 from tests.test_first_alembic_link import db, isolated, fixture_schema as first_fixture
@@ -289,3 +291,52 @@ def test_mysql_ddl_compiles_offline_from_actual_sqlite_creates(db):
     assert 'REFERENCES video_translation_jobs (id) ON DELETE CASCADE' in ddl
     assert 'DEFAULT' not in ddl
     assert sum('CREATE TABLE' in sql for sql in compiled) == 2
+
+
+@pytest.mark.parametrize('auto_increment', [False, True], ids=['missing-auto-increment', 'compatible'])
+def test_mysql_ensure_requires_historical_auto_increment_without_writes(db, monkeypatch, auto_increment):
+    prepare(db)
+    fixture_schema(db)
+    populate(db)
+    before = snapshot(db)
+    inspector = sa.inspect(db)
+    names = inspector.get_table_names()
+    columns = {name: [{key: value for key, value in column.items() if key != 'primary_key'}
+                      for column in inspector.get_columns(name)] for name in names}
+    pks = {name: inspector.get_pk_constraint(name) for name in names}
+    fks = {name: inspector.get_foreign_keys(name) for name in names}
+    indexes = {name: inspector.get_indexes(name) for name in names}
+    # Use SQLAlchemy's real MySQL SHOW CREATE parser offline to obtain both
+    # identity profiles. All other contract expectations come from literal SQL.
+    dialect = mysql.dialect()
+    parser = MySQLTableDefinitionParser(dialect, dialect.identifier_preparer)
+    reflected_id = parser.parse(
+        'CREATE TABLE `video_translation_segments` (\n'
+        '  `id` int NOT NULL' + (' AUTO_INCREMENT' if auto_increment else '') + ',\n'
+        '  PRIMARY KEY (`id`)\n) ENGINE=InnoDB', 'utf8mb4').columns[0]
+    columns['video_translation_segments'][0] = reflected_id
+    reflected = SimpleNamespace(
+        default_schema_name=None, get_table_names=lambda: names, get_view_names=lambda: [],
+        get_columns=columns.__getitem__, get_pk_constraint=pks.__getitem__,
+        get_foreign_keys=fks.__getitem__, get_indexes=indexes.__getitem__,
+        get_check_constraints=lambda name: [], get_unique_constraints=lambda name: [],
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Offline MySQL ensure must not issue any SQL or write rows')
+
+    module = helper()
+    with monkeypatch.context() as patch:
+        # Preserve the actual Connection type required by ensure(), replacing
+        # only dialect/reflection. No MySQL connection or configured DB exists.
+        patch.setattr(db, 'dialect', dialect)
+        patch.setattr(sa, 'inspect', lambda connection: reflected)
+        patch.setattr(db, 'execute', forbidden)
+        patch.setattr(db, 'exec_driver_sql', forbidden)
+        if auto_increment:
+            module.ensure(db)
+            module.ensure(db)
+        else:
+            with pytest.raises(RuntimeError, match='Historical schema mismatch.*inspect.*before retrying'):
+                module.ensure(db)
+    assert snapshot(db) == before
