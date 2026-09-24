@@ -37,7 +37,7 @@ class LocalVideoProvider(VideoProvider):
 
     @property
     def provider_name(self) -> str:
-        return "Local AI & FFmpeg Generator (Free & AI Art ✅)"
+        return "Local AI & FFmpeg Generator (Free & AI Art)"
 
     @property
     def is_free(self) -> bool:
