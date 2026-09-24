@@ -3,7 +3,10 @@
 Revision ID: 20260923_ai_catalog
 Revises: 20260918_add_fk
 """
+from pathlib import Path
+
 from alembic import op
+from alembic.util import load_python_file
 import sqlalchemy as sa
 
 revision = "20260923_ai_catalog"
@@ -13,6 +16,8 @@ depends_on = None
 
 
 def upgrade() -> None:
+    load_python_file(str(Path(__file__).resolve().parents[1]), 'catalog_prerequisites.py').ensure(
+        op.get_bind())
     op.create_table(
         "api_keys",
         sa.Column("id", sa.String(36), primary_key=True),

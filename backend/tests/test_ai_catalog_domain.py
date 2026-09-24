@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
+from alembic.util import load_python_file
 from sqlalchemy import create_engine, event, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -23,13 +24,17 @@ def catalog():
 def db(catalog, request):
     engine = create_engine("sqlite://")
     event.listen(engine, "connect", lambda connection, _: connection.execute("PRAGMA foreign_keys=ON"))
-    models.Provider.__table__.create(engine)
     if request.param == "migration":
         with engine.begin() as connection:
+            legacy_helper().ensure(connection)
             with Operations.context(MigrationContext.configure(connection)):
                 migration().upgrade()
+                migration("20260923_catalog_refresh").upgrade()
                 migration("20260923_catalog_evidence").upgrade()
+                migration("20260923_provider_key_requirement").upgrade()
+                migration("20260923_key_rotation_domain").upgrade()
     else:
+        models.Provider.__table__.create(engine)
         for model in catalog[:2]:
             model.__table__.create(engine)
         catalog[2].__table__.create(engine)
@@ -120,12 +125,19 @@ def migration(name="20260923_ai_catalog"):
     return module
 
 
+def legacy_helper():
+    return load_python_file(str(Path(__file__).parents[1] / 'alembic'),
+                            'catalog_prerequisites.py')
+
+
 def test_migration_is_additive_and_reversible_on_disposable_sqlite():
     revision = migration()
     engine = create_engine("sqlite://")
     with engine.begin() as connection:
-        connection.execute(text("CREATE TABLE ai_models (id VARCHAR(100) PRIMARY KEY)"))
-        connection.execute(text("INSERT INTO ai_models VALUES ('historical-model')"))
+        legacy_helper().ensure(connection)
+        connection.execute(text("INSERT INTO ai_models VALUES "
+                                "('historical-model', 'provider', 'Historical', '[\"LLM\"]', "
+                                "0, 0, 1, NULL, '2001-02-03')"))
         with Operations.context(MigrationContext.configure(connection)):
             revision.upgrade()
             connection.execute(text("SELECT * FROM ai_key_model_access"))
@@ -146,4 +158,7 @@ def test_migration_emits_mysql_ddl_without_connecting():
     assert "ON DELETE CASCADE" in sql
     assert "FOREIGN KEY(key_id, provider_id) REFERENCES api_keys (id, provider_id)" in sql
     assert "FOREIGN KEY(model_id, provider_id) REFERENCES ai_catalog_models (id, provider_id)" in sql
+    assert "CREATE TABLE providers" not in sql
+    assert "CREATE TABLE ai_function_configs" not in sql
+    assert "CREATE TABLE ai_models" not in sql
     assert "DROP " not in sql and "ALTER " not in sql
