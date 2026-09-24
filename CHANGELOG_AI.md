@@ -1,3 +1,6 @@
+- **MySQL glossary replay guard (2026-09-24, Task 9D4B3 checkpoint)**:
+  - Converted-schema validation now parses real MySQL unique-key definitions and rejects prefixes on either canonical key. Added failing-first offline parser regressions and a compatible control. MySQL revision execution remains held before SQL pending collation-aware data preflight and a recovery-safe conversion path.
+
 - **Guarded glossary conversion SQLite checkpoint (2026-09-24, Task 9D4B2)**:
   - Reworked published glossary revision to wire frozen prerequisites and migration-owned audit. It preflights before data writes, copies only unique memory mappings, retains original glossary text and the terminology table/rows, and refuses ambiguous duplicates with sanitized codes. Unreviewed suggestions remain unapproved.
   - Added disposable SQLite actual-revision regressions for preservation, conflicts, absent/partial children, replay and corrupt keys, incoming FKs and batch temporary-name collisions. Replaced the obsolete destructive unit-test expectation with schema rejection. Updated the knowledge base. MySQL upgrade deliberately stops before SQL pending collation-aware preflight and full-key validation; full version traversal, arbitrary production schemas and cutover remain pending.

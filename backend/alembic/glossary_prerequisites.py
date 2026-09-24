@@ -87,6 +87,30 @@ def _validate_identity(bind, inspector, table):
     return columns
 
 
+def _validate_mysql_converted_uniques(bind):
+    """Inspect full MySQL key parts; reflection omits prefix lengths."""
+    try:
+        ddl = bind.exec_driver_sql('SHOW CREATE TABLE `project_glossaries`').one()[1]
+        parser = MySQLTableDefinitionParser(bind.dialect, bind.dialect.identifier_preparer)
+        keys = parser.parse(ddl, None).keys
+        actual = {key['name']: key for key in keys if key['type'] == 'UNIQUE'}
+        expected = {
+            'uq_project_glossary_source_key':
+                [('project_id', None, ''), ('source_key', None, '')],
+            'uq_project_glossary_translation_key':
+                [('project_id', None, ''), ('translation_key', None, '')],
+        }
+        if len(actual) != len(expected) or set(actual) != set(expected):
+            _mismatch()
+        for name, columns in expected.items():
+            key = actual[name]
+            if (key['columns'] != columns or key.get('using_pre') or key.get('using_post')
+                    or key.get('keyblock') or key.get('parser') or key.get('version_sql')):
+                _mismatch()
+    except (IndexError, KeyError, TypeError, ValueError):
+        _mismatch()
+
+
 def _validate_table(bind, inspector, table, converted=False):
     columns = _validate_identity(bind, inspector, table)
     if set(columns) != set(table.c.keys()) or inspector.get_check_constraints(table.name):
@@ -196,6 +220,8 @@ def _validate_table(bind, inspector, table, converted=False):
                 or index['column_names'] != expected_indexes[index['name']]
                 or index['unique'] or index.get('dialect_options') or index.get('column_sorting')):
             _mismatch()
+    if converted and bind.dialect.name == 'mysql':
+        _validate_mysql_converted_uniques(bind)
 
 
 def _preflight(bind, converted=False):

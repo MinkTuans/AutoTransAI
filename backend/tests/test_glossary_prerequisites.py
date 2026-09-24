@@ -261,6 +261,33 @@ def mysql_show_create(prefix_table=None):
     return run, seen
 
 
+@pytest.mark.parametrize('prefix_field', [None, 'source_key', 'translation_key'])
+def test_mysql_converted_unique_key_requires_full_columns_offline(prefix_field):
+    dialect = mysql.dialect()
+    prefix = '(1)'
+    source = '`source_key`' + (prefix if prefix_field == 'source_key' else '')
+    translation = '`translation_key`' + (prefix if prefix_field == 'translation_key' else '')
+    ddl = ('CREATE TABLE `project_glossaries` (\n'
+           '  `id` varchar(36) NOT NULL,\n'
+           '  `project_id` varchar(36) NOT NULL,\n'
+           '  `source_key` varchar(64) NOT NULL,\n'
+           '  `translation_key` varchar(64) NOT NULL,\n'
+           '  PRIMARY KEY (`id`),\n'
+           f'  UNIQUE KEY `uq_project_glossary_source_key` (`project_id`,{source}),\n'
+           f'  UNIQUE KEY `uq_project_glossary_translation_key` (`project_id`,{translation})\n'
+           ') ENGINE=InnoDB')
+    parser = MySQLTableDefinitionParser(dialect, dialect.identifier_preparer)
+    parsed = parser.parse(ddl, 'utf8mb4')
+    assert any(part[1] == 1 for key in parsed.keys for part in key['columns']) == bool(prefix_field)
+    bind = SimpleNamespace(dialect=dialect,
+                           exec_driver_sql=lambda sql: SimpleNamespace(one=lambda: ('project_glossaries', ddl)))
+    if prefix_field is None:
+        helper()._validate_mysql_converted_uniques(bind)
+    else:
+        with pytest.raises(RuntimeError, match='Historical schema mismatch'):
+            helper()._validate_mysql_converted_uniques(bind)
+
+
 @pytest.mark.parametrize('target', ['projects', *TABLES])
 def test_mysql_primary_key_prefix_is_rejected_for_parent_or_child(db, monkeypatch, target):
     prepare(db)
