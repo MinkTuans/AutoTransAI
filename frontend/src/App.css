@@ -559,6 +559,11 @@ textarea:focus {
   border-radius: 16px;
 }
 
+.modal-dialog.function-picker {
+  width: min(1040px, 95vw);
+  max-width: min(1040px, 95vw);
+}
+
 .publish-modal-dialog .modal-body {
   flex: 1;
   min-height: 0;

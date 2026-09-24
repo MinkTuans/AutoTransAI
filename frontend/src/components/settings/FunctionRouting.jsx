@@ -64,6 +64,7 @@ function ModelPicker({ selectedFunction, onClose, onChoose, saving, saveError })
     if (event.target === event.currentTarget && !saving) onClose();
   }}>
     <div className="modal-dialog function-picker" role="dialog" aria-modal="true"
+      style={{ width: 'min(1040px, 95vw)', maxWidth: 'min(1040px, 95vw)' }}
       aria-label={`Choose ${selectedFunction.capability} model for ${selectedFunction.function_name}`}>
       <div className="modal-header">
         <h3>Choose a model for {selectedFunction.function_name}</h3>
