@@ -1,4 +1,4 @@
-"""Frozen pre-timeline prerequisites; not yet wired into a published revision.
+"""Frozen pre-timeline prerequisites and shared voice schema preflight.
 
 Source: 8ae030a^, models/workflow_engine.py::SpeakerVoiceMapping and
 models/video_translator.py::VideoTranslationSegment. Non-Optional attributes
@@ -55,8 +55,11 @@ def _mismatch():
 
 
 def _validate_column(actual, expected, dialect):
-    if (actual is None or actual['type'].compile(dialect=dialect) != expected.type.compile(dialect=dialect)
-            or actual['nullable'] != expected.nullable or actual.get('default') is not None
+    kind = actual['type'].compile(dialect=dialect) if actual else None
+    boolean_alias = dialect.name == 'mysql' and isinstance(expected.type, sa.Boolean) and kind == 'TINYINT(1)'
+    if (actual is None or (kind != expected.type.compile(dialect=dialect) and not boolean_alias)
+            or actual['nullable'] != expected.nullable
+            or not _default_matches(actual.get('default'), expected, dialect)
             or actual.get('computed') or actual.get('identity')):
         _mismatch()
     # MySQL reflection distinguishes integer PKs that generate an omitted ID
@@ -65,6 +68,23 @@ def _validate_column(actual, expected, dialect):
     if (dialect.name == 'mysql'
             and actual.get('autoincrement', False) is not (expected.autoincrement is True)):
         _mismatch()
+
+
+def _default_matches(actual, expected, dialect):
+    if expected.server_default is None:
+        return actual is None
+    value = expected.server_default.arg
+    literal = value if isinstance(value, str) else str(value.compile(dialect=dialect))
+    if not isinstance(value, str) and literal in ('false', 'true'):
+        literal = '0' if literal == 'false' else '1'
+    # Only complete published literals and documented numeric/boolean SQL
+    # equivalents. Never strip quotes/parentheses from inside a string value.
+    forms = {repr(literal)}
+    if literal in ('0', '1'):
+        forms |= {literal, literal + '.0', repr(literal + '.0'),
+                  'false' if literal == '0' else 'true', 'FALSE' if literal == '0' else 'TRUE'}
+    forms |= {'(' + form + ')' for form in tuple(forms)}
+    return actual is not None and str(actual).strip() in forms
 
 
 def _validate_identity(bind, inspector, table):
@@ -101,6 +121,8 @@ def _validate_table(bind, inspector, table):
                 or options.get('match', 'NONE').upper() != 'NONE'):
             _mismatch()
     expected_indexes = {index.name: [column.name for column in index.columns] for index in table.indexes}
+    expected_uniques = {constraint.name: tuple(column.name for column in constraint.columns)
+                        for constraint in table.constraints if isinstance(constraint, sa.UniqueConstraint)}
     if bind.dialect.name == 'sqlite':
         # Reflection omits column collations. An explicit BINARY index can hide
         # a NOCASE column, so check declarations independently of index keys.
@@ -121,7 +143,18 @@ def _validate_table(bind, inspector, table):
         # and index keys first, including collation, sort order and predicates.
         indexes = bind.execute(sa.text('SELECT * FROM pragma_index_list(:table)'),
                                {'table': table.name}).mappings().all()
-        ordinary = [index for index in indexes if index['origin'] != 'pk']
+        unique_indexes = [index for index in indexes if index['origin'] == 'u']
+        if len(unique_indexes) != len(expected_uniques):
+            _mismatch()
+        for index in unique_indexes:
+            keys = bind.execute(sa.text(
+                'SELECT name, "desc", coll FROM pragma_index_xinfo(:name) WHERE key = 1'),
+                {'name': index['name']}).all()
+            if (not index['unique'] or index['partial']
+                    or tuple(name for name, _, _ in keys) not in expected_uniques.values()
+                    or any(order or coll.lower() != 'binary' for _, order, coll in keys)):
+                _mismatch()
+        ordinary = [index for index in indexes if index['origin'] not in ('pk', 'u')]
         if {index['name'] for index in ordinary} != set(expected_indexes):
             _mismatch()
         for index in ordinary:
@@ -134,9 +167,14 @@ def _validate_table(bind, inspector, table):
                     for name, order, coll in keys] != [
                         (name, 0, 'binary') for name in expected_indexes[index['name']]]:
                 _mismatch()
-    elif inspector.get_unique_constraints(table.name):
+    uniques = inspector.get_unique_constraints(table.name)
+    if (len(uniques) != len(expected_uniques)
+            or {item['name']: tuple(item['column_names']) for item in uniques} != expected_uniques):
         _mismatch()
-    indexes = inspector.get_indexes(table.name)
+    indexes = [index for index in inspector.get_indexes(table.name)
+               if not (bind.dialect.name == 'mysql' and index['name'] in expected_uniques
+                       and index['unique'] and tuple(index['column_names']) == expected_uniques[index['name']]
+                       and not index.get('dialect_options') and not index.get('column_sorting'))]
     if len(indexes) != len(expected_indexes):
         _mismatch()
     for index in indexes:
@@ -146,18 +184,12 @@ def _validate_table(bind, inspector, table):
             _mismatch()
 
 
-def ensure(bind):
-    """Validate the complete group and existing parents, then create absent children.
-
-    Only both-absent and both-compatible states have established provenance.
-    A single surviving table is ambiguous and requires backup reconciliation.
-    This helper never commits, rebuilds tables, or updates existing rows.
-    """
+def preflight_namespace(bind, parents, tables):
+    """Read-only relation/index inventory and parent identities, shared by B1/B2."""
     if not isinstance(bind, sa.engine.Connection):
         raise RuntimeError('Historical schema validation requires an explicit online connection.')
     if bind.dialect.name not in ('sqlite', 'mysql'):
         _mismatch()
-    parents, tables = _tables()
     inspector = sa.inspect(bind)
     if bind.dialect.name == 'sqlite':
         # Temporary relations resolve before main-schema relations. Reject
@@ -173,24 +205,32 @@ def ensure(bind):
     for table in (*parents, *tables):
         if table.name in views or (table.name not in existing and inspector.has_table(table.name)):
             _mismatch()
+        if bind.dialect.name == 'sqlite':
+            expected_names = {table.name: ('table', table.name),
+                              **{index.name: ('index', table.name) for index in table.indexes}}
+            for name, (kind, owner) in expected_names.items():
+                objects = bind.execute(sa.text(
+                    'SELECT name, type, tbl_name FROM sqlite_master WHERE name = :name COLLATE NOCASE'),
+                    {'name': name}).all()
+                if objects and objects != [(name, kind, owner)]:
+                    _mismatch()
     for parent in parents:
         if parent.name not in existing:
             _mismatch()
         _validate_identity(bind, inspector, parent)
     present = {table.name for table in tables} & existing
+    return inspector, present
+
+
+def ensure(bind):
+    """Validate both pre-timeline children before creating either; never commit."""
+    parents, tables = _tables()
+    inspector, present = preflight_namespace(bind, parents, tables)
     if present and len(present) != len(tables):
         _mismatch()
     for table in tables:
         if table.name in present:
             _validate_table(bind, inspector, table)
-        elif bind.dialect.name == 'sqlite':
-            # SQLite names are database-global, including indexes created after
-            # each table. Inspect the whole group before its first CREATE.
-            for name in (table.name, *(index.name for index in table.indexes)):
-                if bind.execute(sa.text(
-                        'SELECT 1 FROM sqlite_master WHERE name = :name COLLATE NOCASE '
-                        "AND type IN ('table', 'view', 'index') LIMIT 1"), {'name': name}).first():
-                    _mismatch()
     # Both existing parents were validated first; the children are independent.
     for table in tables:
         if table.name not in present:
