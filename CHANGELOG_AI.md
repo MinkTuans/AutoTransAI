@@ -1,3 +1,6 @@
+- **Fresh database Function page (2026-09-24)**:
+  - Canonical `GET /api/ai/functions` now shows the six built-in Function identities as `unconfigured` when no row has been saved. The read creates no database rows or model defaults. Choosing a verified catalog model through canonical PUT creates only that Function row; existing choices remain intact and unrelated Functions stay visible. Disposable SQLite API tests and a disposable MySQL 8.4 startup, GET, and keyless TTS PUT check passed; no configured database or live provider was used.
+
 - **Read-only legacy default shadow comparison (2026-09-24, Task 9 data batch)**:
   - `remap_legacy_function_defaults(..., dry_run=True)` reports advisory remap counts and fixed issue codes through an isolated identity map on the caller connection. It requires a clean session, makes no writes or flushes, and uses nonlocking reads; normal remap retains row locks. Disposable tests cover clean-session parity, pending-state rejection, no MySQL `FOR UPDATE` in preview SQL, and MySQL REPEATABLE READ snapshot differences after concurrent commits.
 

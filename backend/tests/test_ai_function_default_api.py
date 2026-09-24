@@ -5,7 +5,7 @@ import socket
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import event, select
+from sqlalchemy import delete, event, select
 from sqlalchemy.dialects import mysql
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -74,12 +74,39 @@ async def test_put_persists_exact_catalog_id_and_provider_clears_error_preserves
     assert data["default_status"] == "ready" and data["selectable"] is True
     assert data["configuration_error"] is None
     assert "synthetic-secret-key" not in response.text
-    assert (await client.get("/api/ai/functions")).json()["data"][0]["model_id"] == "catalog-id"
+    listed = (await client.get("/api/ai/functions")).json()["data"]
+    assert next(row for row in listed if row['function_id'] == 'stt')['model_id'] == 'catalog-id'
     async with sessions() as db:
         config = await db.get(AIFunctionConfig, "stt")
         assert config.model_id == "catalog-id" and config.primary_provider_id == "openai"
         assert config.configuration_error is None
         assert config.fallback_enabled and config.fallback_provider_id == "historical"
+
+
+async def test_put_creates_missing_known_function_after_virtual_inventory(default_api):
+    client, sessions, path = default_api
+    await seed(sessions, path)
+    async with sessions.begin() as db:
+        await db.execute(delete(AIFunctionConfig).where(AIFunctionConfig.function_id == 'stt'))
+    listed = (await client.get('/api/ai/functions')).json()['data']
+    assert next(row for row in listed if row['function_id'] == 'stt')['default_status'] == 'unconfigured'
+    response = await client.put('/api/ai/functions/stt', json={'model_id': 'catalog-id'})
+    assert response.status_code == 200
+    assert response.json()['data']['default_status'] == 'ready'
+    async with sessions() as db:
+        stored = await db.get(AIFunctionConfig, 'stt')
+        assert stored.model_id == 'catalog-id' and stored.primary_provider_id == 'openai'
+
+
+async def test_unavailable_model_does_not_persist_virtual_function(default_api):
+    client, sessions, path = default_api
+    await seed(sessions, path, with_key=False)
+    async with sessions.begin() as db:
+        await db.execute(delete(AIFunctionConfig).where(AIFunctionConfig.function_id == 'stt'))
+    response = await client.put('/api/ai/functions/stt', json={'model_id': 'catalog-id'})
+    assert response.status_code == 409
+    async with sessions() as db:
+        assert await db.get(AIFunctionConfig, 'stt') is None
 
 
 @pytest.mark.parametrize("case", ["incompatible", "retired", "model_disabled", "provider_disabled",

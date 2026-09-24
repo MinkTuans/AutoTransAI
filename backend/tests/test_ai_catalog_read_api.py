@@ -107,7 +107,8 @@ async def test_search_filter_pagination_status_defaults_and_read_only(catalog_ap
     assert (await client.get("/api/ai/models/three")).json()["data"]["status"] == "disabled"
     assert (await client.get("/api/ai/models/missing")).status_code == 404
     functions = (await client.get("/api/ai/functions")).json()["data"]
-    assert functions[0]["model_id"] == "one" and functions[0]["configuration_error"] is None
+    visual = next(row for row in functions if row['function_id'] == 'visual_gender')
+    assert visual["model_id"] == "one" and visual["configuration_error"] is None
     assert "secret-marker" not in str(detail)
     async with sessions() as db:
         assert len((await db.scalars(select(CatalogModel))).all()) == 3
@@ -126,6 +127,18 @@ async def test_keyless_system_provider_is_ready_without_credentials(catalog_api)
     assert provider["status"] == "ready"
     assert provider["keyless"] is True
     assert model["access_scope"] == "keyless"
+
+
+async def test_fresh_function_inventory_is_visible_without_database_writes(catalog_api):
+    client, sessions = catalog_api
+    functions = (await client.get('/api/ai/functions')).json()['data']
+    assert {row['function_id'] for row in functions} == {
+        'stt', 'translation', 'tts', 'video_generation', 'visual_gender', 'image_generation'
+    }
+    assert all(row['default_status'] == 'unconfigured' and
+               row['primary_provider_id'] == '' and row['model_id'] == '' for row in functions)
+    async with sessions() as db:
+        assert (await db.scalars(select(AIFunctionConfig))).all() == []
 
 
 async def test_keyless_provider_identity_does_not_depend_on_active_models(catalog_api):
@@ -279,7 +292,8 @@ async def test_function_error_text_is_restricted_to_known_codes(catalog_api):
                                 configuration_error="synthetic-secret"))
     response = await client.get("/api/ai/functions")
     assert response.status_code == 200
-    assert response.json()["data"][0]["configuration_error"] == "configuration_error"
+    stt = next(row for row in response.json()['data'] if row['function_id'] == 'stt')
+    assert stt["configuration_error"] == "configuration_error"
     assert "synthetic-secret" not in response.text
 
 

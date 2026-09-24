@@ -17,6 +17,7 @@ from app.models import APIKey, CatalogModel, KeyModelAccess, Provider
 from app.models.settings import AIFunctionConfig
 from app.services.ai_routing import _PUBLIC_CATALOG_PROVIDERS, _keyless_allowed
 from app.services.capability_registry import CAPABILITIES, catalog_capability_summary
+from app.services.function_inventory import FUNCTION_INVENTORY
 
 
 class SafeCatalogReadRoute(APIRoute):
@@ -288,7 +289,9 @@ async def list_functions(db: AsyncSession = Depends(get_db)):
     rows = []
     for c in sorted(configs, key=lambda config: config.function_id):
         model = by_id.get(c.model_id)
-        if model is None:
+        if not c.model_id:
+            status = "unconfigured"
+        elif model is None:
             legacy = c.model_id == "default" or any(
                 m.provider_id == c.primary_provider_id and m.remote_model_id == c.model_id for m in models)
             status = "legacy_unmigrated" if legacy else "missing"
@@ -314,4 +317,14 @@ async def list_functions(db: AsyncSession = Depends(get_db)):
                                  default_status="configuration_error" if c.configuration_error else status,
                                  selectable=status == "ready" and not c.configuration_error,
                                  updated_at=c.updated_at))
+    configured_ids = {config.function_id for config in configs}
+    for function_id, (function_name, capability) in FUNCTION_INVENTORY.items():
+        if function_id in configured_ids:
+            continue
+        rows.append(FunctionView(function_id=function_id, function_name=function_name,
+                                 capability=capability, primary_provider_id="", model_id="",
+                                 configuration_error=None, default_status="unconfigured",
+                                 # Stable placeholder: a virtual row has no database update time.
+                                 selectable=False, updated_at=datetime(1970, 1, 1)))
+    rows.sort(key=lambda row: row.function_id)
     return Envelope(data=rows)
