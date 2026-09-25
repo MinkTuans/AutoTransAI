@@ -15,12 +15,28 @@ _LEGACY_VIDEO_DEFAULTS = frozenset({("kling", "kling-v1"),
                                     ("fal", "fal-ai/hunyuan-video")})
 
 
-def supported_video_target(provider_id: str, remote_model_id: str) -> bool:
-    """Models with a documented schema in the installed Fal/Kling adapters."""
+def supported_video_target(provider_id: str, remote_model_id: str, *,
+                           metadata: dict | None = None, duration: int | None = None) -> bool:
+    """Check adapter schema and known OpenRouter text-to-video duration evidence."""
     if provider_id == "fal":
         return remote_model_id == "fal-ai/hunyuan-video"
     if provider_id == "kling":
         return remote_model_id in {"kling-v2-5-turbo", "kling-v2-6", "kling-v3"}
+    if provider_id == "openrouter":
+        if not remote_model_id or not isinstance(metadata, dict):
+            return False
+        architecture = metadata.get("architecture")
+        video = metadata.get("video")
+        if not isinstance(architecture, dict) or not isinstance(video, dict):
+            return False
+        inputs = architecture.get("input_modalities")
+        outputs = architecture.get("output_modalities")
+        durations = video.get("supported_durations")
+        return (isinstance(inputs, list) and "text" in inputs
+                and isinstance(outputs, list) and "video" in outputs
+                and isinstance(durations, list) and 0 < len(durations) <= 64
+                and all(type(value) is int and 1 <= value <= 300 for value in durations)
+                and (duration is None or duration in durations))
     return False
 
 

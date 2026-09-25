@@ -41,6 +41,8 @@ async def test_bootstrap_registers_once_and_preserves_existing_state(tmp_path, e
     registry.register_video(StubProvider("local_video", "Local Video", False))
     registry.register_llm(StubProvider("openai", "OpenAI", True))
     registry.register_vision(StubProvider("openai", "OpenAI Vision", True))
+    registry.register_audio(StubProvider("openrouter", "OpenRouter", True))
+    registry.register_llm(StubProvider("openrouter", "OpenRouter", True))
     async with sessions.begin() as db:
         db.add_all([
             Provider(id="edge_tts", name="My Edge", provider_type="audio", enabled=False,
@@ -55,12 +57,13 @@ async def test_bootstrap_registers_once_and_preserves_existing_state(tmp_path, e
     async with sessions() as db:
         providers = {p.id: p for p in (await db.scalars(select(Provider))).all()}
         models = {(m.provider_id, m.remote_model_id): m for m in (await db.scalars(select(CatalogModel))).all()}
-    assert set(providers) == {"edge_tts", "pollinations", "local_image", "local_video", "openai", "custom"}
+    assert set(providers) == {"edge_tts", "pollinations", "local_image", "local_video", "openai", "openrouter", "custom"}
     assert providers["edge_tts"].name == "My Edge" and not providers["edge_tts"].enabled
     assert providers["edge_tts"].base_url == "https://example.invalid"
     assert not providers["edge_tts"].requires_api_key
     assert providers["custom"].requires_api_key
     assert providers["openai"].requires_api_key and providers["openai"].provider_type == "llm"
+    assert providers["openrouter"].provider_type == "multimodal"
     assert not providers["local_video"].requires_api_key
     assert set(models) == {("edge_tts", "edge-tts"), ("pollinations", "pollinations-default"),
                            ("local_image", "default")}

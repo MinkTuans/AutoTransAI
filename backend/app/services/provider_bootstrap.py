@@ -28,6 +28,8 @@ async def bootstrap_providers(db: AsyncSession, registry: ProviderRegistry) -> N
                                            bool(runtime.requires_api_key)]
 
     for provider_id, (name, provider_type, requires_api_key) in registered.items():
+        if provider_id == "openrouter":
+            provider_type = "multimodal"
         row = existing.get(provider_id)
         if row is None:
             row = Provider(id=provider_id, name=name, provider_type=provider_type,
@@ -36,6 +38,8 @@ async def bootstrap_providers(db: AsyncSession, registry: ProviderRegistry) -> N
         else:
             # Preserve all user controlled settings and refresh known policy only.
             row.requires_api_key = requires_api_key
+            if provider_id == "openrouter":
+                row.provider_type = provider_type
     await db.flush()
 
     for provider_id, (remote_model_id, capability) in _SENTINELS.items():

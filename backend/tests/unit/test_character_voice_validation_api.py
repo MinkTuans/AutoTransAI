@@ -267,3 +267,31 @@ async def test_validate_review_detects_gender_and_language_issues():
         assert res["data"]["passed"] is False
         assert len(res["data"]["issues"]) > 0
         assert res["data"]["issues"][0]["reason"] == "target_language_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_validate_review_accepts_selected_openrouter_voice_with_session():
+    from app.models import CatalogModel
+    from app.models.settings import AIFunctionConfig
+
+    session = AsyncMock()
+    async def get(cls, key):
+        if cls is AIFunctionConfig:
+            return AIFunctionConfig(function_id="tts", primary_provider_id="openrouter",
+                                    model_id="catalog-id")
+        if cls is CatalogModel:
+            return CatalogModel(id="catalog-id", provider_id="openrouter", source="discovered",
+                                enabled=True, remote_model_id="openai/tts-model",
+                                discovery_metadata={"supported_voices": ["alloy"],
+                                                    "architecture": {"input_modalities": ["text"],
+                                                                     "output_modalities": ["speech"]}})
+    session.get.side_effect = get
+    review_data = {"job_id": "job", "target_language": "en-US", "status": "needs_review",
+                   "segments": [{"id": 1, "segment_number": 1, "character_id": "c1",
+                                 "gender": "female", "voice_provider": "openrouter",
+                                 "voice_id": "alloy", "original_start": 0.0,
+                                 "original_end": 2.0, "tts_duration": 2.0}]}
+    with patch("app.api.routes.video_translator._character_voice_review_data", return_value=review_data):
+        result = await validate_character_voice_review("job", session)
+    assert result["data"]["passed"] is True
+    assert result["data"]["issues"] == []

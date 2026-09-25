@@ -79,6 +79,16 @@ async def lifespan(app: FastAPI):
     registry.register_llm(OpenAILLMProvider())
     registry.register_llm(GeminiLLMProvider())
 
+    from app.providers.openrouter_provider import (
+        OpenRouterAudioProvider, OpenRouterImageProvider, OpenRouterLLMProvider,
+        OpenRouterVideoProvider, OpenRouterVisionProvider,
+    )
+    registry.register_audio(OpenRouterAudioProvider())
+    registry.register_video(OpenRouterVideoProvider())
+    registry.register_llm(OpenRouterLLMProvider())
+    registry.register_image(OpenRouterImageProvider())
+    registry.register_vision(OpenRouterVisionProvider())
+
     logger.info(
         "Providers registered",
         audio=len(registry.list_audio()),

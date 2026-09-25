@@ -7,6 +7,10 @@ const safeStatus = value => ['complete', 'partial', 'failed', 'stale', 'unsuppor
 export default function KeyPool() {
   const [providers, setProviders] = useState([]);
   const [providerLoad, setProviderLoad] = useState('loading');
+  const [showProviderForm, setShowProviderForm] = useState(false);
+  const [providerDraft, setProviderDraft] = useState({ id: '', name: '', provider_type: 'llm', base_url: '' });
+  const [providerSaving, setProviderSaving] = useState(false);
+  const [providerError, setProviderError] = useState('');
   const [selectedId, setSelectedId] = useState(null);
   const [keys, setKeys] = useState([]);
   const [keysLoad, setKeysLoad] = useState('idle');
@@ -21,6 +25,50 @@ export default function KeyPool() {
   const keysRequestSequence = useRef(0);
   const selected = providers.find(provider => provider.id === selectedId);
   const isCurrent = generation => generation === selectionGeneration.current;
+
+  function selectProvider(providerId) {
+    if (providerId === selectedIdRef.current) return;
+    selectionGeneration.current += 1;
+    keysRequestSequence.current += 1;
+    selectedIdRef.current = providerId;
+    setSelectedId(providerId);
+    setAdding(false);
+    setInput('');
+    setBusy(false);
+    setError('');
+    setNotice('');
+    setRefresh(null);
+  }
+
+  async function createProvider(event) {
+    event.preventDefault();
+    if (providerSaving) return;
+    setProviderSaving(true);
+    setProviderError('');
+    const body = {
+      id: providerDraft.id.trim(),
+      name: providerDraft.name.trim(),
+      provider_type: providerDraft.provider_type,
+      ...(providerDraft.base_url.trim() ? { base_url: providerDraft.base_url.trim() } : {}),
+    };
+    try {
+      const created = await aiApi.createProvider(body);
+      if (!created?.success || created.data?.id !== body.id) throw new Error('Invalid provider response');
+      const listed = await aiApi.listProviders();
+      if (!listed?.success || !Array.isArray(listed.data) || !listed.data.some(provider => provider.id === body.id)) {
+        throw new Error('Invalid provider list');
+      }
+      setProviders(listed.data);
+      setProviderLoad('ready');
+      selectProvider(body.id);
+      setShowProviderForm(false);
+      setProviderDraft({ id: '', name: '', provider_type: 'llm', base_url: '' });
+    } catch {
+      setProviderError('Không thể lưu nhà cung cấp AI. Vui lòng kiểm tra và thử lại.');
+    } finally {
+      setProviderSaving(false);
+    }
+  }
 
   useEffect(() => () => {
     selectionGeneration.current += 1;
@@ -171,8 +219,39 @@ export default function KeyPool() {
 
   return <div style={{ display: 'grid', gap: '1.5rem' }}>
     <div className="card">
-      <div className="card-header"><h3>AI Provider Catalog</h3></div>
+      <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+        <h3>AI Provider Catalog</h3>
+        <button type="button" className="btn btn-primary" onClick={() => { setProviderError(''); setShowProviderForm(true); }}>Thêm nhà cung cấp AI</button>
+      </div>
       <div className="card-body">
+        {showProviderForm && <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'grid', placeItems: 'center', background: 'rgba(0, 0, 0, 0.72)', padding: '1rem' }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="new-provider-title" className="card" style={{ width: 'min(100%, 480px)', maxHeight: '90vh', overflowY: 'auto' }}>
+          <div className="card-header"><h3 id="new-provider-title">Thêm nhà cung cấp AI</h3></div>
+          <form className="card-body" onSubmit={createProvider} style={{ display: 'grid', gap: '0.75rem' }}>
+            <p>Hồ sơ này thêm nhà cung cấp vào catalog; khả năng chạy model phụ thuộc vào adapter được hỗ trợ.</p>
+            {providerError && <p role="alert" className="alert alert-danger">{providerError}</p>}
+            <label htmlFor="new-provider-id">ID</label>
+            <input id="new-provider-id" className="form-control" required value={providerDraft.id} onChange={event => setProviderDraft(current => ({ ...current, id: event.target.value }))} />
+            <label htmlFor="new-provider-name">Tên</label>
+            <input id="new-provider-name" className="form-control" required value={providerDraft.name} onChange={event => setProviderDraft(current => ({ ...current, name: event.target.value }))} />
+            <label htmlFor="new-provider-type">Loại</label>
+            <select id="new-provider-type" className="form-control" value={providerDraft.provider_type} onChange={event => setProviderDraft(current => ({ ...current, provider_type: event.target.value }))}>
+              <option value="llm">LLM</option>
+              <option value="audio">Audio</option>
+              <option value="image">Image</option>
+              <option value="video">Video</option>
+              <option value="vision">Vision</option>
+              <option value="multimodal">Đa năng</option>
+            </select>
+            <label htmlFor="new-provider-url">Base URL (không bắt buộc)</label>
+            <input id="new-provider-url" type="url" className="form-control" value={providerDraft.base_url} onChange={event => setProviderDraft(current => ({ ...current, base_url: event.target.value }))} />
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button type="submit" className="btn btn-primary" disabled={providerSaving}>Lưu nhà cung cấp</button>
+              <button type="button" className="btn btn-secondary" disabled={providerSaving} onClick={() => setShowProviderForm(false)}>Đóng</button>
+            </div>
+          </form>
+          </div>
+        </div>}
         {providerLoad === 'loading' && <p>Đang tải nhà cung cấp AI…</p>}
         {providerLoad === 'error' && <p role="alert">Không thể tải nhà cung cấp AI.</p>}
         {providerLoad === 'ready' && providers.length === 0 && <p>Chưa có nhà cung cấp AI.</p>}
@@ -180,22 +259,11 @@ export default function KeyPool() {
           {providers.map(provider => <button type="button" key={provider.id}
             className={`provider-tile ${selectedId === provider.id ? 'is-selected' : ''}`}
             aria-pressed={selectedId === provider.id}
-            onClick={() => {
-              if (provider.id === selectedId) return;
-              selectionGeneration.current += 1;
-              keysRequestSequence.current += 1;
-              selectedIdRef.current = provider.id;
-              setSelectedId(provider.id);
-              setAdding(false);
-              setInput('');
-              setBusy(false);
-              setError('');
-              setNotice('');
-              setRefresh(null);
-            }}
+            onClick={() => selectProvider(provider.id)}
             style={{ textAlign: 'left', color: '#f8fafc' }}>
             <strong>{provider.name}</strong><br />
             <span className="badge badge-neutral">{provider.provider_type}</span>
+            {provider.supported === false && <span className="badge badge-neutral">Chưa có adapter</span>}
             {provider.keyless && <span className="badge badge-success">Keyless</span>}
           </button>)}
         </div>}
@@ -210,6 +278,7 @@ export default function KeyPool() {
         </div>
       </div>
       <div className="card-body">
+        {selected.supported === false && <p role="status">Chưa có adapter chạy model cho nhà cung cấp này.</p>}
         {error && <p role="alert" className="alert alert-danger">{error}</p>}
         {notice && <p role="status" className="alert alert-info">{notice}</p>}
         {refresh && <div role="status">

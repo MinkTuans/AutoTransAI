@@ -26,6 +26,7 @@ from app.media.ffprobe import probe_duration_async, get_video_metadata_async
 from app.media.ffmpeg_process import run_ffmpeg_with_progress_async, FFmpegExecutionError
 from app.providers.registry import get_registry
 from app.providers.request_target import resolve_request_target
+from app.providers.openrouter_provider import transcribe_audio as transcribe_openrouter_chunk
 from app.services.ai_routing import RouteTarget, RouteConfigurationError, UnsupportedModalityError, build_route, invoke_route
 from app.models import APIKey, CatalogModel, CatalogRefreshRun
 from app.models.settings import AIFunctionConfig
@@ -661,6 +662,48 @@ async def transcribe_audio_with_gemini(
             shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+async def transcribe_audio_with_openrouter(
+    audio_path: Path, job_id: str = "VT-JOB", *, route_target: RouteTarget,
+    api_key: str | None,
+) -> Tuple[List[Dict[str, Any]], str]:
+    """Bound each OpenRouter STT call to short WAV chunks and restore offsets."""
+    import tempfile
+
+    total_duration = await probe_duration_async(audio_path)
+    if total_duration <= 0:
+        raise ValueError("Invalid STT audio duration.")
+    pieces: list[tuple[Path, float, float]] = []
+    with tempfile.TemporaryDirectory(prefix="openrouter_stt_", dir=audio_path.parent) as directory:
+        if total_duration <= 55 and audio_path.stat().st_size <= 15 * 1024 * 1024:
+            pieces.append((audio_path, 0.0, total_duration))
+        else:
+            start = 0.0
+            index = 0
+            while start < total_duration:
+                length = min(55.0, total_duration - start)
+                path = Path(directory) / f"chunk_{index:04d}.wav"
+                await run_ffmpeg_with_progress_async([
+                    "ffmpeg", "-y", "-i", str(audio_path), "-ss", f"{start:.2f}",
+                    "-t", f"{length:.2f}", "-acodec", "pcm_s16le", "-ar", "16000",
+                    "-ac", "1", str(path),
+                ], timeout=120.0)
+                pieces.append((path, start, await probe_duration_async(path)))
+                start += length
+                index += 1
+        combined: list[dict] = []
+        language = "English"
+        for path, offset, duration in pieces:
+            segments, language = await transcribe_openrouter_chunk(
+                path, duration, route_target=route_target, api_key=api_key)
+            for item in segments:
+                item["number"] = len(combined) + 1
+                item["start_time"] = round(offset + item["start_time"], 2)
+                item["end_time"] = round(offset + item["end_time"], 2)
+                combined.append(item)
+    validated = validate_and_clean_timeline_segments(combined, total_duration, job_id=job_id)
+    return validated, language
+
+
 async def speech_to_text_and_detect_language(
     audio_path: Path,
     job_id: str = "VT-JOB",
@@ -720,6 +763,10 @@ async def speech_to_text_and_detect_language(
                     )
                 if target.provider_id == "openai":
                     return await transcribe_audio_with_whisper(
+                        audio_path, job_id=job_id, route_target=target, api_key=secret,
+                    )
+                if target.provider_id == "openrouter":
+                    return await transcribe_audio_with_openrouter(
                         audio_path, job_id=job_id, route_target=target, api_key=secret,
                     )
                 raise UnsupportedModalityError("No Studio STT adapter for this provider.")

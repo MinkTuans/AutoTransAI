@@ -31,6 +31,7 @@ from app.media.ffprobe import probe_duration, probe_duration_async
 from app.media.ffmpeg import merge_audio_video, concatenate_videos, merge_audio_video_async, concatenate_videos_async
 from app.media.strategies import SyncStrategy, plan_sync, execute_sync, execute_sync_async
 from app.models.project import Project, WorkflowMode, WorkflowStatus
+from app.models import CatalogModel
 from app.models.segment import Segment, SegmentStatus
 from app.models.job import Job, JobType, JobStatus
 from app.models.error import Error
@@ -609,7 +610,11 @@ class WorkflowOrchestrator:
         async def transport(target, secret):
             try:
                 provider = self._registry.get_video(target.provider_id)
-                if provider is None or not supported_video_target(target.provider_id, target.remote_model_id):
+                model = await self.session.get(CatalogModel, target.model_id)
+                metadata = model.discovery_metadata if model is not None else None
+                if provider is None or not supported_video_target(
+                        target.provider_id, target.remote_model_id, metadata=metadata,
+                        duration=settings.VIDEO_TARGET_DURATION):
                     raise UnsupportedModalityError("Video adapter unavailable for catalog model.")
                 staging_root = settings.DATA_DIR / "video_staging"
                 staging_root.mkdir(parents=True, exist_ok=True)

@@ -2,22 +2,27 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Generic, TypeVar
+from typing import Generic, Literal, TypeVar
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.config import get_settings
 from app.models import APIKey, CatalogModel, KeyModelAccess, Provider
 from app.models.settings import AIFunctionConfig
+from app.providers.registry import get_registry
 from app.services.ai_routing import _PUBLIC_CATALOG_PROVIDERS, _keyless_allowed
 from app.services.capability_registry import CAPABILITIES, catalog_capability_summary
 from app.services.function_inventory import FUNCTION_INVENTORY
+from app.services.video_catalog_selection import supported_video_target
 
 
 class SafeCatalogReadRoute(APIRoute):
@@ -57,6 +62,32 @@ class ProviderView(BaseModel):
     enabled_key_count: int
     status: str
     keyless: bool
+
+
+class CustomProviderInput(BaseModel):
+    id: str = Field(min_length=2, max_length=50, pattern=r"^[a-z][a-z0-9_]*$")
+    name: str = Field(min_length=1, max_length=100)
+    provider_type: Literal["audio", "video", "llm", "image", "vision", "multimodal"]
+    base_url: str | None = Field(default=None, max_length=255)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Provider name is required.")
+        return value
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        value = value.strip()
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+            raise ValueError("Base URL must be an HTTP(S) URL without credentials.")
+        return value
 
 
 class CapabilityView(BaseModel):
@@ -136,6 +167,16 @@ def _safe_metadata(model: CatalogModel) -> dict:
                 flags[key] = {"supported": entry["supported"]}
         if flags:
             safe["capabilities"] = flags
+    if (model.provider_id == "openrouter" and model.source == "discovered"
+            and isinstance(raw.get("supported_voices"), list)):
+        safe["supported_voices"] = [voice for voice in raw["supported_voices"][:64]
+                                    if isinstance(voice, str) and 0 < len(voice) <= 255
+                                    and not any(ord(character) < 32 for character in voice)]
+    if model.provider_id == "openrouter" and model.source == "discovered" and isinstance(raw.get("video"), dict):
+        durations = raw["video"].get("supported_durations")
+        if isinstance(durations, list):
+            safe["video"] = {"supported_durations": [value for value in durations[:64]
+                                                   if type(value) is int and 1 <= value <= 300]}
     return safe
 
 
@@ -182,6 +223,10 @@ def _model_view(model, providers, context, capability: str | None = None) -> Mod
         count = len(access.get(model.id, ()))
     available_count = count if active else 0
     summary = catalog_capability_summary(model)
+    video_ready = (capability != "VIDEO_GENERATION" or model.provider_id != "openrouter"
+                   or supported_video_target(model.provider_id, model.remote_model_id,
+                                             metadata=model.discovery_metadata,
+                                             duration=get_settings().VIDEO_TARGET_DURATION))
     return ModelView(
         id=model.id, provider_id=model.provider_id, provider_name=provider.name,
         remote_model_id=model.remote_model_id, display_name=model.display_name,
@@ -192,7 +237,7 @@ def _model_view(model, providers, context, capability: str | None = None) -> Mod
         access_scope="keyless" if keyless else "catalog_unverified" if public else "listing_unverified" if count else "none",
         capability=CapabilityView(**summary),
         default_for=sorted(defaults.get((model.id, model.provider_id), ())),
-        selectable=(active and capability not in summary["incompatible_capabilities"]
+        selectable=(active and video_ready and capability not in summary["incompatible_capabilities"]
                     and (keyless or available_count > 0)) if capability else None,
     )
 
@@ -214,6 +259,29 @@ async def list_providers(db: AsyncSession = Depends(get_db)):
                                  keyless=not p.requires_api_key,
                                  status="disabled" if not p.enabled else "ready" if enabled_keys or keyless_model else "no_key"))
     return Envelope(data=rows)
+
+
+@router.post("/providers", response_model=Envelope[ProviderView], status_code=201)
+async def create_provider(profile: CustomProviderInput, db: AsyncSession = Depends(get_db)):
+    registered = get_registry().get_all_providers()
+    if any(provider.provider_id == profile.id for group in registered.values() for provider in group):
+        raise HTTPException(status_code=409, detail="Provider already exists.")
+    if await db.get(Provider, profile.id) is not None:
+        raise HTTPException(status_code=409, detail="Provider already exists.")
+    provider = Provider(id=profile.id, name=profile.name, provider_type=profile.provider_type,
+                        base_url=profile.base_url, supported=False, is_custom=True,
+                        enabled=True, requires_api_key=True, capabilities="[]")
+    db.add(provider)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Provider already exists.") from None
+    return Envelope(data=ProviderView(
+        id=provider.id, name=provider.name, provider_type=provider.provider_type,
+        enabled=True, supported=False, model_count=0, active_model_count=0,
+        enabled_key_count=0, status="no_key", keyless=False,
+    ))
 
 
 @router.get("/models", response_model=Envelope[ModelPage])
@@ -305,6 +373,11 @@ async def list_functions(db: AsyncSession = Depends(get_db)):
         elif not model.enabled or not providers.get(model.provider_id) or not providers[model.provider_id].enabled:
             status = "disabled"
         elif c.capability not in CAPABILITIES or c.capability in catalog_capability_summary(model)["incompatible_capabilities"]:
+            status = "incompatible"
+        elif (c.capability == "VIDEO_GENERATION" and model.provider_id == "openrouter"
+              and not supported_video_target(model.provider_id, model.remote_model_id,
+                                             metadata=model.discovery_metadata,
+                                             duration=get_settings().VIDEO_TARGET_DURATION)):
             status = "incompatible"
         elif _model_view(model, providers, context).available_key_count == 0 and not _keyless_allowed(model, c.capability):
             status = "no_key"

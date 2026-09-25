@@ -270,7 +270,7 @@ class ThumbnailService:
                          and target.remote_model_id == "pollinations-default"
                          else target.remote_model_id)
                 result = await provider.generate_image(**kwargs, model=model)
-            elif target.provider_id in ("openai", "fal"):
+            elif target.provider_id in ("openai", "fal", "openrouter"):
                 result = await provider.generate_image(**kwargs, route_target=target, api_key=secret)
             else:
                 raise UnsupportedModalityError("Unsupported image adapter.")

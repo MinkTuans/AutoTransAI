@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { videoTranslatorApi, providersApi, projectsApi, thumbnailApi } from '../api';
+import { videoTranslatorApi, providersApi, projectsApi, thumbnailApi, aiApi } from '../api';
+import { loadOpenRouterVoices } from './openrouterVoices';
 import VideoEditorStudio from '../components/VideoEditorStudio';
 import AIQCScorecard from '../components/AIQCScorecard';
 import YouTubePublisherModal from '../components/YouTubePublisherModal';
@@ -63,6 +64,10 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   const [characterProfiles, setCharacterProfiles] = useState([]);
   const [voicesCache, setVoicesCache] = useState({});
   const [loadingVoices, setLoadingVoices] = useState({});
+  const [openRouterVoiceModel, setOpenRouterVoiceModel] = useState(null);
+  const currentAudioProvider = useRef(audioProviderId);
+  currentAudioProvider.current = audioProviderId;
+  const openRouterVoiceRequest = useRef(0);
 
   // Watermark Settings State
   const [watermarkEnabled, setWatermarkEnabled] = useState(false);
@@ -318,6 +323,37 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   // Load voices for a given provider
   const loadVoicesForProvider = async (pId) => {
     const providerId = pId || 'edge_tts';
+    if (providerId === 'openrouter') {
+      const request = ++openRouterVoiceRequest.current;
+      setLoadingVoices(prev => ({ ...prev, openrouter: true }));
+      try {
+        const result = await loadOpenRouterVoices(aiApi);
+        if (request !== openRouterVoiceRequest.current) return [];
+        const voiceIds = new Set((result?.voices || []).map(voice => voice.id));
+        setOpenRouterVoiceModel(result ? { id: result.modelId, name: result.modelName } : null);
+        setVoicesCache(prev => ({ ...prev, openrouter: result?.voices || [] }));
+        if (currentAudioProvider.current === 'openrouter') {
+          setDefaultMaleVoiceId(current => voiceIds.has(current) ? current : '');
+          setDefaultFemaleVoiceId(current => voiceIds.has(current) ? current : '');
+          setVoiceId(current => voiceIds.has(current) ? current : '');
+        }
+        return result?.voices || [];
+      } catch {
+        if (request !== openRouterVoiceRequest.current) return [];
+        setOpenRouterVoiceModel(null);
+        setVoicesCache(prev => ({ ...prev, openrouter: [] }));
+        if (currentAudioProvider.current === 'openrouter') {
+          setDefaultMaleVoiceId('');
+          setDefaultFemaleVoiceId('');
+          setVoiceId('');
+        }
+        return [];
+      } finally {
+        if (request === openRouterVoiceRequest.current) {
+          setLoadingVoices(prev => ({ ...prev, openrouter: false }));
+        }
+      }
+    }
     if (voicesCache[providerId] && voicesCache[providerId].length > 0) {
       return voicesCache[providerId];
     }
@@ -1064,19 +1100,6 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   const [lastPollTime, setLastPollTime] = useState(null);
   const [lastApiResponseTime, setLastApiResponseTime] = useState(null);
 
-  useEffect(() => {
-    providersApi.listVoices(audioProviderId, targetLanguage)
-      .then(res => {
-        if (res.success && res.data) {
-          setVoices(res.data);
-          if (res.data.length > 0) {
-            setVoiceId(res.data[0].id);
-          }
-        }
-      })
-      .catch(() => setVoices([]));
-  }, [audioProviderId, targetLanguage]);
-
   const activeJobId = job?.id || job?.job_id;
   const lastPollTimestampRef = useRef(0);
 
@@ -1708,8 +1731,16 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                   value={audioProviderId}
                   onChange={(e) => {
                     const newProv = e.target.value;
+                    currentAudioProvider.current = newProv;
                     setAudioProviderId(newProv);
+                    if (newProv === 'openrouter') {
+                      setDefaultMaleVoiceId('');
+                      setDefaultFemaleVoiceId('');
+                      setVoiceId('');
+                      return;
+                    }
                     loadVoicesForProvider(newProv).then(voicesList => {
+                      if (currentAudioProvider.current !== newProv) return;
                       const filtered = filterVoicesByLanguage(voicesList, targetLanguage);
                       const pool = filtered.length > 0 ? filtered : voicesList;
                       const maleVoices = filterVoicesByGender(pool, 'male');
@@ -1735,7 +1766,12 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                       {formatProviderLabel(p)}
                     </option>
                   ))}
-                </select>
+                  </select>
+                {audioProviderId === 'openrouter' && <p style={{ fontSize: '11px', color: '#94a3b8' }}>
+                  {openRouterVoiceModel
+                    ? `Giọng thuộc model TTS ${openRouterVoiceModel.name}. Ngôn ngữ và giới tính của giọng chưa được xác minh; hãy chọn giọng cho từng phân đoạn.`
+                    : 'Chưa có giọng được xác minh cho model TTS OpenRouter đã cấu hình. Hãy chọn model trong AI Functions và cập nhật Models.'}
+                </p>}
               </div>
 
               <div>
@@ -1748,7 +1784,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                   {(() => {
                     const provVoices = voicesCache[audioProviderId] || [];
                     const langFiltered = filterVoicesByLanguage(provVoices, targetLanguage);
-                    const listToUse = filterVoicesByGender(langFiltered.length > 0 ? langFiltered : provVoices, 'male');
+                    const listToUse = audioProviderId === 'openrouter' ? provVoices
+                      : filterVoicesByGender(langFiltered.length > 0 ? langFiltered : provVoices, 'male');
                     const hasCurrent = defaultMaleVoiceId && listToUse.some(v => v.id === defaultMaleVoiceId);
 
                     return (
@@ -1783,7 +1820,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                   {(() => {
                     const provVoices = voicesCache[audioProviderId] || [];
                     const langFiltered = filterVoicesByLanguage(provVoices, targetLanguage);
-                    const listToUse = filterVoicesByGender(langFiltered.length > 0 ? langFiltered : provVoices, 'female');
+                    const listToUse = audioProviderId === 'openrouter' ? provVoices
+                      : filterVoicesByGender(langFiltered.length > 0 ? langFiltered : provVoices, 'female');
                     const hasCurrent = defaultFemaleVoiceId && listToUse.some(v => v.id === defaultFemaleVoiceId);
 
                     return (
@@ -2281,7 +2319,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
 
               // Gender filter (Requirement 5)
               const availableVoices = (charGender === 'male' || charGender === 'female')
-                ? langFilteredVoices.filter(v => (v.gender || '').toLowerCase() === charGender)
+                ? currentProvider === 'openrouter' ? rawVoices
+                  : langFilteredVoices.filter(v => (v.gender || '').toLowerCase() === charGender)
                 : [];
 
               const hasCurrentVoice = availableVoices.some(v => v.id === seg.voice_id);
@@ -2420,6 +2459,9 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                     {/* 4. VOICE */}
                     <label style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                       <span style={{ color: '#94a3b8', fontWeight: '500' }}>Voice</span>
+                      {currentProvider === 'openrouter' && <small style={{ color: '#94a3b8' }}>
+                        Giọng từ model TTS đã cấu hình; ngôn ngữ/giới tính chưa xác minh.
+                      </small>}
                       {charGender === 'unknown' ? (
                         <select
                           disabled

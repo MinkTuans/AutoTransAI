@@ -139,11 +139,12 @@ class DubStage:
                     raise RouteConfigurationError("TTS default is not configured.")
                 route = await build_route(catalog_db, "TTS")
                 rows = (await catalog_db.scalars(select(VoicePoolEntry).where(
-                    VoicePoolEntry.provider.in_(("edge", "edge_tts", "elevenlabs", "google_cloud_tts"))))).all()
+                    VoicePoolEntry.provider.in_(("edge", "edge_tts", "elevenlabs", "google_cloud_tts", "openrouter"))))).all()
                 normalized_rows = [({"edge": "edge_tts"}.get(r.provider, r.provider), r) for r in rows]
                 disabled = {(provider_id, r.voice_id) for provider_id, r in normalized_rows if not r.enabled}
                 pool = [{"provider": provider_id, "voice_id": r.voice_id,
-                         "language": r.language, "gender": r.gender}
+                         "language": r.language, "gender": r.gender,
+                         "catalog_model_id": (r.provider_metadata or {}).get("catalog_model_id")}
                         for provider_id, r in normalized_rows
                         if r.enabled and (provider_id, r.voice_id) not in disabled]
 

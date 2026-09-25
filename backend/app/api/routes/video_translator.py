@@ -2042,10 +2042,13 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                 APIKey.provider_id.in_(("elevenlabs", "google_cloud_tts")),
             ).limit(1))
             await init_session.scalar(select(CatalogRefreshRun.id).limit(1))
-            canonical_tts = catalog_model is not None or catalog_key is not None
+            tts_default = await init_session.get(AIFunctionConfig, "tts")
+            selected_model = (await init_session.get(CatalogModel, tts_default.model_id)
+                              if tts_default and tts_default.model_id else None)
+            canonical_tts = (catalog_model is not None or catalog_key is not None or
+                             selected_model is not None and selected_model.source != "legacy_import")
             segment_routes = {}
             if canonical_tts:
-                tts_default = await init_session.get(AIFunctionConfig, "tts")
                 # Legacy installations seed only AIModel("edge-tts") and keep that
                 # string in the TTS default. Adding an unrelated key must not
                 # switch Studio to a catalog route before the Edge default is
@@ -2059,7 +2062,9 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                 tts_route = await build_route(init_session, "TTS")
                 pool_rows = (await init_session.execute(select(VoicePoolEntry))).scalars().all()
                 voice_pool = [{"provider": p.provider, "voice_id": p.voice_id,
-                               "language": p.language, "gender": p.gender} for p in pool_rows if p.enabled]
+                               "language": p.language, "gender": p.gender,
+                               "catalog_model_id": (p.provider_metadata or {}).get("catalog_model_id")}
+                              for p in pool_rows if p.enabled]
                 disabled_voices = {(p.provider, p.voice_id) for p in pool_rows if not p.enabled}
                 historical_edge_voices = {}
                 profiles = {}
@@ -3612,12 +3617,34 @@ async def validate_voice_assignment(
     target_language: Optional[str] = None,
     character_gender: Optional[str] = None,
     validated_voice: Optional[List[VoiceInfo]] = None,
+    session: AsyncSession | None = None,
 ) -> Optional[Dict[str, str]]:
     """Validate provider, voice existence, target language compatibility, and character gender matching."""
     if not provider_id:
         return {"reason": "missing_provider", "message": "Chưa chọn nhà cung cấp giọng đọc (Provider)."}
     if not voice_id:
         return {"reason": "missing_voice", "message": "Chưa chọn giọng đọc (Voice)."}
+
+    if provider_id == "openrouter":
+        from app.services.capability_registry import model_evidence
+
+        config = await session.get(AIFunctionConfig, "tts") if session is not None else None
+        model = (await session.get(CatalogModel, config.model_id)
+                 if session is not None and config is not None and config.model_id else None)
+        raw = model.discovery_metadata if model is not None and isinstance(model.discovery_metadata, dict) else {}
+        voices = raw.get("supported_voices")
+        if (config is None or config.primary_provider_id != "openrouter" or
+                model is None or model.provider_id != "openrouter" or
+                model.source != "discovered" or not model.enabled or
+                "TTS" not in model_evidence(model).capabilities or
+                not isinstance(voices, list) or len(voices) > 64 or
+                not 0 < len(voice_id) <= 100 or any(ord(char) < 32 for char in voice_id) or
+                voice_id not in voices or
+                not all(isinstance(item, str) and 0 < len(item) <= 100 for item in voices)):
+            return {"reason": "invalid_voice", "message": "Giọng OpenRouter không thuộc model TTS đã chọn."}
+        if validated_voice is not None:
+            validated_voice.append(VoiceInfo(id=voice_id, name=voice_id, language="und"))
+        return None
 
     registry = get_registry()
     provider = registry.get_audio(provider_id)
@@ -3750,6 +3777,7 @@ async def update_character_voice_review(job_id: str, body: CharacterVoiceReviewU
             target_language=target_lang,
             character_gender=cur_gender,
             validated_voice=validated_voices,
+            session=session,
         )
         if err:
             raise HTTPException(
@@ -3770,11 +3798,15 @@ async def update_character_voice_review(job_id: str, body: CharacterVoiceReviewU
             existing.language = verified.language
             existing.gender = verified.gender
             existing.display_name = verified.name or item.voice_id
+            if item.voice_provider == "openrouter":
+                existing.provider_metadata = {"catalog_model_id": (await session.get(AIFunctionConfig, "tts")).model_id}
         else:
             session.add(VoicePoolEntry(
                 id=str(uuid.uuid4()), provider=item.voice_provider, voice_id=item.voice_id,
                 language=verified.language, gender=verified.gender,
                 display_name=verified.name or item.voice_id,
+                provider_metadata=({"catalog_model_id": (await session.get(AIFunctionConfig, "tts")).model_id}
+                                   if item.voice_provider == "openrouter" else None),
             ))
 
     job_dir = settings.STORAGE_ROOT / "translator" / "jobs" / job_id
@@ -3911,6 +3943,7 @@ async def validate_character_voice_review(job_id: str, session: AsyncSession = D
             voice_id=s.get("voice_id"),
             target_language=target_lang,
             character_gender=s.get("gender"),
+            session=session,
         )
         if err:
             issues.append({

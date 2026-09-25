@@ -40,7 +40,8 @@ def _validated(result, provider, secret):
     """Do not let an unexpected injected/adapter result authorize retirement."""
     if (not isinstance(result, DiscoveryResult)
             or result.status not in {"complete", "partial", "failed", "unsupported"}
-            or result.access_scope not in {"credential", "catalog", "unknown"}
+            or result.access_scope not in {"credential", "catalog", "verified_catalog", "unknown"}
+            or result.access_scope == "verified_catalog" and provider != "openrouter"
             or not isinstance(result.models, tuple)
             or any(not isinstance(m, DiscoveredModel) or not isinstance(m.remote_model_id, str)
                    or not m.remote_model_id or len(m.remote_model_id) > 255
@@ -55,7 +56,7 @@ def _validated(result, provider, secret):
 
 def _complete(result):
     return (result.status == "complete" and bool(result.models) and result.error_code is None
-            and result.access_scope in {"credential", "catalog"})
+            and result.access_scope in {"credential", "catalog", "verified_catalog"})
 
 
 def _safe_error(result):

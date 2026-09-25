@@ -165,6 +165,19 @@ def _register_defaults(reg: ProviderRegistry) -> None:
     except Exception as e:
         logger.warning("Failed to register image providers", error=str(e))
 
+    try:
+        from app.providers.openrouter_provider import (
+            OpenRouterAudioProvider, OpenRouterImageProvider, OpenRouterLLMProvider,
+            OpenRouterVideoProvider, OpenRouterVisionProvider,
+        )
+        reg.register_audio(OpenRouterAudioProvider())
+        reg.register_video(OpenRouterVideoProvider())
+        reg.register_llm(OpenRouterLLMProvider())
+        reg.register_image(OpenRouterImageProvider())
+        reg.register_vision(OpenRouterVisionProvider())
+    except Exception as e:
+        logger.warning("Failed to register OpenRouter providers", error=str(e))
+
 
 def get_registry() -> ProviderRegistry:
     """Get the global provider registry singleton."""
@@ -173,4 +186,3 @@ def get_registry() -> ProviderRegistry:
         _registry = ProviderRegistry()
         _register_defaults(_registry)
     return _registry
-

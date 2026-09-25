@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.core import get_logger
 from app.media.ffprobe import is_ffmpeg_installed, get_ffmpeg_version
+from app.models import APIKey, CatalogModel
 from app.providers.registry import get_registry
 from app.schemas.workflow import PreflightCheck, PreflightResult
 from app.services.file_manager import check_storage_writable, get_disk_space_mb
@@ -94,8 +95,14 @@ async def run_preflight(
             except RouteConfigurationError:
                 route_error = "Configured video model needs review."
         if canonical or route_error:
-            usable = [] if route_error else [registry.get_video(t.provider_id) for t in route.targets
-                                           if supported_video_target(t.provider_id, t.remote_model_id)]
+            usable = []
+            if route_error is None:
+                for target in route.targets:
+                    model = await db.get(CatalogModel, target.model_id)
+                    metadata = model.discovery_metadata if model is not None else None
+                    if supported_video_target(target.provider_id, target.remote_model_id,
+                                              metadata=metadata, duration=settings.VIDEO_TARGET_DURATION):
+                        usable.append(registry.get_video(target.provider_id))
             usable = [provider for provider in usable if provider is not None]
             configured = bool(usable) and route_error is None
             checks.append(PreflightCheck(
@@ -342,7 +349,6 @@ async def run_video_translator_preflight(
     registry = get_registry()
     from app.providers.ai_router import AIRouter
     from app.core.pipeline_errors import PipelineError
-    from app.models import APIKey, CatalogModel
     from app.models.settings import AIFunctionConfig
 
     active_stt_model = "—"
@@ -375,7 +381,7 @@ async def run_video_translator_preflight(
             if config is not None and config.model_id:
                 route = await build_route(db, "STT")
                 target = next((item for item in route.targets
-                               if item.provider_id in ("gemini", "openai")
+                               if item.provider_id in ("gemini", "openai", "openrouter")
                                and registry.get_llm(item.provider_id) is not None), None)
                 if target is not None:
                     stt_provider_id = target.provider_id

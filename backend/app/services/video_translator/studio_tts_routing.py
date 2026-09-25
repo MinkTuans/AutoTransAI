@@ -50,12 +50,14 @@ def select_segment_route(route: RoutePlan, segment: dict[str, Any], pool: list[d
     confirmed = bool(segment.get("confirmed_by_user"))
     for target in route.targets:
         # Google has no key-scoped voice discovery/access bridge yet.
-        if target.provider_id not in ("edge_tts", "elevenlabs"):
+        if target.provider_id not in ("edge_tts", "elevenlabs", "openrouter"):
             continue
         if confirmed and target.provider_id != segment.get("voice_provider"):
             continue
         matching = [row for row in pool if row.get("provider") == target.provider_id
-                    and _compatible_voice(row, target_language, segment.get("gender"))]
+                    and (row.get("catalog_model_id") == target.model_id
+                         if target.provider_id == "openrouter"
+                         else _compatible_voice(row, target_language, segment.get("gender")))]
         if confirmed:
             match = next((row for row in matching if row["voice_id"] == segment.get("voice_id")), None)
         else:

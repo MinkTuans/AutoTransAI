@@ -36,7 +36,7 @@ async def key_api(tmp_path):
             await conn.run_sync(table.__table__.create)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with sessions.begin() as db:
-        db.add_all([Provider(id=p, name=p, provider_type="llm") for p in ("openai", "fal")])
+        db.add_all([Provider(id=p, name=p, provider_type="llm") for p in ("openai", "fal", "openrouter")])
     responses = {}
 
     async def discover(provider, secret):
@@ -71,6 +71,46 @@ async def test_add_lists_masked_key_and_adds_models_after_commit(key_api):
     assert rows == [data["key"]]
     async with sessions() as db:
         assert (await db.scalar(select(CatalogModel).where(CatalogModel.remote_model_id == "model-one"))) is not None
+
+
+async def test_openrouter_catalog_discovery_activates_key_and_model_route(key_api):
+    from app.services.ai_routing import build_route
+    client, sessions, responses = key_api
+    responses["synthetic-router-key"] = listing("vendor/chat", scope="verified_catalog")
+    added = await client.post("/api/ai/providers/openrouter/keys", json={"key": "synthetic-router-key"})
+    assert added.status_code == 201
+    assert added.json()["data"]["key"]["enabled"] is True
+    async with sessions.begin() as db:
+        model = await db.scalar(select(CatalogModel).where(CatalogModel.provider_id == "openrouter"))
+        assert model is not None
+        assert (await db.scalars(select(KeyModelAccess).where(KeyModelAccess.model_id == model.id))).all() == []
+        db.add(AIFunctionConfig(function_id="translation", function_name="Translation",
+                                capability="TRANSLATION", primary_provider_id="openrouter", model_id=model.id))
+    async with sessions() as db:
+        route = await build_route(db, "TRANSLATION")
+    assert [(target.model_id, target.key_id) for target in route.targets] == [
+        (model.id, added.json()["data"]["key"]["id"])]
+
+
+async def test_public_openrouter_listing_without_key_verification_stays_disabled(key_api):
+    client, _, responses = key_api
+    responses["synthetic-unverified-key"] = listing("vendor/chat", scope="catalog")
+    added = await client.post("/api/ai/providers/openrouter/keys", json={"key": "synthetic-unverified-key"})
+    assert added.status_code == 201
+    assert added.json()["data"]["key"]["enabled"] is False
+    responses["synthetic-unverified-key"] = listing("vendor/chat", scope="verified_catalog")
+    enabled = await client.patch(f"/api/ai/keys/{added.json()['data']['key']['id']}",
+                                 json={"enabled": True})
+    assert enabled.status_code == 200
+    assert enabled.json()["data"]["key"]["enabled"] is True
+
+
+async def test_verified_catalog_scope_is_reserved_for_openrouter(key_api):
+    client, _, responses = key_api
+    responses["synthetic-other-key"] = listing("vendor/chat", scope="verified_catalog")
+    added = await client.post("/api/ai/providers/openai/keys", json={"key": "synthetic-other-key"})
+    assert added.status_code == 201
+    assert added.json()["data"]["key"]["enabled"] is False
 
 
 async def test_priority_patch_and_masked_get_preserve_disabled_state(key_api):

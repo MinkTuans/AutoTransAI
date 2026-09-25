@@ -131,6 +131,13 @@ def _discovery_view(outcome: RefreshOutcome, provider_id: str, key_id: str) -> D
                          error_code=result["error_code"])
 
 
+def _can_activate(provider_id: str, outcome: RefreshOutcome, discovery: DiscoveryView) -> bool:
+    scope = discovery.access_scope
+    return (outcome.status == "complete" and discovery.status == "complete"
+            and discovery.error_code is None
+            and (scope == "credential" or provider_id == "openrouter" and scope == "verified_catalog"))
+
+
 @router.get("/providers/{provider_id}/keys")
 async def list_keys(provider_id: str, context: KeyAPIContext = Depends(get_key_api_context)) -> dict:
     async with context.sessions() as db:
@@ -154,7 +161,7 @@ async def add_key(provider_id: str, body: KeyInput,
         raise HTTPException(400, "Credential cannot be added.") from None
     outcome = await context.refresh.discover_key(key.id)
     discovery = _discovery_view(outcome, provider_id, key.id)
-    if outcome.status == "complete" and discovery.status == "complete" and discovery.access_scope == "credential" and discovery.error_code is None:
+    if _can_activate(provider_id, outcome, discovery):
         try:
             async with context.sessions.begin() as db:
                 activated = await (await CredentialService.open(db, context.data_dir)).enable_if_unchanged(
@@ -191,8 +198,7 @@ async def set_key_enabled(key_id: str, body: KeyPatchInput,
             discovery = _discovery_view(outcome, current.provider_id, key_id)
             if outcome.status == "stale":
                 raise HTTPException(409, "Credential changed during discovery.")
-            if (outcome.status == "complete" and discovery.status == "complete"
-                    and discovery.access_scope == "credential" and discovery.error_code is None):
+            if _can_activate(current.provider_id, outcome, discovery):
                 async with context.sessions.begin() as db:
                     activated = await (await CredentialService.open(db, context.data_dir)).enable_if_unchanged(
                         key_id, current.revision)

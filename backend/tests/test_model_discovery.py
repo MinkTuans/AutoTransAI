@@ -67,6 +67,84 @@ async def test_openai_preserves_custom_ids_and_allowlists_metadata(discovery):
     assert requests[0].headers["authorization"] == "Bearer " + SECRET
 
 
+async def test_openrouter_lists_all_modalities_and_keeps_bounded_architecture(discovery):
+    result, requests = await scan(discovery, "openrouter", [{"data": {"label": "synthetic-key-label"}}, {"data": [
+        {"id": "vendor/text-vision", "name": "Vision", "architecture": {
+            "input_modalities": ["text", "image"], "output_modalities": ["text"],
+            "tokenizer": SECRET}, "description": SECRET},
+        {"id": "vendor/transcriber", "architecture": {
+            "input_modalities": ["audio"], "output_modalities": ["transcription"]}},
+        {"id": "vendor/speech", "architecture": {
+            "input_modalities": ["text"], "output_modalities": ["speech"]},
+            "supported_voices": ["Voice-One", "Voice-Two", SECRET, "x" * 4097]},
+        {"id": "vendor/image", "architecture": {
+            "input_modalities": ["text"], "output_modalities": ["image"]}},
+        {"id": "vendor/video", "architecture": {
+            "input_modalities": ["text"], "output_modalities": ["video"]}},
+    ]}, {"data": [{"id": "vendor/video", "supported_durations": [5, 10],
+                   "supported_frame_images": ["first_frame"], "pricing_skus": {"secret": SECRET}}]}])
+    assert result.status == "complete" and result.access_scope == "verified_catalog"
+    assert [model.remote_model_id for model in result.models] == [
+        "vendor/text-vision", "vendor/transcriber", "vendor/speech", "vendor/image", "vendor/video"]
+    assert result.models[0].metadata == {"architecture": {
+        "input_modalities": ["text", "image"], "output_modalities": ["text"]}}
+    assert result.models[2].metadata == {"architecture": {
+        "input_modalities": ["text"], "output_modalities": ["speech"]},
+        "supported_voices": ["Voice-One", "Voice-Two"]}
+    assert result.models[4].metadata == {"architecture": {
+        "input_modalities": ["text"], "output_modalities": ["video"]},
+        "video": {"supported_durations": [5, 10]}}
+    assert requests[0].url == "https://openrouter.ai/api/v1/key"
+    assert requests[1].url == "https://openrouter.ai/api/v1/models?output_modalities=all"
+    assert requests[2].url == "https://openrouter.ai/api/v1/videos/models"
+    assert requests[0].headers["authorization"] == "Bearer " + SECRET
+
+
+async def test_openrouter_malformed_modality_lists_do_not_become_capability_evidence(discovery):
+    result, _ = await scan(discovery, "openrouter", [{"data": {"label": "synthetic-key-label"}},
+        {"data": [{"id": "vendor/unknown",
+        "architecture": {"input_modalities": "text,image", "output_modalities": ["text", SECRET]}}]}])
+    assert result.status == "complete"
+    assert result.models[0].metadata == {"architecture": {"output_modalities": ["text"]}}
+
+
+async def test_openrouter_video_enrichment_failure_keeps_verified_nonvideo_models(discovery):
+    result, _ = await scan(discovery, "openrouter", [
+        {"data": {"label": "synthetic-key-label"}},
+        {"data": [{"id": "vendor/chat", "architecture": {
+            "input_modalities": ["text"], "output_modalities": ["text"]}},
+            {"id": "vendor/video", "architecture": {
+                "input_modalities": ["text"], "output_modalities": ["video"]}}]},
+        {"data": "malformed"},
+    ])
+    assert result.status == "complete" and result.access_scope == "verified_catalog"
+    assert result.models[0].remote_model_id == "vendor/chat"
+    assert result.models[1].metadata == {"architecture": {
+        "input_modalities": ["text"], "output_modalities": ["video"]}}
+
+
+async def test_openrouter_bad_key_never_uses_public_catalog(discovery):
+    result, requests = await scan(discovery, "openrouter", [httpx.Response(401, json={
+        "error": {"message": SECRET}})])
+    assert result.status == "failed" and result.error_code == "auth_invalid"
+    assert result.access_scope != "verified_catalog"
+    assert [str(request.url) for request in requests] == ["https://openrouter.ai/api/v1/key"]
+
+
+async def test_openrouter_unrecognized_key_response_cannot_verify_catalog(discovery):
+    result, requests = await scan(discovery, "openrouter", [{"data": {}}])
+    assert result.status == "failed" and result.error_code == "malformed"
+    assert [str(request.url) for request in requests] == ["https://openrouter.ai/api/v1/key"]
+
+
+async def test_openrouter_management_key_cannot_verify_model_catalog(discovery):
+    result, requests = await scan(discovery, "openrouter", [
+        {"data": {"label": "admin", "is_management_key": True}},
+    ])
+    assert result.status == "failed" and result.access_scope != "verified_catalog"
+    assert [str(request.url) for request in requests] == ["https://openrouter.ai/api/v1/key"]
+
+
 async def test_anthropic_cursor_headers_and_safe_metadata(discovery):
     result, requests = await scan(discovery, "anthropic", [
         {"data": [{"id": "claude-future-001", "display_name": "Future", "type": "model",

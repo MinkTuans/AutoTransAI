@@ -194,6 +194,43 @@ async def test_preflight_canonical_uses_catalog_without_live_video_probe(video_c
 
 
 @pytest.mark.asyncio
+async def test_openrouter_video_preflight_requires_requested_duration(video_case, monkeypatch):
+    db, _sessions, path = video_case
+    model = await add_model(db, path / "data", "openrouter", "vendor/video", "synthetic-key")
+    model.source = "discovered"
+    model.discovery_metadata = {
+        "architecture": {"input_modalities": ["text"], "output_modalities": ["video"]},
+        "video": {"supported_durations": [5]},
+    }
+    configure(db, model)
+    await db.commit()
+
+    class Adapter:
+        max_duration_seconds = 60
+
+        async def validate_configuration(self):
+            raise AssertionError("preflight must remain offline")
+
+    from app.services import preflight
+    monkeypatch.setattr(preflight, "get_registry", lambda: type("Registry", (), {
+        "get_audio": lambda *_: None, "get_video": lambda *_: Adapter(),
+    })())
+    monkeypatch.setattr(preflight, "is_ffmpeg_installed", lambda: True)
+    monkeypatch.setattr(preflight, "check_storage_writable", lambda *_: True)
+    monkeypatch.setattr(preflight, "get_disk_space_mb", lambda *_: 1000)
+    monkeypatch.setattr(preflight.settings, "VIDEO_TARGET_DURATION", 8)
+    first = await run_preflight("probe-project", "audio_video", None, "legacy", None, 1, db=db)
+    assert not next(check for check in first.checks if check.name == "video_provider_configured").passed
+    model.discovery_metadata = {
+        "architecture": {"input_modalities": ["text"], "output_modalities": ["video"]},
+        "video": {"supported_durations": [5, 8]},
+    }
+    await db.commit()
+    second = await run_preflight("probe-project", "audio_video", None, "legacy", None, 1, db=db)
+    assert next(check for check in second.checks if check.name == "video_provider_configured").passed
+
+
+@pytest.mark.asyncio
 async def test_invalid_explicit_video_default_never_uses_legacy_provider(video_case, monkeypatch):
     db, _sessions, path = video_case
     model = await add_model(db, path / "data", "fal", "fal-ai/hunyuan-video", "secret")

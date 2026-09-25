@@ -75,6 +75,7 @@ export const settingsApi = {
 
 export const aiApi = {
   listProviders: () => api.get('/ai/providers').then(res => res.data),
+  createProvider: (provider) => api.post('/ai/providers', provider).then(res => res.data),
   listKeys: (providerId) => api.get(`/ai/providers/${encodeURIComponent(providerId)}/keys`).then(res => res.data),
   addKey: (providerId, key) => api.post(`/ai/providers/${encodeURIComponent(providerId)}/keys`, { key }).then(res => res.data),
   setKeyEnabled: (keyId, enabled) => api.patch(`/ai/keys/${encodeURIComponent(keyId)}`, { enabled }).then(res => res.data),

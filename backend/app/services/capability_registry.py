@@ -2,8 +2,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 CAPABILITIES = frozenset({"STT", "TRANSLATION", "LLM", "TTS", "VIDEO_GENERATION", "IMAGE_GENERATION", "VISUAL_GENDER"})
+
+# Exact model cards document image/audio input and text output. Keep previews,
+# image generators and TTS variants unknown unless discovery provides evidence.
+_KNOWN_GEMINI_CHAT = frozenset({
+    "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro",
+    "gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.5-flash-lite",
+    "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash",
+})
 
 
 @dataclass(frozen=True)
@@ -40,6 +49,48 @@ def classify(provider_id: str, metadata: dict | None, *, remote_model_id: str = 
                 positive.update(("TRANSLATION", "LLM"))
             else:
                 negative.update(("TRANSLATION", "LLM"))
+        if (remote_model_id in _KNOWN_GEMINI_CHAT
+                and (not isinstance(methods, list) or "generateContent" in methods)):
+            positive.update(("TRANSLATION", "LLM", "STT", "VISUAL_GENDER"))
+    elif provider_id == "openrouter":
+        architecture = data.get("architecture")
+        if isinstance(architecture, dict):
+            inputs = architecture.get("input_modalities")
+            outputs = architecture.get("output_modalities")
+            inputs = set(inputs) if isinstance(inputs, list) and all(isinstance(v, str) for v in inputs) else set()
+            outputs = set(outputs) if isinstance(outputs, list) and all(isinstance(v, str) for v in outputs) else set()
+            if "text" in inputs and "text" in outputs:
+                positive.update(("TRANSLATION", "LLM"))
+            if "image" in inputs and "text" in outputs:
+                positive.add("VISUAL_GENDER")
+            if "transcription" in outputs:
+                if "audio" in inputs:
+                    positive.add("STT")
+                else:
+                    negative.add("STT")
+            if "speech" in outputs:
+                voices = data.get("supported_voices")
+                if ("text" in inputs and isinstance(voices, list) and voices
+                        and all(isinstance(voice, str) and voice for voice in voices)):
+                    positive.add("TTS")
+                else:
+                    negative.add("TTS")
+            if "image" in outputs:
+                if (remote_model_id.startswith("recraft/")
+                        and re.search(r"-vector(?:$|[-:])", remote_model_id)):
+                    negative.add("IMAGE_GENERATION")
+                elif "text" not in inputs:
+                    negative.add("IMAGE_GENERATION")
+                else:
+                    positive.add("IMAGE_GENERATION")
+            if "video" in outputs:
+                video = data.get("video")
+                durations = video.get("supported_durations") if isinstance(video, dict) else None
+                if ("text" in inputs and isinstance(durations, list) and durations
+                        and all(type(value) is int and value > 0 for value in durations)):
+                    positive.add("VIDEO_GENERATION")
+                else:
+                    negative.add("VIDEO_GENERATION")
     elif provider_id == "anthropic":
         flags = data.get("capabilities")
         if isinstance(flags, dict):

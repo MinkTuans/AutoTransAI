@@ -1,8 +1,8 @@
-"""Official list endpoints verified 2026-09-23; no generated model-name guesses.
+"""Official list endpoints verified 2026-09-25; no generated model-name guesses.
 
 Contracts: ai.google.dev/api/models; developers.openai.com/api/reference/resources/models;
 platform.claude.com/docs/en/api/models/list; elevenlabs.io/docs/api-reference/models/list;
-fal.ai/docs/platform-apis/v1/models. See task report for full source links.
+fal.ai/docs/platform-apis/v1/models; openrouter.ai/docs/api/api-reference/models/get-models.
 """
 from dataclasses import dataclass
 import json
@@ -55,6 +55,7 @@ class ListAdapter:
     cursor_param: str | None = None
     page_size_param: str | None = None
     access_scope: str = "credential"
+    request_params: tuple[tuple[str, str], ...] = ()
 
     def headers(self, secret: str | None) -> dict:
         headers = {"accept": "application/json", "accept-encoding": "identity"}
@@ -148,11 +149,42 @@ class ListAdapter:
                     evidence[key] = {"supported": value["supported"]}
             if evidence:
                 metadata["capabilities"] = evidence
+        if self.provider == "openrouter" and isinstance(source.get("architecture"), dict):
+            architecture = {}
+            allowed = {
+                "input_modalities": {"text", "image", "audio", "video", "file"},
+                "output_modalities": {"text", "image", "audio", "video", "speech", "transcription", "embeddings", "rerank", "decisions"},
+            }
+            for key, vocabulary in allowed.items():
+                values = source["architecture"].get(key)
+                if isinstance(values, list):
+                    architecture[key] = [value for value in values[:32]
+                                         if isinstance(value, str) and value in vocabulary]
+            if architecture:
+                metadata["architecture"] = architecture
+        if self.provider == "openrouter" and isinstance(source.get("supported_voices"), list):
+            voices = [voice for value in source["supported_voices"][:64]
+                      if isinstance(value, str) and len(value) <= 256
+                      if (voice := safe_text(value, secret)) is not None and voice != "[redacted]"]
+            metadata["supported_voices"] = voices
+        if self.provider == "openrouter" and isinstance(source.get("video"), dict):
+            durations = source["video"].get("supported_durations")
+            if (isinstance(durations, list) and 0 < len(durations) <= 64
+                    and all(type(value) is int and 0 < value <= 600 for value in durations)):
+                metadata["video"] = {"supported_durations": list(dict.fromkeys(durations))}
+        if self.provider == "openrouter_video":
+            durations = source.get("supported_durations")
+            if (isinstance(durations, list) and 0 < len(durations) <= 64
+                    and all(type(value) is int and 0 < value <= 600 for value in durations)):
+                metadata["video"] = {"supported_durations": list(dict.fromkeys(durations))}
         # Scalars/nested capability flags are fixed-size. Trim list tails to keep
         # useful initial capability evidence when multibyte strings fill the budget.
         methods = metadata.get("supportedGenerationMethods", [])
         while methods and len(json.dumps(metadata, ensure_ascii=False).encode("utf-8")) > 8192:
             methods.pop()
+        voices = metadata.get("supported_voices", [])
+        while voices and len(json.dumps(metadata, ensure_ascii=False).encode("utf-8")) > 8192:
+            voices.pop()
         return metadata
 
 
@@ -166,4 +198,14 @@ ADAPTERS = {adapter.provider: adapter for adapter in (
                 "name", access_scope="catalog"),
     ListAdapter("fal", "https://api.fal.ai/v1/models", "authorization", "Key ", "models", "endpoint_id",
                 "display_name", "next_cursor", "cursor", "limit", "catalog"),
+    ListAdapter("openrouter", "https://openrouter.ai/api/v1/models", "authorization", "Bearer ", "data", "id",
+                "name", access_scope="catalog", request_params=(("output_modalities", "all"),)),
 )}
+
+OPENROUTER_VIDEO_ADAPTER = ListAdapter(
+    "openrouter_video", "https://openrouter.ai/api/v1/videos/models", "authorization", "Bearer ",
+    "data", "id", access_scope="catalog")
+
+OPENROUTER_KEY_ADAPTER = ListAdapter(
+    "openrouter_key", "https://openrouter.ai/api/v1/key", "authorization", "Bearer ",
+    "data", "id", access_scope="catalog")

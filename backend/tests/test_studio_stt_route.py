@@ -28,7 +28,7 @@ async def studio_catalog(tmp_path):
             await conn.run_sync(model.__table__.create)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with sessions.begin() as db:
-        db.add_all(Provider(id=p, name=p, provider_type="llm") for p in ("gemini", "openai", "edge_tts", "elevenlabs"))
+        db.add_all(Provider(id=p, name=p, provider_type="llm") for p in ("gemini", "openai", "openrouter", "edge_tts", "elevenlabs"))
     yield sessions, tmp_path
     await engine.dispose()
 
@@ -56,6 +56,30 @@ def response_for(url):
     if "generativelanguage" in url:
         return {"candidates": [{"content": {"parts": [{"text": '{"language":"English","segments":[{"start_time":0,"end_time":2,"text":"Hi"}]}'}]}}]}
     return {"language": "English", "segments": [{"start": 0, "end": 2, "text": "Hi"}]}
+
+
+@pytest.mark.asyncio
+async def test_studio_openrouter_stt_uses_selected_model_and_key(studio_catalog, monkeypatch, tmp_path):
+    sessions, path = studio_catalog
+    async with sessions.begin() as db:
+        selected = await add_target(db, path, "openrouter", "vendor/transcriber", "synthetic-openrouter")
+        db.add(AIFunctionConfig(function_id="stt", function_name="STT", capability="STT",
+                                primary_provider_id="openrouter", model_id=selected.id))
+    audio = mock_audio(monkeypatch, tmp_path)
+    calls = []
+
+    async def post(client, url, **kwargs):
+        calls.append((url, kwargs))
+        return httpx.Response(200, json={"text": "Hi", "language": "English"})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    segments, language = await service.speech_to_text_and_detect_language(
+        audio, sessions=sessions, data_dir=path)
+    assert segments[0]["text"] == "Hi" and language == "English"
+    assert len(calls) == 1
+    assert calls[0][0] == "https://openrouter.ai/api/v1/audio/transcriptions"
+    assert calls[0][1]["json"]["model"] == "vendor/transcriber"
+    assert calls[0][1]["headers"]["Authorization"] == "Bearer synthetic-openrouter"
 
 
 @pytest.mark.asyncio

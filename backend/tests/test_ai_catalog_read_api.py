@@ -74,6 +74,106 @@ async def test_dynamic_provider_counts_and_distinct_enabled_key_access(catalog_a
     assert "fingerprint" not in str(providers) + str(models)
 
 
+async def test_create_custom_provider_persists_and_stays_unsupported(catalog_api):
+    client, sessions = catalog_api
+    response = await client.post("/api/ai/providers", json={
+        "id": "my_provider", "name": "My Provider", "provider_type": "llm",
+        "base_url": "https://models.example/api",
+    })
+    assert response.status_code == 201
+    created = response.json()["data"]
+    assert created["id"] == "my_provider"
+    assert created["supported"] is False
+    assert created["status"] == "no_key"
+    assert created["keyless"] is False
+    listed = (await client.get("/api/ai/providers")).json()["data"]
+    assert next(p for p in listed if p["id"] == "my_provider") == created
+    async with sessions() as db:
+        stored = await db.get(Provider, "my_provider")
+        assert stored.is_custom is True
+        assert stored.base_url == "https://models.example/api"
+        assert stored.supported is False
+
+
+async def test_create_custom_provider_rejects_duplicate_and_invalid_profile(catalog_api):
+    client, _ = catalog_api
+    body = {"id": "my_provider", "name": "My Provider", "provider_type": "llm"}
+    assert (await client.post("/api/ai/providers", json=body)).status_code == 201
+    assert (await client.post("/api/ai/providers", json=body)).status_code == 409
+    assert (await client.post("/api/ai/providers", json={**body, "id": "openai"})).status_code == 409
+    assert (await client.post("/api/ai/providers", json={**body, "id": "../bad"})).status_code == 422
+    assert (await client.post("/api/ai/providers", json={**body, "name": "  "})).status_code == 422
+    assert (await client.post("/api/ai/providers", json={**body, "provider_type": "unknown"})).status_code == 422
+    assert (await client.post("/api/ai/providers", json={**body, "id": "all_modes",
+                                                         "provider_type": "multimodal"})).status_code == 201
+
+
+async def test_openrouter_model_detail_exposes_only_safe_voice_ids(catalog_api):
+    client, sessions = catalog_api
+    async with sessions.begin() as db:
+        db.add(Provider(id="openrouter", name="OpenRouter", provider_type="llm"))
+        await db.flush()
+        db.add(CatalogModel(id="speech-model", provider_id="openrouter", remote_model_id="vendor/speech",
+                            source="discovered", discovery_metadata={
+                                "supported_voices": ["Voice-One", "Voice-Two", "x" * 500, 42],
+                                "api_key": "secret-marker"}))
+    detail = (await client.get("/api/ai/models/speech-model")).json()["data"]
+    assert detail["metadata"] == {"supported_voices": ["Voice-One", "Voice-Two"]}
+
+
+async def test_openrouter_catalog_model_is_selectable_with_enabled_key_without_listing_edge(catalog_api):
+    client, sessions = catalog_api
+    async with sessions.begin() as db:
+        db.add(Provider(id="openrouter", name="OpenRouter", provider_type="multimodal"))
+        await db.flush()
+        db.add(CatalogModel(id="router-chat", provider_id="openrouter", remote_model_id="vendor/chat",
+                            source="discovered", capability_status="KNOWN", capabilities=["TRANSLATION"]))
+        db.add(APIKey(id="router-key", provider_id="openrouter", ciphertext="cipher",
+                      fingerprint="finger", masked_key="****", enabled=True))
+    models = (await client.get("/api/ai/models", params={"provider_id": "openrouter",
+                                                  "capability": "TRANSLATION"})).json()["data"]["items"]
+    assert len(models) == 1
+    assert models[0]["available_key_count"] == 1
+    assert models[0]["access_scope"] == "catalog_unverified"
+    assert models[0]["selectable"] is True
+
+
+async def test_openrouter_model_detail_shows_only_bounded_video_durations(catalog_api):
+    client, sessions = catalog_api
+    async with sessions.begin() as db:
+        db.add(Provider(id="openrouter", name="OpenRouter", provider_type="multimodal"))
+        await db.flush()
+        db.add(CatalogModel(id="router-video", provider_id="openrouter", remote_model_id="vendor/video",
+                            source="discovered", discovery_metadata={
+                                "video": {"supported_durations": [5, 10, -1, "8"]},
+                                "private_parameter": "secret-marker"}))
+    detail = (await client.get("/api/ai/models/router-video")).json()["data"]
+    assert detail["metadata"] == {"video": {"supported_durations": [5, 10]}}
+
+
+async def test_openrouter_video_model_selectable_only_for_configured_duration(catalog_api):
+    from app.config import get_settings
+    client, sessions = catalog_api
+    duration = get_settings().VIDEO_TARGET_DURATION
+    async with sessions.begin() as db:
+        db.add(Provider(id="openrouter", name="OpenRouter", provider_type="multimodal"))
+        await db.flush()
+        db.add(CatalogModel(id="short-video", provider_id="openrouter", remote_model_id="vendor/video",
+                            source="discovered", discovery_metadata={"architecture": {
+                                "input_modalities": ["text"], "output_modalities": ["video"]},
+                                "video": {"supported_durations": [duration + 1]}}))
+        db.add(APIKey(id="router-key", provider_id="openrouter", ciphertext="cipher",
+                      fingerprint="finger", masked_key="****", enabled=True))
+        db.add(AIFunctionConfig(function_id="video_generation", function_name="Video Generation",
+                                capability="VIDEO_GENERATION", primary_provider_id="openrouter",
+                                model_id="short-video"))
+    rows = (await client.get("/api/ai/models", params={
+        "capability": "VIDEO_GENERATION"})).json()["data"]["items"]
+    assert rows[0]["selectable"] is False
+    functions = (await client.get("/api/ai/functions")).json()["data"]
+    assert next(row for row in functions if row["function_id"] == "video_generation")["default_status"] == "incompatible"
+
+
 async def test_search_filter_pagination_status_defaults_and_read_only(catalog_api):
     client, sessions = catalog_api
     async with sessions.begin() as db:

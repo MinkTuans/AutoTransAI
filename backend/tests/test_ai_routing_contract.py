@@ -20,7 +20,7 @@ async def routing_db(tmp_path):
             await conn.run_sync(model.__table__.create)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with sessions.begin() as db:
-        db.add_all([Provider(id=p, name=p, provider_type="llm") for p in ("openai", "gemini", "edge_tts", "fal", "elevenlabs")])
+        db.add_all([Provider(id=p, name=p, provider_type="llm") for p in ("openai", "gemini", "edge_tts", "fal", "elevenlabs", "openrouter")])
     yield sessions, tmp_path
     await engine.dispose()
 
@@ -41,6 +41,20 @@ async def add_key(db, path, provider, models, secret):
     for model in models:
         db.add(KeyModelAccess(key_id=key.id, model_id=model.id, provider_id=provider))
     return key
+
+
+@pytest.mark.asyncio
+async def test_openrouter_catalog_key_can_route_without_model_access_edge(routing_db):
+    from app.services.ai_routing import build_route
+    sessions, path = routing_db
+    async with sessions.begin() as db:
+        model = await add_model(db, "openrouter", "vendor/chat", caps=["TRANSLATION"], status="KNOWN")
+        key = await add_key(db, path, "openrouter", [], "synthetic-openrouter")
+        db.add(AIFunctionConfig(function_id="translation", function_name="Translation",
+                                capability="TRANSLATION", primary_provider_id="openrouter", model_id=model.id))
+    async with sessions() as db:
+        route = await build_route(db, "TRANSLATION")
+    assert [(target.model_id, target.key_id) for target in route.targets] == [(model.id, key.id)]
 
 
 @pytest.mark.asyncio
@@ -113,6 +127,81 @@ def test_capability_evidence_and_unknown():
         "STT", "TRANSLATION", "LLM", "TTS", "VIDEO_GENERATION", "IMAGE_GENERATION", "VISUAL_GENDER"))
     assert compatible("TTS", classify("edge_tts", {}))
     assert classify("openai", {}, remote_model_id="whisper-1").status == "FULL_UNKNOWN"
+
+
+def test_openrouter_modalities_map_to_pipeline_capabilities_without_name_guessing():
+    from app.services.capability_registry import classify
+
+    cases = [
+        ({"input_modalities": ["text", "image"], "output_modalities": ["text"]},
+         {"LLM", "TRANSLATION", "VISUAL_GENDER"}),
+        ({"input_modalities": ["audio"], "output_modalities": ["transcription"]}, {"STT"}),
+        ({"input_modalities": ["text"], "output_modalities": ["image"]}, {"IMAGE_GENERATION"}),
+        ({"input_modalities": ["text"], "output_modalities": ["video"]}, set()),
+    ]
+    for architecture, expected in cases:
+        evidence = classify("openrouter", {"architecture": architecture}, remote_model_id="vendor/model")
+        assert evidence.capabilities == expected
+    speech = classify("openrouter", {"architecture": {
+        "input_modalities": ["text"], "output_modalities": ["speech"]},
+        "supported_voices": ["Alice"]}, remote_model_id="vendor/speech")
+    assert speech.capabilities == {"TTS"}
+    speech_without_voices = classify("openrouter", {"architecture": {
+        "input_modalities": ["text"], "output_modalities": ["speech"]}},
+        remote_model_id="vendor/speech")
+    assert "TTS" in speech_without_voices.incompatible
+    transcription_without_audio = classify("openrouter", {"architecture": {
+        "input_modalities": ["text"], "output_modalities": ["transcription"]}},
+        remote_model_id="vendor/transcriber")
+    assert "STT" in transcription_without_audio.incompatible
+    video = classify("openrouter", {"architecture": {
+        "input_modalities": ["text", "video"], "output_modalities": ["video"]},
+        "video": {"supported_durations": [5, 10]}}, remote_model_id="vendor/video")
+    assert video.capabilities == {"VIDEO_GENERATION"}
+    assert "VIDEO_GENERATION" in classify("openrouter", {"architecture": {
+        "input_modalities": ["text"], "output_modalities": ["video"]}},
+        remote_model_id="vendor/video").incompatible
+    edit = classify("openrouter", {"architecture": {
+        "input_modalities": ["text", "video"], "output_modalities": ["video"]}},
+        remote_model_id="vendor/edit")
+    assert "VIDEO_GENERATION" in edit.incompatible
+    for model_id in ("recraft/recraft-v4-vector", "recraft/recraft-v4-pro-vector",
+                     "recraft/recraft-v4.1-vector", "recraft/recraft-v4.1-pro-vector",
+                     "recraft/recraft-v4.1-pro-vector:free", "recraft/recraft-v4.1-vector-2026-05-13"):
+        vector = classify("openrouter", {"architecture": {
+            "input_modalities": ["text"], "output_modalities": ["image"]}},
+            remote_model_id=model_id)
+        assert "IMAGE_GENERATION" not in vector.capabilities
+        assert "IMAGE_GENERATION" in vector.incompatible
+    raster = classify("openrouter", {"architecture": {
+        "input_modalities": ["text"], "output_modalities": ["image"]}},
+        remote_model_id="recraft/recraft-v4.1")
+    assert "IMAGE_GENERATION" in raster.capabilities
+    image_only = classify("openrouter", {"architecture": {
+        "input_modalities": ["image"], "output_modalities": ["image"]}},
+        remote_model_id="vendor/edit-only")
+    assert "IMAGE_GENERATION" in image_only.incompatible
+    assert "IMAGE_GENERATION" not in image_only.capabilities
+    assert classify("openrouter", {}, remote_model_id="openai/whisper-1").status == "FULL_UNKNOWN"
+
+
+def test_gemini_known_chat_families_infer_multimodal_input_from_sparse_listing():
+    from app.services.capability_registry import classify
+
+    for model_id in ("gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite",
+                     "gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash",
+                     "gemini-3.8-flash"):
+        evidence = classify("gemini", {"supportedGenerationMethods": ["generateContent"]},
+                            remote_model_id=model_id)
+        assert {"LLM", "TRANSLATION", "STT", "VISUAL_GENDER"} <= evidence.capabilities
+    sparse = classify("gemini", {}, remote_model_id="gemini-2.5-flash")
+    assert {"LLM", "TRANSLATION", "STT", "VISUAL_GENDER"} <= sparse.capabilities
+    for model_id in ("gemini-2.5-flash-image", "gemini-2.5-flash-preview-tts",
+                     "gemini-3.8-flash-tts", "gemini-3.8-flash-preview", "gemini-future-chat"):
+        evidence = classify("gemini", {"supportedGenerationMethods": ["generateContent"]},
+                            remote_model_id=model_id)
+        assert "STT" not in evidence.capabilities and "VISUAL_GENDER" not in evidence.capabilities
+    assert classify("gemini", {}, remote_model_id="gemini-future-chat").status == "FULL_UNKNOWN"
 
 
 def test_legacy_compatibility_check_does_not_invent_stt():

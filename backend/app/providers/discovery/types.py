@@ -18,7 +18,7 @@ class DiscoveryResult:
     error_code: str | None = None
     pages_fetched: int = 0
     # credential = returned to this credential, not verified by generation.
-    access_scope: Literal["credential", "catalog", "unknown"] = "unknown"
+    access_scope: Literal["credential", "catalog", "verified_catalog", "unknown"] = "unknown"
 
 
 @dataclass(frozen=True)

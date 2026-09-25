@@ -5,7 +5,7 @@ import { aiApi } from '../../api';
 import KeyPool from './KeyPool';
 
 vi.mock('../../api', () => ({ aiApi: {
-  listProviders: vi.fn(), listKeys: vi.fn(), addKey: vi.fn(), setKeyEnabled: vi.fn(),
+  listProviders: vi.fn(), createProvider: vi.fn(), listKeys: vi.fn(), addKey: vi.fn(), setKeyEnabled: vi.fn(),
   deleteKey: vi.fn(), refreshModels: vi.fn(),
 } }));
 
@@ -20,6 +20,7 @@ const key = { id: 'key-1', provider_id: 'acme', masked_key: '****ABCD', enabled:
 
 beforeEach(() => {
   aiApi.listProviders.mockReset().mockResolvedValue({ success: true, data: providers });
+  aiApi.createProvider.mockReset();
   aiApi.listKeys.mockReset().mockImplementation(async id => ({ success: true, data: id === 'acme' ? [key] : [] }));
   aiApi.addKey.mockReset();
   aiApi.setKeyEnabled.mockReset();
@@ -27,6 +28,29 @@ beforeEach(() => {
   aiApi.refreshModels.mockReset();
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+it('adds a provider profile, reloads the catalog, and selects the new provider', async () => {
+  const added = { ...providers[0], id: 'custom_llm', name: 'Custom LLM', provider_type: 'llm', supported: false };
+  aiApi.createProvider.mockResolvedValue({ success: true, data: added });
+  aiApi.listProviders.mockResolvedValueOnce({ success: true, data: providers })
+    .mockResolvedValueOnce({ success: true, data: [...providers, added] });
+  render(<KeyPool />);
+  await screen.findByRole('button', { name: /Acme Voice/ });
+  fireEvent.click(screen.getByRole('button', { name: 'Thêm nhà cung cấp AI' }));
+  const dialog = screen.getByRole('dialog', { name: 'Thêm nhà cung cấp AI' });
+  expect(within(dialog).getByRole('option', { name: 'Vision' }).value).toBe('vision');
+  fireEvent.change(within(dialog).getByLabelText('ID'), { target: { value: 'custom_llm' } });
+  fireEvent.change(within(dialog).getByLabelText('Tên'), { target: { value: 'Custom LLM' } });
+  fireEvent.change(within(dialog).getByLabelText('Loại'), { target: { value: 'llm' } });
+  fireEvent.change(within(dialog).getByLabelText('Base URL (không bắt buộc)'), { target: { value: 'https://example.com/v1' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Lưu nhà cung cấp' }));
+  await screen.findByRole('button', { name: /Custom LLM/ });
+  expect(screen.getByRole('button', { name: /Custom LLM/ }).getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getByRole('heading', { name: '🔑 Key Pool — Custom LLM' })).toBeTruthy();
+  expect(screen.getByText('Chưa có adapter chạy model cho nhà cung cấp này.')).toBeTruthy();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(aiApi.createProvider).toHaveBeenCalledWith({ id: 'custom_llm', name: 'Custom LLM', provider_type: 'llm', base_url: 'https://example.com/v1' });
+});
 
 it('groups backend providers and shows only selected provider masked keys', async () => {
   render(<KeyPool />);

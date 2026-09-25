@@ -113,6 +113,21 @@ async def test_unavailable_model_does_not_persist_virtual_function(default_api):
         assert await db.get(AIFunctionConfig, 'stt') is None
 
 
+async def test_openrouter_video_default_rejects_unsupported_configured_duration(default_api):
+    from app.config import get_settings
+    client, sessions, path = default_api
+    duration = get_settings().VIDEO_TARGET_DURATION
+    await seed(sessions, path, provider="openrouter", capability="VIDEO_GENERATION",
+               with_edge=False)
+    async with sessions.begin() as db:
+        model = await db.get(CatalogModel, "catalog-id")
+        model.discovery_metadata = {"architecture": {
+            "input_modalities": ["text"], "output_modalities": ["video"]},
+            "video": {"supported_durations": [duration + 1]}}
+    response = await client.put("/api/ai/functions/stt", json={"model_id": "catalog-id"})
+    assert response.status_code == 409
+
+
 @pytest.mark.parametrize("case", ["incompatible", "retired", "model_disabled", "provider_disabled",
                                    "no_key", "no_edge"])
 async def test_put_rejects_unavailable_or_incompatible_model(default_api, case):

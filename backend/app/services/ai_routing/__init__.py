@@ -22,7 +22,7 @@ _FUNCTION = {"STT": "stt", "TRANSLATION": "translation", "LLM": "translation", "
 # Discovery adapters for these services return a public catalog listing.
 # They cannot establish a model/key edge; an enabled provider key is only a
 # candidate to try at generation time, not verified model entitlement.
-_PUBLIC_CATALOG_PROVIDERS = frozenset({"fal", "elevenlabs"})
+_PUBLIC_CATALOG_PROVIDERS = frozenset({"fal", "elevenlabs", "openrouter"})
 _KEYLESS_SYSTEM_IMAGE_PROVIDERS = frozenset({"pollinations", "local_image"})
 _log = logging.getLogger(__name__)
 

@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.api.routes.ai_catalog import Envelope, FunctionView
+from app.config import get_settings
 from app.database import async_session_factory
 from app.models import APIKey, CatalogModel, KeyModelAccess, Provider
 from app.models.settings import AIFunctionConfig
@@ -16,6 +17,7 @@ from app.services.ai_routing import _PUBLIC_CATALOG_PROVIDERS, _keyless_allowed
 from app.services.capability_registry import compatible, model_evidence
 from app.services.credential_service import lock_catalog_provider
 from app.services.function_inventory import FUNCTION_INVENTORY
+from app.services.video_catalog_selection import supported_video_target
 
 
 class SafeFunctionWriteRoute(APIRoute):
@@ -95,6 +97,10 @@ async def set_function_default(function_id: str, body: FunctionDefaultInput,
                     or provider is None or not provider.enabled
                     or not model.enabled or model.retired_at is not None
                     or not compatible(config.capability, model_evidence(model))
+                    or (config.capability == "VIDEO_GENERATION" and model.provider_id == "openrouter"
+                        and not supported_video_target(model.provider_id, model.remote_model_id,
+                                                       metadata=model.discovery_metadata,
+                                                       duration=get_settings().VIDEO_TARGET_DURATION))
                     or not await _available(db, model, config.capability)):
                 raise HTTPException(409, "Catalog model is unavailable for this function.")
             config.primary_provider_id = model.provider_id
