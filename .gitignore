@@ -45,6 +45,8 @@ yarn-error.log*
 # Data (media files & runtime assets)
 data/
 backend/data/
+/storage/
+/backend/storage/
 backend/scratch/
 backend/scratch_*.py
 scratch_*.py

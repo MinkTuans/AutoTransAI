@@ -81,6 +81,17 @@ STYLE_PROMPT_PRESETS: Dict[str, str] = {
 }
 
 
+def thumbnail_object_key(
+    project_id: str | None, job_id: str | None, asset_id: str | None,
+    timestamp: int, thumbnail_id: str, ext: str,
+) -> str:
+    """Place job-only thumbnails beside durable outputs, not in job workspaces."""
+    if project_id or job_id:
+        owner_id = project_id or job_id
+        return f"projects/{owner_id}/thumbnails/thumbnail_{timestamp}_{thumbnail_id}{ext}"
+    return f"translator/assets/{asset_id}/thumbnails/thumbnail_{timestamp}_{thumbnail_id}{ext}"
+
+
 class ThumbnailService:
     """Service servicing AI Auto Thumbnail Generation pipeline."""
 
@@ -500,12 +511,7 @@ class ThumbnailService:
             tmp_dir.mkdir(parents=True, exist_ok=True)
             tmp_file = tmp_dir / f"thumb_{thumbnail_id}{ext}"
             timestamp = int(datetime.now(timezone.utc).timestamp())
-            if project_id:
-                object_key = f"projects/{project_id}/thumbnails/thumbnail_{timestamp}_{thumbnail_id}{ext}"
-            elif job_id:
-                object_key = f"translator/jobs/{job_id}/thumbnails/thumbnail_{timestamp}_{thumbnail_id}{ext}"
-            else:
-                object_key = f"translator/assets/{asset_id}/thumbnails/thumbnail_{timestamp}_{thumbnail_id}{ext}"
+            object_key = thumbnail_object_key(project_id, job_id, asset_id, timestamp, thumbnail_id, ext)
 
             try:
                 tmp_file.write_bytes(image_bytes)

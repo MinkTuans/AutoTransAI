@@ -31,6 +31,7 @@ from app.models import (
     VideoAsset,
     VideoTranslationJob,
     VideoTranslationSegment,
+    VideoThumbnail,
     VideoMergeJob,
     VideoMergeAsset,
 )
@@ -172,6 +173,71 @@ class FileCleanupService:
         return res
 
     @classmethod
+    async def cleanup_completed_translation(
+        cls, job_id: str, session: AsyncSession,
+    ) -> Dict[str, Any]:
+        """Discard a finished job's private workspace after its durable result exists."""
+        job = await session.get(VideoTranslationJob, job_id)
+        if job is None or job.status != "completed":
+            return {"status": "not_completed"}
+
+        storage_root = settings.STORAGE_ROOT.resolve()
+        result = Path(job.output_video_path or "").resolve()
+        job_dirs = [
+            settings.STORAGE_ROOT / "translator" / "jobs" / job_id,
+            settings.DATA_DIR / "translator" / "jobs" / job_id,
+        ]
+        if (not job.output_video_path or not result.is_file() or result.stat().st_size == 0
+                or not result.is_relative_to(storage_root)
+                or any(result.is_relative_to(path.resolve()) for path in job_dirs)):
+            return {"status": "result_not_durable"}
+
+        legacy_thumbnail_prefix = f"translator/jobs/{job_id}/"
+        thumbnail_keys = [job.thumbnail_r2_key]
+        thumbnail_keys.extend((await session.execute(
+            select(VideoThumbnail.r2_key).where(VideoThumbnail.job_id == job_id)
+        )).scalars().all())
+        if any(key and key.lstrip("/\\").replace("\\", "/").startswith(legacy_thumbnail_prefix)
+               for key in thumbnail_keys):
+            return {"status": "referenced_workspace_file"}
+
+        for path in job_dirs:
+            if not cls.safe_remove_dir(path):
+                return {"status": "workspace_cleanup_failed", "path": str(path)}
+
+        asset = await session.get(VideoAsset, job.asset_id)
+        if asset is not None:
+            statuses = (await session.execute(
+                select(VideoTranslationJob.status).where(VideoTranslationJob.asset_id == asset.id)
+            )).scalars().all()
+            if statuses and all(status == "completed" for status in statuses):
+                asset_dirs = [
+                    settings.STORAGE_ROOT / "translator" / "assets" / asset.id,
+                    settings.DATA_DIR / "translator" / "assets" / asset.id,
+                ]
+                # Uploaded media belongs to the asset directory. Never remove an
+                # arbitrary external path supplied by a historical DB record.
+                source = Path(asset.file_path).resolve()
+                if any(source.is_relative_to(path.resolve()) for path in asset_dirs):
+                    for asset_dir in asset_dirs:
+                        if asset_dir.is_dir():
+                            for child in asset_dir.iterdir():
+                                if child.name == "thumbnails":
+                                    continue
+                                if child.is_dir():
+                                    if not cls.safe_remove_dir(child):
+                                        return {"status": "source_cleanup_failed"}
+                                elif not cls.safe_remove_file(child):
+                                    return {"status": "source_cleanup_failed"}
+                    asset.status = "archived"
+                    asset.r2_key = None
+                    asset.url = None
+
+        job.is_cleaned = True
+        await session.commit()
+        return {"status": "success"}
+
+    @classmethod
     async def cleanup_project(
         cls,
         item_id: str,
@@ -194,6 +260,13 @@ class FileCleanupService:
         std_proj = std_res.scalar_one_or_none()
         if std_proj:
             res_info["type"] = "standard_project"
+            linked_jobs = (await session.execute(
+                select(VideoTranslationJob.id).where(VideoTranslationJob.project_id == item_id)
+            )).scalars().all()
+            for linked_job_id in linked_jobs:
+                linked_result = await cls.cleanup_project(linked_job_id, session)
+                if linked_result["status"] != "success":
+                    return {**res_info, "status": "linked_job_cleanup_failed", "job_id": linked_job_id}
             if std_proj.r2_key:
                 await storage_service.delete_file(std_proj.r2_key)
                 res_info["deleted_r2_keys"].append(std_proj.r2_key)
@@ -317,12 +390,27 @@ class FileCleanupService:
         valid_r2_keys: Set[str] = set()
 
         # Jobs
-        job_rows = await session.execute(select(VideoTranslationJob.id, VideoTranslationJob.r2_key))
-        for j_id, j_r2 in job_rows.fetchall():
+        job_rows = await session.execute(select(
+            VideoTranslationJob.id, VideoTranslationJob.r2_key,
+            VideoTranslationJob.output_video_path, VideoTranslationJob.thumbnail_r2_key,
+        ))
+        for j_id, j_r2, j_output, j_thumbnail in job_rows.fetchall():
             if j_id:
                 valid_job_ids.add(j_id)
-            if j_r2:
-                valid_r2_keys.add(j_r2.lstrip("/\\").replace("\\", "/"))
+            for key in (j_r2, j_thumbnail):
+                if key:
+                    normalized = key.lstrip("/\\").replace("\\", "/")
+                    valid_r2_keys.add(normalized)
+                    parts = normalized.split("/")
+                    if len(parts) > 2 and parts[0] == "projects":
+                        valid_proj_ids.add(parts[1])
+            if j_output:
+                try:
+                    rel_output = Path(j_output).resolve().relative_to(settings.STORAGE_ROOT.resolve())
+                    if len(rel_output.parts) > 2 and rel_output.parts[0] == "projects":
+                        valid_proj_ids.add(rel_output.parts[1])
+                except ValueError:
+                    pass
 
         # Assets
         asset_rows = await session.execute(select(VideoAsset.id, VideoAsset.r2_key))
@@ -449,6 +537,8 @@ class FileCleanupService:
                     is_valid_file = (
                         rel_key in valid_r2_keys
                         or abs_path_str in valid_disk_files
+                        or any(rel_key.startswith(f"projects/{p}/") for p in valid_proj_ids)
+                        or any(rel_key.startswith(f"translator/assets/{a}/") for a in valid_asset_ids)
                         or any(rel_key.startswith(f"translator/jobs/{j}/") for j in valid_job_ids)
                         or any(rel_key.startswith(f"merger/jobs/{j}/") for j in valid_merge_job_ids)
                     )

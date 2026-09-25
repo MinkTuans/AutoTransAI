@@ -86,6 +86,8 @@ router = APIRouter(prefix="/api/video-translator", tags=["video-translator"])
 _job_sse_queues: Dict[str, asyncio.Queue] = {}
 _job_cancellation_events: Dict[str, asyncio.Event] = {}
 _active_render_jobs: set[str] = set()
+_active_phase1_tasks: Dict[str, set[asyncio.Task]] = {}
+_active_render_tasks: Dict[str, set[asyncio.Task]] = {}
 HISTORICAL_EDGE_VOICE_LOOKUP_TIMEOUT = 5.0
 
 
@@ -111,6 +113,48 @@ def is_job_cancelled(job_id: str) -> bool:
     if job_id in _job_cancellation_events:
         return _job_cancellation_events[job_id].is_set()
     return False
+
+
+def _track_job_task(tasks_by_job: Dict[str, set[asyncio.Task]], job_id: str) -> None:
+    task = asyncio.current_task()
+    if task is None:
+        return
+    tasks_by_job.setdefault(job_id, set()).add(task)
+
+    def forget(done: asyncio.Task) -> None:
+        tasks = tasks_by_job.get(job_id)
+        if tasks is not None:
+            tasks.discard(done)
+            if not tasks:
+                tasks_by_job.pop(job_id, None)
+
+    task.add_done_callback(forget)
+
+
+async def quiesce_translation_job_for_deletion(job_id: str, session: AsyncSession) -> bool:
+    """Stop in-process Studio work before deleting its database row and files."""
+    signal_job_cancellation(job_id)
+    job = await session.get(VideoTranslationJob, job_id)
+    if job is not None and job.pid:
+        try:
+            os.kill(job.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except OSError as error:
+            logger.warning("Could not stop job process before deletion", job_id=job_id, error=str(error))
+            return False
+    current = asyncio.current_task()
+    tasks = {task for mapping in (_active_phase1_tasks, _active_render_tasks)
+             for task in mapping.get(job_id, set()) if task is not current and not task.done()}
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        try:
+            await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=15)
+        except asyncio.TimeoutError:
+            return False
+    stop_job_heartbeat(job_id)
+    return True
 
 
 def _parse_bool(val: Any, default: bool = False) -> bool:
@@ -240,6 +284,7 @@ async def import_video_asset(
 
     if source_type == "upload":
         if not file:
+            shutil.rmtree(storage_dir, ignore_errors=True)
             raise HTTPException(status_code=400, detail="❌ Không tìm thấy file video upload.")
         temp_upload_path = storage_dir / f"raw_input_{asset_id}.mp4"
         with open(temp_upload_path, "wb") as buffer:
@@ -251,6 +296,7 @@ async def import_video_asset(
             if temp_upload_path.exists() and Path(meta["local_path"]) != temp_upload_path:
                 temp_upload_path.unlink(missing_ok=True)
         except Exception as e:
+            shutil.rmtree(storage_dir, ignore_errors=True)
             raise HTTPException(status_code=400, detail=f"❌ Lỗi file upload: {str(e)}")
 
         asset = VideoAsset(
@@ -271,10 +317,12 @@ async def import_video_asset(
         )
     else:
         if not url:
+            shutil.rmtree(storage_dir, ignore_errors=True)
             raise HTTPException(status_code=400, detail="❌ Vui lòng nhập Video URL.")
         try:
             meta = await service.download_video(url, storage_dir)
         except Exception as e:
+            shutil.rmtree(storage_dir, ignore_errors=True)
             msg = str(e).strip()
             stderr = getattr(e, "stderr", None)
             if not msg and stderr:
@@ -407,6 +455,7 @@ async def _run_url_transfer(transfer_id: str, url: str) -> None:
             asset=payload,
         )
     except Exception as e:
+        shutil.rmtree(storage_dir, ignore_errors=True)
         msg = str(e).strip() or e.__class__.__name__
         update_transfer(transfer_id, status="failed", error=msg, message=msg)
 
@@ -557,6 +606,8 @@ async def create_translation_job(
     asset = res.scalar_one_or_none()
     if not asset:
         raise HTTPException(status_code=404, detail="❌ VideoAsset không tồn tại.")
+    if asset.status == "archived":
+        raise HTTPException(status_code=409, detail="Video gốc đã được dọn sau khi hoàn thành. Hãy nhập lại video để tạo phiên dịch mới.")
 
     # Ensure a valid Project exists in projects table
     project_id = body.project_id
@@ -805,6 +856,7 @@ async def start_translation_pipeline(
         return {"success": True, "data": {"started": False, "job_id": job_id, "message": "Job đã hoàn tất."}}
 
     async def run_pipeline():
+        _track_job_task(_active_phase1_tasks, job_id)
         lock = get_job_lock(job_id)
         if lock.locked():
             logger.warning(f"Job {job_id} pipeline already running in another task.")
@@ -1976,6 +2028,7 @@ async def execute_job_render_pipeline(job_id: str) -> None:
         return
 
     _active_render_jobs.add(job_id)
+    _track_job_task(_active_render_tasks, job_id)
     start_job_heartbeat(job_id)
     current_stage = "GENERATING_TTS"
     cancel_evt = reset_job_cancellation(job_id)
@@ -1990,6 +2043,7 @@ async def execute_job_render_pipeline(job_id: str) -> None:
             if b_job.status in [TranslationJobStatus.COMPLETED.value, "completed"]:
                 logger.info(f"[RENDER-SKIP] Job {job_id} is already COMPLETED. Skipping render pipeline.")
                 return
+            project_id = b_job.project_id or job_id
 
             asset_res = await init_session.execute(select(VideoAsset).where(VideoAsset.id == b_job.asset_id))
             b_asset = asset_res.scalar_one_or_none()
@@ -2720,21 +2774,14 @@ async def execute_job_render_pipeline(job_id: str) -> None:
             f"FFprobe Validation Passed: Duration={meta['duration']}s, Resolution={meta['width']}x{meta['height']}, Audio=True"
         )
 
-        # Upload final video to Cloudflare R2 / Storage Service
-        r2_key = f"translator/jobs/{job_id}/final_dubbed_video.mp4"
+        # Persist the only final video outside the disposable job workspace.
+        r2_key = f"projects/{project_id}/outputs/{job_id}.mp4"
         object_key, output_url = await storage_service.upload_file(
             final_video_path,
             r2_key,
             content_type="video/mp4"
         )
-
-        # Clean intermediate temporary files via unified FileCleanupService
-        try:
-            from app.services.cleanup_service import FileCleanupService
-            clean_res = FileCleanupService.cleanup_job_workspace(job_id, keep_logs=True, keep_final_video=True)
-            log_job_event(job_id, "CLEANUP", f"Intermediate files purged ({clean_res['deleted_files']} files, {clean_res['bytes_freed'] / (1024*1024):.2f} MB freed).")
-        except Exception as clean_err:
-            logger.warning("Error cleaning intermediate files", error=str(clean_err), job_id=job_id)
+        persistent_video_path = storage_service.get_local_storage_dir() / object_key
 
         async with async_session_factory() as final_session:
             now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -2747,10 +2794,10 @@ async def execute_job_render_pipeline(job_id: str) -> None:
                     current_step="Hoàn tất lồng tiếng video",
                     stage_progress_pct=100.0,
                     overall_progress_pct=100.0,
-                    output_video_path=str(final_video_path),
+                    output_video_path=str(persistent_video_path),
                     r2_key=object_key,
                     output_url=output_url,
-                    is_cleaned=True,
+                    is_cleaned=False,
                     pid=None,
                     last_checkpoint_stage="RENDER_DONE",
                     last_checkpoint_at=now_dt,
@@ -2803,6 +2850,15 @@ async def execute_job_render_pipeline(job_id: str) -> None:
         except Exception as thumb_err:
             logger.warning("Auto thumbnail after render failed", job_id=job_id, error=str(thumb_err))
             log_job_event(job_id, "THUMBNAIL", f"Auto thumbnail skipped: {thumb_err}")
+
+        try:
+            from app.services.cleanup_service import FileCleanupService
+            async with async_session_factory() as cleanup_session:
+                clean_res = await FileCleanupService.cleanup_completed_translation(job_id, cleanup_session)
+            if clean_res["status"] != "success":
+                logger.warning("Completed job workspace retained", job_id=job_id, reason=clean_res["status"])
+        except Exception as clean_err:
+            logger.warning("Error cleaning completed job", error=str(clean_err), job_id=job_id)
 
     except Exception as e:
         tb_str = traceback.format_exc()

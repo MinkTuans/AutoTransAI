@@ -637,10 +637,9 @@ storage/
 ├── translator/                       # Video Translation Jobs (V2)
 │   ├── jobs/
 │   │   └── {job_id}/
-│   │       ├── job.log
+│   │       ├── job.log             # Exists only while a job is unfinished
 │   │       ├── tts/
-│   │       ├── synced/
-│   │       └── final_dubbed_video.mp4
+│   │       └── synced/
 │   ├── assets/
 │   │   └── {asset_id}/
 │   └── watermarks/
@@ -655,6 +654,9 @@ storage/
 - **Media Access**: `GET /media/{path}`, `GET /api/storage/files/{file_path:path}`, and `GET /api/storage/download?path=...` share one resolver. Public files come from validated `STORAGE_ROOT` (including when configured as `DATA_DIR/storage`) or legacy `DATA_DIR/translator/` media paths; the application credential store, fallback SQLite database, and local encryption key stay outside `STORAGE_ROOT`.
 - **Security Boundary**: Public routes accept only known media extensions and resolved paths within those roots. Dotfiles, JSON, databases, logs, path traversal, and symlinks escaping the allowed roots are blocked. Root-level files in `DATA_DIR` are no longer downloadable, including legacy media placed there directly; such files need migration into `STORAGE_ROOT` or `DATA_DIR/translator/`.
 - **Multi-Directory Cleanup Contract**: When a project or translation job is deleted (`DELETE /api/projects/{id}`), `FileCleanupService` deletes the active directory in `storage/` AND proactively purges legacy orphan directories (`backend/storage/projects/{id}` and `data/translator/jobs/{id}`).
+- **Completed Translation Retention (2026-09-25)**: A Studio translation writes its final video to `projects/{project_id}/outputs/{job_id}.mp4` (using the job ID for legacy jobs without a Project) and stores that durable path in the job row. After the final DB update and optional thumbnail generation, cleanup removes the entire private job workspace, including logs and extracted audio. A source asset is retired only once every referencing job is completed; referenced thumbnails remain. Job-only thumbnails are stored beside durable project results; historical thumbnails still inside a job workspace prevent destructive cleanup. Unfinished jobs retain their workspace and source for resume. Creating a new job from an archived asset requires importing the source again. Deleting a Project first stops active workflow and Studio tasks, then deletes every linked translation job, the Project, and its result folder; if an active task cannot stop within the bounded wait, deletion returns a retryable conflict without removing files.
+- **Git Boundary**: `/storage/` and `/backend/storage/` are runtime data and are ignored by Git. Historical files previously tracked there were removed from version control after a database-reference audit; the active configured storage root can still be outside the repository.
+- **Server Root Caveat**: On installations without a root `.env` or `README.md`, `shared.config` can resolve a parent directory as the project root. Existing `DATA_DIR`/`STORAGE_ROOT` paths must be preserved or migrated deliberately before changing that resolver, because a silent root change would hide the current database and media.
 - **Migration Tooling**: Administrative script `backend/scripts/migrate_storage.py` provides non-destructive consolidation with `--dry-run` safety and `--rollback` support via `storage/migration_manifest.json`.
 
 ---

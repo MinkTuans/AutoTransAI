@@ -1,3 +1,11 @@
+- **Storage lifecycle and orphan cleanup (2026-09-25)**:
+  - Studio translation results now live under `projects/{project_id}/outputs/{job_id}.mp4`, outside the disposable job workspace. After output persistence and thumbnail work, cleanup removes the workspace and its logs/audio, and retires source media only when no unfinished job shares it. Archived assets require a new import for another translation.
+  - Deleting a Project now deletes linked translation jobs before deleting its own files. Added lifecycle and shared-source regression tests; no database schema or provider routing changed.
+  - Ignored runtime `/storage/` and `/backend/storage/` in Git and removed historical tracked runtime files. A database-reference audit archived 208 files from 195 orphan directories outside the repository before deletion; current DB-backed directories were retained. The server's existing parent-directory storage configuration was preserved to avoid hiding live data.
+  - Corrected the orphan scanner so files inside a DB-backed project or asset directory are not mistaken for orphans. A dry run against the current database now reports zero remaining orphan files and directories.
+  - Failed upload or URL import attempts now remove their newly allocated asset directory, avoiding another source of unowned runtime folders.
+  - Review fixes protect nullable-project job results from orphan scanning, place job-only thumbnails outside the disposable workspace, preserve historical workspace thumbnails, and stop active Studio tasks before deleting linked jobs. A bounded failure to stop returns a retryable conflict instead of deleting under a running task.
+
 - **Function default model names (2026-09-24)**:
   - Settings → Function displays the catalog model's readable name instead of its internal UUID. Canonical Function GET and PUT add `model_display_name` while preserving `model_id` for exact writes; models without a display name use their remote model ID, and missing legacy rows remain identifiable. Backend API and frontend regression tests cover initial load and immediate post-selection display. No database or provider configuration changes.
 

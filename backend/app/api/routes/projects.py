@@ -368,8 +368,26 @@ async def list_projects(
 
 async def _delete_single_item(item_id: str, session: AsyncSession) -> bool:
     from app.services.cleanup_service import FileCleanupService
-    if item_id in _running_workflows:
-        _running_workflows[item_id].cancel()
+    from app.api.routes.video_translator import quiesce_translation_job_for_deletion
+
+    workflow = _running_workflows.get(item_id)
+    if workflow is not None:
+        workflow.cancel()
+        for _ in range(150):
+            if item_id not in _running_workflows:
+                break
+            await asyncio.sleep(0.1)
+        if item_id in _running_workflows:
+            raise HTTPException(status_code=409, detail="Project is still stopping; retry deletion")
+
+    linked_jobs = (await session.execute(
+        select(VideoTranslationJob.id).where(
+            (VideoTranslationJob.project_id == item_id) | (VideoTranslationJob.id == item_id)
+        )
+    )).scalars().all()
+    for job_id in linked_jobs:
+        if not await quiesce_translation_job_for_deletion(job_id, session):
+            raise HTTPException(status_code=409, detail="Translation job is still stopping; retry deletion")
 
     res = await FileCleanupService.cleanup_project(item_id, session)
     return res.get("status") == "success"
