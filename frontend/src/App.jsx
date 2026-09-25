@@ -6,6 +6,7 @@ import ProjectDetail from './pages/ProjectDetail';
 import Settings from './pages/Settings';
 import VideoTranslator from './pages/VideoTranslator';
 import VideoMerger from './pages/VideoMerger';
+import LiveAudioTranslation from './pages/LiveAudioTranslation';
 import './App.css';
 
 const getInitialStateFromUrl = () => {
@@ -162,6 +163,8 @@ export default function App() {
         )}
 
         {activePage === 'merger' && <VideoMerger />}
+
+        {activePage === 'live_audio' && <LiveAudioTranslation />}
 
         {activePage === 'settings' && <Settings />}
       </main>

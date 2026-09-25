@@ -41,6 +41,13 @@ export default function Navbar({ activePage, setActivePage, onNavigate }) {
         </button>
         <button
           type="button"
+          className={`nav-link ${activePage === 'live_audio' ? 'active' : ''}`}
+          onClick={() => handleNavClick('live_audio')}
+        >
+          Dịch Audio trực tiếp
+        </button>
+        <button
+          type="button"
           className={`nav-link ${activePage === 'dashboard' || activePage === 'detail' ? 'active' : ''}`}
           onClick={() => handleNavClick('dashboard')}
         >

@@ -103,6 +103,9 @@ class Settings(BaseSettings):
     # ── Provider API Keys ──────────────────────────────────────────────
     OPENAI_API_KEY: str = ""
     GEMINI_API_KEY: str = ""
+    GEMINI_LIVE_TRANSLATE_API_KEY: str = ""
+    GEMINI_LIVE_TRANSLATE_MODEL: str = "gemini-3.5-live-translate-preview"
+    LIVE_AUDIO_TRANSLATION_ENABLED: bool = True
     GOOGLE_CLOUD_TTS_API_KEY: str = ""
     ELEVENLABS_API_KEY: str = ""
     KLING_API_KEY: str = ""
