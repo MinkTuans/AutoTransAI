@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { liveAudioApi } from '../api';
 
-const ACTIVE = new Set(['queued', 'converting', 'connecting', 'streaming']);
+const ACTIVE = new Set(['queued', 'converting', 'connecting', 'streaming', 'muxing']);
 const STORED_JOB_KEY = 'autotrans_live_audio_job_id';
 const STATUS = {
   queued: 'Đang chờ', converting: 'Đang chuẩn bị âm thanh',
   connecting: 'Đang kết nối Gemini Live', streaming: 'Đang dịch âm thanh',
+  muxing: 'Đang ghép âm thanh vào video',
   completed: 'Hoàn tất', failed: 'Thất bại', cancelled: 'Đã hủy',
 };
 const ERRORS = {
@@ -14,7 +15,11 @@ const ERRORS = {
   credential_unavailable: 'Không đọc được key Gemini đã lưu. Hãy kiểm tra kho credential của ứng dụng.',
   model_unavailable: 'Model Gemini Live Translate hiện không khả dụng.',
   unsupported_audio_format: 'Định dạng audio không được hỗ trợ.',
+  unsupported_video_format: 'Video MP4 không hợp lệ hoặc không có hình.',
+  video_has_no_audio: 'Video không có track tiếng để dịch.',
+  video_processing_failed: 'Không thể tách tiếng hoặc ghép video bằng FFmpeg.',
   audio_too_large: 'File audio vượt giới hạn 25 MB.',
+  video_too_large: 'File video vượt giới hạn 250 MB.',
   session_limit: 'Đã đạt giới hạn phiên hoặc audio dài quá 5 phút.',
   quota_or_rate_limit: 'Gemini đã đạt hạn mức hoặc giới hạn tốc độ.',
   connection_failure: 'Không thể kết nối tới Gemini Live.',
@@ -105,21 +110,25 @@ export default function LiveAudioTranslation() {
     }
   };
 
-  const audioUrl = job?.status === 'completed' ? liveAudioApi.audioUrl(job.id) : null;
+  const audioUrl = job?.status === 'completed' && job?.media_type !== 'video'
+    ? liveAudioApi.audioUrl(job.id) : null;
+  const videoUrl = job?.status === 'completed' && job?.media_type === 'video'
+    ? liveAudioApi.videoUrl(job.id) : null;
 
   return (
     <div className="page-container">
       <div className="page-header">
-        <h1>Live Audio Translation</h1>
-        <p className="page-subtitle">Audio → Gemini Live Translate → âm thanh tiếng Việt</p>
+        <h1>Live Audio / Video Translation</h1>
+        <p className="page-subtitle">Audio hoặc Video → Gemini Live Translate → âm thanh tiếng Việt</p>
       </div>
       <section className="card" style={{ maxWidth: 720 }}>
         <form onSubmit={start}>
-          <label htmlFor="live-audio-file">Upload Audio</label>
-          <input id="live-audio-file" aria-label="Upload Audio" type="file"
-            accept=".wav,.mp3,.m4a,.flac,.ogg,.webm"
+          <label htmlFor="live-audio-file">Upload Audio or Video</label>
+          <input id="live-audio-file" type="file"
+            accept=".wav,.mp3,.m4a,.flac,.ogg,.webm,.mp4"
             onChange={event => setFile(event.target.files?.[0] || null)} />
-          <p className="page-subtitle">WAV, MP3, M4A, FLAC, OGG hoặc WebM; tối đa 25 MB và 5 phút.</p>
+          <p className="page-subtitle">Audio: WAV, MP3, M4A, FLAC, OGG, WebM (25 MB). Video: MP4 (250 MB). Tối đa 5 phút.</p>
+          <p className="page-subtitle">Video giữ nguyên hình và thay tiếng gốc bằng tiếng Việt; lời dịch có thể lệch nhịp với cảnh.</p>
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', margin: '20px 0' }}>
             <div>
               <label htmlFor="live-source">Source Language</label>
@@ -147,6 +156,13 @@ export default function LiveAudioTranslation() {
           <audio aria-label="Âm thanh tiếng Việt" controls src={audioUrl} style={{ width: '100%' }} />
           <p><a href={audioUrl} download={`live-translation-${job.id}.wav`}>
             Download translated audio
+          </a></p>
+        </div>}
+        {videoUrl && <div style={{ marginTop: 24 }}>
+          <h2>Video tiếng Việt</h2>
+          <video aria-label="Video tiếng Việt" controls src={videoUrl} style={{ width: '100%' }} />
+          <p><a href={videoUrl} download={`live-translation-${job.id}.mp4`}>
+            Download translated video
           </a></p>
         </div>}
       </section>

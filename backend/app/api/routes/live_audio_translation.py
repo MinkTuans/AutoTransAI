@@ -19,10 +19,12 @@ from app.models import APIKey, Provider
 from app.services.credential_service import CredentialError, CredentialService
 from app.services.live_audio_translation.audio import SUPPORTED_SUFFIXES
 from app.services.live_audio_translation.jobs import LiveJobManager, SessionCapacityError
+from app.services.live_audio_translation.video import VIDEO_SUFFIXES
 
 
 router = APIRouter(prefix="/api/live-audio-translations", tags=["live-audio-translation"])
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+MAX_VIDEO_UPLOAD_BYTES = 250 * 1024 * 1024
 
 
 async def resolve_live_api_key(settings, sessions: async_sessionmaker) -> str | None:
@@ -72,7 +74,8 @@ async def start_live_audio_translation(
     if source_language != "auto" or target_language != "vi":
         raise HTTPException(422, "unsupported_language_selection")
     suffix = Path(file.filename or "").suffix.lower()
-    if suffix not in SUPPORTED_SUFFIXES:
+    media_type = "video" if suffix in VIDEO_SUFFIXES else "audio"
+    if suffix not in SUPPORTED_SUFFIXES and suffix not in VIDEO_SUFFIXES:
         raise HTTPException(415, "unsupported_audio_format")
     job_id = uuid4().hex
     directory = manager.directory / job_id
@@ -83,14 +86,15 @@ async def start_live_audio_translation(
         with source.open("wb") as saved:
             while chunk := await file.read(1024 * 1024):
                 count += len(chunk)
-                if count > MAX_UPLOAD_BYTES:
-                    raise HTTPException(413, "audio_too_large")
+                if count > (MAX_VIDEO_UPLOAD_BYTES if media_type == "video" else MAX_UPLOAD_BYTES):
+                    raise HTTPException(413, "video_too_large" if media_type == "video" else "audio_too_large")
                 saved.write(chunk)
         if count == 0:
             raise HTTPException(415, "unsupported_audio_format")
         job = manager.start(job_id, source, directory,
                             key=api_key,
-                            model=settings.GEMINI_LIVE_TRANSLATE_MODEL)
+                            model=settings.GEMINI_LIVE_TRANSLATE_MODEL,
+                            media_type=media_type)
     except SessionCapacityError:
         shutil.rmtree(directory, ignore_errors=True)
         raise HTTPException(429, "session_limit") from None
@@ -125,6 +129,17 @@ async def download_live_audio_translation(job_id: str, manager: LiveJobManager =
     if job is None:
         raise HTTPException(404, "session_not_found")
     result = job.directory / "translated.wav"
-    if job.status != "completed" or not result.is_file():
+    if job.status != "completed" or job.media_type != "audio" or not result.is_file():
         raise HTTPException(409, "audio_not_ready")
     return FileResponse(result, media_type="audio/wav", filename=f"live-translation-{job_id}.wav")
+
+
+@router.get("/{job_id}/video")
+async def download_live_video_translation(job_id: str, manager: LiveJobManager = Depends(get_live_manager)):
+    job = manager.jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, "session_not_found")
+    result = job.directory / "translated.mp4"
+    if job.status != "completed" or job.media_type != "video" or not result.is_file():
+        raise HTTPException(409, "video_not_ready")
+    return FileResponse(result, media_type="video/mp4", filename=f"live-translation-{job_id}.mp4")

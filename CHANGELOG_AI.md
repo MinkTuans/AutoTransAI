@@ -1,3 +1,7 @@
+- **Live video translation wrapper (2026-09-26)**:
+  - The Live page now accepts short MP4 video as well as audio. A dedicated FFmpeg adapter extracts the video audio track as 16 kHz PCM, the existing Gemini Live session translates that audio, then FFmpeg replaces the original audio track and returns a downloadable MP4. The Studio video pipeline remains untouched.
+  - Video uploads are capped at 250 MiB and five minutes; videos without audio fail explicitly. Completed video jobs retain only the translated MP4 in their short-lived Live workspace. Muxing pads audio when translation is shorter than the video and retains full translated speech when it is longer; speech and frames are not timestamp-aligned.
+
 - **Live Audio Gemini Catalog key reuse (2026-09-26)**:
   - Live Audio now uses an enabled, eligible Gemini key already saved in AI Provider Catalog when its optional `GEMINI_LIVE_TRANSLATE_API_KEY` override is empty. Selection happens per session, respects provider/key disable and key priority, and reads the secret through the encrypted credential service. The Live model and existing provider routing remain separate; no key is copied into environment files or responses.
   - The page now distinguishes a missing Gemini key from an unreadable credential store. Synthetic-key route tests cover Catalog reuse, explicit override, disabled keys, priority, and deletion.

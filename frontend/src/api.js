@@ -98,6 +98,7 @@ export const liveAudioApi = {
   status: (id) => api.get(`/live-audio-translations/${encodeURIComponent(id)}`).then(res => res.data),
   cancel: (id) => api.post(`/live-audio-translations/${encodeURIComponent(id)}/cancel`).then(res => res.data),
   audioUrl: (id) => `/api/live-audio-translations/${encodeURIComponent(id)}/audio`,
+  videoUrl: (id) => `/api/live-audio-translations/${encodeURIComponent(id)}/video`,
 };
 
 export const systemApi = {

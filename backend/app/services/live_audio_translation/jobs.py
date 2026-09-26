@@ -11,6 +11,7 @@ from typing import Awaitable, Callable
 
 from .audio import AudioInputError, convert_to_pcm
 from .live_api import LiveTranslationError, translate_pcm
+from .video import extract_video_pcm, mux_translated_video
 
 
 class SessionCapacityError(Exception):
@@ -22,6 +23,7 @@ class LiveJob:
     id: str
     directory: Path
     source: Path
+    media_type: str = "audio"
     source_language: str = "auto"
     target_language: str = "vi"
     status: str = "queued"
@@ -31,13 +33,19 @@ class LiveJob:
     def public(self) -> dict:
         return {"id": self.id, "status": self.status, "error_code": self.error_code,
                 "source_language": self.source_language, "target_language": self.target_language,
-                "audio_url": f"/api/live-audio-translations/{self.id}/audio" if self.status == "completed" else None}
+                "media_type": self.media_type,
+                "audio_url": f"/api/live-audio-translations/{self.id}/audio"
+                if self.status == "completed" and self.media_type == "audio" else None,
+                "video_url": f"/api/live-audio-translations/{self.id}/video"
+                if self.status == "completed" and self.media_type == "video" else None}
 
 
 class LiveJobManager:
     def __init__(self, storage_root: Path, *,
                  convert: Callable[..., Awaitable[float]] = convert_to_pcm,
                  translate: Callable[..., Awaitable[None]] = translate_pcm,
+                 extract_video: Callable[..., Awaitable[float]] = extract_video_pcm,
+                 mux_video: Callable[..., Awaitable[None]] = mux_translated_video,
                  max_active: int = 2, max_results: int = 10):
         self.directory = storage_root / "live_audio_translation"
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -49,6 +57,8 @@ class LiveJobManager:
         self.jobs: dict[str, LiveJob] = {}
         self.convert = convert
         self.translate = translate
+        self.extract_video = extract_video
+        self.mux_video = mux_video
         self.max_active = max_active
         self.max_results = max_results
 
@@ -59,13 +69,14 @@ class LiveJobManager:
             self.jobs.pop(job.id, None)
             shutil.rmtree(job.directory, ignore_errors=True)
 
-    def start(self, job_id: str, source: Path, directory: Path, *, key: str, model: str) -> LiveJob:
-        active = sum(job.status in {"queued", "converting", "connecting", "streaming"}
+    def start(self, job_id: str, source: Path, directory: Path, *, key: str, model: str,
+              media_type: str = "audio") -> LiveJob:
+        active = sum(job.status in {"queued", "converting", "connecting", "streaming", "muxing"}
                      for job in self.jobs.values())
         if active >= self.max_active:
             raise SessionCapacityError()
         self._prune_results()
-        job = LiveJob(job_id, directory, source)
+        job = LiveJob(job_id, directory, source, media_type=media_type)
         self.jobs[job_id] = job
         job.task = asyncio.create_task(self._run(job, key=key, model=model))
         return job
@@ -74,16 +85,25 @@ class LiveJobManager:
         pcm = job.directory / "input.pcm"
         try:
             job.status = "converting"
-            await self.convert(job.source, pcm, max_seconds=300)
+            if job.media_type == "video":
+                await self.extract_video(job.source, pcm, max_seconds=300)
+            else:
+                await self.convert(job.source, pcm, max_seconds=300)
             job.status = "connecting"
             # The Live adapter owns one WebSocket for this job. Its send and
             # receive tasks do not touch any existing provider instance.
             await self.translate(pcm, job.directory / "translated.wav", key=key, model=model,
                                  on_connected=lambda: setattr(job, "status", "streaming"))
+            if job.media_type == "video":
+                job.status = "muxing"
+                await self.mux_video(job.source, job.directory / "translated.wav",
+                                     job.directory / "translated.mp4")
+                (job.directory / "translated.wav").unlink(missing_ok=True)
             job.status = "completed"
         except asyncio.CancelledError:
             job.status = "cancelled"
             (job.directory / "translated.wav").unlink(missing_ok=True)
+            (job.directory / "translated.mp4").unlink(missing_ok=True)
             raise
         except (AudioInputError, LiveTranslationError) as error:
             job.status = "failed"
@@ -99,7 +119,7 @@ class LiveJobManager:
 
     async def cancel(self, job_id: str) -> bool:
         job = self.jobs.get(job_id)
-        if job is None or job.status not in {"queued", "converting", "connecting", "streaming"}:
+        if job is None or job.status not in {"queued", "converting", "connecting", "streaming", "muxing"}:
             return False
         if job.task is not None:
             job.task.cancel()
@@ -109,11 +129,12 @@ class LiveJobManager:
         job.source.unlink(missing_ok=True)
         (job.directory / "input.pcm").unlink(missing_ok=True)
         (job.directory / "translated.wav").unlink(missing_ok=True)
+        (job.directory / "translated.mp4").unlink(missing_ok=True)
         shutil.rmtree(job.directory, ignore_errors=True)
         return True
 
     async def close(self) -> None:
         for job in self.jobs.values():
-            if job.status in {"queued", "converting", "connecting", "streaming"}:
+            if job.status in {"queued", "converting", "connecting", "streaming", "muxing"}:
                 await self.cancel(job.id)
             shutil.rmtree(job.directory, ignore_errors=True)

@@ -6,7 +6,7 @@ import LiveAudioTranslation from './LiveAudioTranslation';
 import Navbar from '../components/Navbar';
 
 const api = vi.hoisted(() => ({
-  start: vi.fn(), status: vi.fn(), cancel: vi.fn(), audioUrl: vi.fn(),
+  start: vi.fn(), status: vi.fn(), cancel: vi.fn(), audioUrl: vi.fn(), videoUrl: vi.fn(),
 }));
 vi.mock('../api', () => ({ liveAudioApi: api }));
 
@@ -14,6 +14,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   localStorage.removeItem('autotrans_live_audio_job_id');
   api.audioUrl.mockImplementation(id => `/api/live-audio-translations/${id}/audio`);
+  api.videoUrl.mockImplementation(id => `/api/live-audio-translations/${id}/video`);
 });
 afterEach(cleanup);
 
@@ -32,7 +33,7 @@ it('uploads audio, shows session status, and plays downloadable translated audio
   expect(screen.getByLabelText('Source Language').value).toBe('auto');
   expect(screen.getByLabelText('Target Language').value).toBe('vi');
   const file = new File(['wave'], 'speech.wav', { type: 'audio/wav' });
-  fireEvent.change(screen.getByLabelText('Upload Audio'), { target: { files: [file] } });
+  fireEvent.change(screen.getByLabelText('Upload Audio or Video'), { target: { files: [file] } });
   fireEvent.click(screen.getByRole('button', { name: 'Start Translation' }));
   await waitFor(() => expect(api.start).toHaveBeenCalledWith(file));
   await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Hoàn tất'));
@@ -42,11 +43,27 @@ it('uploads audio, shows session status, and plays downloadable translated audio
     '/api/live-audio-translations/job-123/audio');
 });
 
+it('uploads MP4 and plays the translated video result', async () => {
+  api.start.mockResolvedValue({ data: { id: 'video-123', status: 'queued', media_type: 'video' } });
+  api.status.mockResolvedValue({ data: { id: 'video-123', status: 'completed', media_type: 'video',
+    video_url: '/api/live-audio-translations/video-123/video' } });
+  render(<LiveAudioTranslation />);
+  const input = screen.getByLabelText('Upload Audio or Video');
+  expect(input.getAttribute('accept')).toContain('.mp4');
+  const file = new File(['video'], 'clip.mp4', { type: 'video/mp4' });
+  fireEvent.change(input, { target: { files: [file] } });
+  fireEvent.click(screen.getByRole('button', { name: 'Start Translation' }));
+  await waitFor(() => expect(api.start).toHaveBeenCalledWith(file));
+  expect(await screen.findByLabelText('Video tiếng Việt')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Download translated video' }).getAttribute('href')).toBe(
+    '/api/live-audio-translations/video-123/video');
+});
+
 it('shows a Live API error without using the video translation flow', async () => {
   api.start.mockResolvedValue({ data: { id: 'job-404', status: 'queued' } });
   api.status.mockResolvedValue({ data: { id: 'job-404', status: 'failed', error_code: 'quota_or_rate_limit' } });
   render(<LiveAudioTranslation />);
-  fireEvent.change(screen.getByLabelText('Upload Audio'), { target: { files: [
+  fireEvent.change(screen.getByLabelText('Upload Audio or Video'), { target: { files: [
     new File(['wave'], 'speech.wav', { type: 'audio/wav' }),
   ] } });
   fireEvent.click(screen.getByRole('button', { name: 'Start Translation' }));
@@ -66,7 +83,7 @@ it('keeps a started job when its first status request fails', async () => {
   api.start.mockResolvedValue({ data: { id: 'job-123', status: 'queued' } });
   api.status.mockRejectedValue(new Error('temporary status failure'));
   render(<LiveAudioTranslation />);
-  fireEvent.change(screen.getByLabelText('Upload Audio'), { target: { files: [
+  fireEvent.change(screen.getByLabelText('Upload Audio or Video'), { target: { files: [
     new File(['wave'], 'speech.wav', { type: 'audio/wav' }),
   ] } });
   fireEvent.click(screen.getByRole('button', { name: 'Start Translation' }));
@@ -79,7 +96,7 @@ it('allows a new session if the backend has lost an active job', async () => {
   api.status.mockResolvedValueOnce({ data: { id: 'job-123', status: 'streaming' } });
   api.status.mockRejectedValue({ response: { status: 404 } });
   render(<LiveAudioTranslation />);
-  fireEvent.change(screen.getByLabelText('Upload Audio'), { target: { files: [
+  fireEvent.change(screen.getByLabelText('Upload Audio or Video'), { target: { files: [
     new File(['wave'], 'speech.wav', { type: 'audio/wav' }),
   ] } });
   fireEvent.click(screen.getByRole('button', { name: 'Start Translation' }));
