@@ -6,13 +6,14 @@ import ProjectDetail from './pages/ProjectDetail';
 import Settings from './pages/Settings';
 import VideoTranslator from './pages/VideoTranslator';
 import VideoMerger from './pages/VideoMerger';
-import LiveAudioTranslation from './pages/LiveAudioTranslation';
 import './App.css';
 
 const getInitialStateFromUrl = () => {
   try {
     const params = new URLSearchParams(window.location.search);
-    const page = params.get('page') || localStorage.getItem('autotrans_active_page') || 'translator';
+    const requestedPage = params.get('page') || localStorage.getItem('autotrans_active_page') || 'translator';
+    const page = ['translator', 'merger', 'dashboard', 'detail', 'settings', 'create'].includes(requestedPage)
+      ? requestedPage : 'translator';
     const projId = params.get('projectId') || localStorage.getItem('autotrans_project_id') || null;
     const jobId = params.get('jobId') || localStorage.getItem('autotrans_job_id') || null;
     return { page, projId, jobId };
@@ -163,8 +164,6 @@ export default function App() {
         )}
 
         {activePage === 'merger' && <VideoMerger />}
-
-        {activePage === 'live_audio' && <LiveAudioTranslation />}
 
         {activePage === 'settings' && <Settings />}
       </main>

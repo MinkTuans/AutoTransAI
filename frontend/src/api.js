@@ -87,20 +87,6 @@ export const aiApi = {
   updateFunction: (functionId, body) => api.put(`/ai/functions/${encodeURIComponent(functionId)}`, body).then(res => res.data),
 };
 
-export const liveAudioApi = {
-  start: (file) => {
-    const form = new FormData();
-    form.append('file', file);
-    form.append('source_language', 'auto');
-    form.append('target_language', 'vi');
-    return api.post('/live-audio-translations', form).then(res => res.data);
-  },
-  status: (id) => api.get(`/live-audio-translations/${encodeURIComponent(id)}`).then(res => res.data),
-  cancel: (id) => api.post(`/live-audio-translations/${encodeURIComponent(id)}/cancel`).then(res => res.data),
-  audioUrl: (id) => `/api/live-audio-translations/${encodeURIComponent(id)}/audio`,
-  videoUrl: (id) => `/api/live-audio-translations/${encodeURIComponent(id)}/video`,
-};
-
 export const systemApi = {
 
   health: () => api.get('/system/health').then(res => res.data),

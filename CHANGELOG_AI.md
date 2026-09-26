@@ -1,3 +1,6 @@
+- **Retire Live Audio / Video Translation (2026-09-26)**:
+  - Removed the Gemini Live page, navigation, API, standalone service, configuration, dependency and feature-only tests after the reported session timeout. Existing `?page=live_audio` bookmarks now open Studio. The established Studio video translation and AI Provider Catalog are unchanged.
+
 - **Live video translation wrapper (2026-09-26)**:
   - The Live page now accepts short MP4 video as well as audio. A dedicated FFmpeg adapter extracts the video audio track as 16 kHz PCM, the existing Gemini Live session translates that audio, then FFmpeg replaces the original audio track and returns a downloadable MP4. The Studio video pipeline remains untouched.
   - Video uploads are capped at 250 MiB and five minutes; videos without audio fail explicitly. Completed video jobs retain only the translated MP4 in their short-lived Live workspace. Muxing pads audio when translation is shorter than the video and retains full translated speech when it is longer; speech and frames are not timestamp-aligned.
