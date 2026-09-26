@@ -33,6 +33,9 @@ async def live_client(tmp_path, monkeypatch):
         STORAGE_ROOT=tmp_path,
     )
     monkeypatch.setattr(routes, "get_settings", lambda: config)
+    async def resolve_config_key(_settings, _sessions):
+        return config.GEMINI_LIVE_TRANSLATE_API_KEY
+    monkeypatch.setattr(routes, "resolve_live_api_key", resolve_config_key)
 
     async def convert(_source, pcm, *, max_seconds):
         assert max_seconds <= 300

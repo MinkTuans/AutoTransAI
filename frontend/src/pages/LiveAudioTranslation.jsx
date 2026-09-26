@@ -10,7 +10,8 @@ const STATUS = {
 };
 const ERRORS = {
   feature_disabled: 'Tính năng Live Audio Translation đang tắt trong cấu hình.',
-  missing_api_key: 'Thiếu GEMINI_LIVE_TRANSLATE_API_KEY trong cấu hình.',
+  missing_api_key: 'Chưa có key Gemini đang bật trong AI Provider Catalog hoặc GEMINI_LIVE_TRANSLATE_API_KEY.',
+  credential_unavailable: 'Không đọc được key Gemini đã lưu. Hãy kiểm tra kho credential của ứng dụng.',
   model_unavailable: 'Model Gemini Live Translate hiện không khả dụng.',
   unsupported_audio_format: 'Định dạng audio không được hỗ trợ.',
   audio_too_large: 'File audio vượt giới hạn 25 MB.',

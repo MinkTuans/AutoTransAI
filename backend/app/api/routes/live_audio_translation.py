@@ -3,19 +3,46 @@
 from __future__ import annotations
 
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
+from sqlalchemy import and_, or_, select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.config import get_settings
+from app.database import async_session_factory
+from app.models import APIKey, Provider
+from app.services.credential_service import CredentialError, CredentialService
 from app.services.live_audio_translation.audio import SUPPORTED_SUFFIXES
 from app.services.live_audio_translation.jobs import LiveJobManager, SessionCapacityError
 
 
 router = APIRouter(prefix="/api/live-audio-translations", tags=["live-audio-translation"])
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+
+
+async def resolve_live_api_key(settings, sessions: async_sessionmaker) -> str | None:
+    """Use an explicit Live key, or an eligible Gemini key from the catalog."""
+    if settings.GEMINI_LIVE_TRANSLATE_API_KEY:
+        return settings.GEMINI_LIVE_TRANSLATE_API_KEY
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    async with sessions() as db:
+        key_id = await db.scalar(
+            select(APIKey.id).join(Provider, Provider.id == APIKey.provider_id).where(
+                APIKey.provider_id == "gemini", Provider.enabled.is_(True),
+                APIKey.enabled.is_(True),
+                or_(APIKey.runtime_status == "ready",
+                    and_(APIKey.runtime_status == "rate_limited",
+                         or_(APIKey.cooldown_until.is_(None), APIKey.cooldown_until <= now))),
+            ).order_by(APIKey.priority, APIKey.request_count, APIKey.id).limit(1)
+        )
+        if key_id is None:
+            return None
+        return await (await CredentialService.open(db, settings.DATA_DIR)).reveal(key_id)
 
 
 def get_live_manager(request: Request) -> LiveJobManager:
@@ -34,7 +61,11 @@ async def start_live_audio_translation(
     settings = get_settings()
     if not settings.LIVE_AUDIO_TRANSLATION_ENABLED:
         raise HTTPException(503, "feature_disabled")
-    if not settings.GEMINI_LIVE_TRANSLATE_API_KEY:
+    try:
+        api_key = await resolve_live_api_key(settings, async_session_factory)
+    except (CredentialError, SQLAlchemyError):
+        raise HTTPException(503, "credential_unavailable") from None
+    if not api_key:
         raise HTTPException(503, "missing_api_key")
     if not settings.GEMINI_LIVE_TRANSLATE_MODEL:
         raise HTTPException(503, "model_unavailable")
@@ -58,7 +89,7 @@ async def start_live_audio_translation(
         if count == 0:
             raise HTTPException(415, "unsupported_audio_format")
         job = manager.start(job_id, source, directory,
-                            key=settings.GEMINI_LIVE_TRANSLATE_API_KEY,
+                            key=api_key,
                             model=settings.GEMINI_LIVE_TRANSLATE_MODEL)
     except SessionCapacityError:
         shutil.rmtree(directory, ignore_errors=True)

@@ -1,3 +1,7 @@
+- **Live Audio Gemini Catalog key reuse (2026-09-26)**:
+  - Live Audio now uses an enabled, eligible Gemini key already saved in AI Provider Catalog when its optional `GEMINI_LIVE_TRANSLATE_API_KEY` override is empty. Selection happens per session, respects provider/key disable and key priority, and reads the secret through the encrypted credential service. The Live model and existing provider routing remain separate; no key is copied into environment files or responses.
+  - The page now distinguishes a missing Gemini key from an unreadable credential store. Synthetic-key route tests cover Catalog reuse, explicit override, disabled keys, priority, and deletion.
+
 - **Storage lifecycle and orphan cleanup (2026-09-25)**:
   - Studio translation results now live under `projects/{project_id}/outputs/{job_id}.mp4`, outside the disposable job workspace. After output persistence and thumbnail work, cleanup removes the workspace and its logs/audio, and retires source media only when no unfinished job shares it. Archived assets require a new import for another translation.
   - Deleting a Project now deletes linked translation jobs before deleting its own files. Added lifecycle and shared-source regression tests; no database schema or provider routing changed.
