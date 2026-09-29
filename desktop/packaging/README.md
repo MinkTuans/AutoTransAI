@@ -38,7 +38,9 @@ and license documents. `prepare_vendor.py` verifies downloaded hashes, extracts
 only explicit executable/license members, and records extracted binary hashes.
 The official yt-dlp executable includes EJS; Deno is a private packaged runtime.
 Optional fpcalc is not included. `export_notices.py` records installed Python/npm
-versions and licenses, CPython terms, and Deno's complete executable license text.
+versions and licenses, CPython terms, and hash-verified vendor source notices.
+Deno 2.9.7 has no `--license` command; its complete transitive notice inventory
+remains a separate public-distribution gate.
 
 `runtime-manifest.json` defines required payload files and links the inventories.
 The application lands at `dist/AutoTransAI/AutoTransAI.exe`; immutable resources are

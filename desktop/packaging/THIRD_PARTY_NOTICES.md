@@ -18,8 +18,9 @@ being installed in the build environment does not imply inclusion in the app.
   under the terms in `yt-dlp-THIRD_PARTY_LICENSES.txt`. Official frozen executable
   includes EJS; no remote EJS component download is configured by this package.
   https://github.com/yt-dlp/yt-dlp
-- Deno: private Windows executable, MIT with third-party terms. Build records the
-  executable's `deno --license` output alongside its source LICENSE.
+- Deno: private Windows executable, MIT with third-party terms. Build retains its
+  hash-verified source LICENSE. Deno 2.9.7 has no `--license` command; a complete
+  transitive third-party notice inventory remains a public-distribution gate.
   https://github.com/denoland/deno
 - CPython: PSF License; license copied from build interpreter. Python dependency
   metadata/licenses are exported from the isolated, hash-locked environment.

@@ -53,6 +53,16 @@ jobs:
             Write-Output "::error title=Windows installer log tail::$tail"
             throw
           }
+      - name: Record candidate hashes and smoke evidence
+        shell: pwsh
+        run: |
+          $version = (Get-Content desktop/packaging/version.txt -Raw).Trim()
+          foreach ($path in @('dist/AutoTransAI/AutoTransAI.exe', "dist/installer/AutoTransAI-$version-Setup.exe")) {
+            $file = Get-Item -LiteralPath $path
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            Write-Output "::notice title=Unsigned candidate evidence::$($file.Name); bytes=$($file.Length); sha256=$hash; source=$env:GITHUB_SHA"
+          }
+          Write-Output '::notice title=Frozen backend smoke evidence::Passed actual windowed executable authenticated startup, anonymous UI rejection, cookie UI/API access and owned shutdown with disposable Unicode-path data. GUI and installed acceptance remain pending.'
       - name: Retain unsigned candidate and provenance
         uses: actions/upload-artifact@v4
         with:

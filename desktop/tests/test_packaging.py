@@ -107,3 +107,44 @@ def test_payload_requires_x64_webview_loader(tmp_path):
     audit.write_inventory(tmp_path)
     with pytest.raises(ValueError, match='win-x64'):
         audit.verify(tmp_path)
+
+
+@pytest.mark.parametrize('license_state', ['valid', 'missing', 'modified'])
+def test_notice_export_uses_hash_verified_vendor_license_without_cli(tmp_path, monkeypatch, license_state):
+    """Deno 2.9.7 has no --license flag; retain its pinned source notice."""
+    import hashlib
+
+    exporter = helper('export_notices')
+    root = tmp_path / 'repo'
+    packaging = root / 'desktop/packaging'
+    packaging.mkdir(parents=True)
+    for name in ('requirements.lock', 'python-artifacts.json', 'runtime-manifest.json', 'version.txt'):
+        (packaging / name).write_text('{}')
+    license_bytes = b'MIT license fixture\n'
+    (packaging / 'vendor-lock.json').write_text(json.dumps({'license_files': [{
+        'name': 'deno-LICENSE.txt', 'sha256': hashlib.sha256(license_bytes).hexdigest(),
+    }]}))
+    frontend = root / 'frontend'
+    frontend.mkdir()
+    (frontend / 'package-lock.json').write_text('{"packages": {}}')
+    interpreter = tmp_path / 'interpreter'
+    interpreter.mkdir()
+    (interpreter / 'LICENSE.txt').write_text('CPython license fixture')
+    destination = tmp_path / 'notices'
+    destination.mkdir()
+    if license_state != 'missing':
+        (destination / 'deno-LICENSE.txt').write_bytes(
+            license_bytes if license_state == 'valid' else b'tampered')
+    monkeypatch.setattr(exporter, 'ROOT', root)
+    monkeypatch.setattr(exporter.sys, 'base_prefix', str(interpreter))
+    monkeypatch.setattr(exporter.importlib.metadata, 'distributions', lambda: [])
+    if license_state == 'valid':
+        exporter.export(destination)
+        assert (destination / 'deno-LICENSE.txt').read_bytes() == license_bytes
+        assert json.loads((destination / 'python-inventory.json').read_text()) == []
+    elif license_state == 'missing':
+        with pytest.raises(FileNotFoundError, match='deno-LICENSE'):
+            exporter.export(destination)
+    else:
+        with pytest.raises(ValueError, match='Vendor license checksum mismatch'):
+            exporter.export(destination)

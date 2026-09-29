@@ -1,11 +1,11 @@
 """Export actual installed dependency metadata and licenses into the payload."""
 from __future__ import annotations
 import argparse
+import hashlib
 import importlib.metadata
 import json
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -75,10 +75,14 @@ def export(destination: Path) -> None:
     (destination / 'frontend-inventory.json').write_text(json.dumps(frontend, indent=2) + '\n')
     for name in ('requirements.lock', 'python-artifacts.json', 'runtime-manifest.json', 'version.txt'):
         shutil.copyfile(ROOT / 'desktop/packaging' / name, destination / name)
-    deno = ROOT / 'bin/deno.exe'
-    result = subprocess.run([str(deno), '--license'], check=True, capture_output=True, text=True,
-                            timeout=30, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-    (destination / 'deno-THIRD_PARTY_LICENSES.txt').write_text(result.stdout, encoding='utf-8')
+    # Deno 2.9.7 does not expose --license. Vendor staging already supplies
+    # pinned source notices; recheck them before exporting the candidate.
+    lock = json.loads((ROOT / 'desktop/packaging/vendor-lock.json').read_text())
+    for item in lock['license_files']:
+        notice = destination / item['name']
+        if hashlib.sha256(notice.read_bytes()).hexdigest() != item['sha256']:
+            raise ValueError(f"Vendor license checksum mismatch: {item['name']}")
+
 
 
 if __name__ == '__main__':

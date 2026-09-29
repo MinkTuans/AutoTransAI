@@ -63,6 +63,8 @@ Immutable resources and writable state are separate. `%LOCALAPPDATA%\AutoTransAI
 
 Windows distribution configuration uses PyInstaller onedir and Inno Setup per-user install, with verified FFmpeg/FFprobe, official yt-dlp/EJS and private Deno payloads. Node is build-only; optional fpcalc remains unbundled. The existing web commands and historical launcher remain separate. Linux tests do not establish Windows GUI/installer/Job Object acceptance; see `docs/desktop/FINAL_REPORT.md` for actual evidence and outstanding release gates.
 
+Windows CI diagnostics (2026-09-29) verified dependency installation, vendor staging and frontend compilation, then identified unsupported `deno --license` in notice export. The exporter now retains and rechecks the pinned vendor source licenses without invoking that nonexistent command. Complete Deno transitive notices remain a public-distribution gate; candidate build status is tracked in `docs/desktop/FINAL_REPORT.md`. No runtime/API/database behavior changed.
+
 ### Architectural Pillars
 - **Single Source of Truth AI Model Routing (`AIModelResolver`)**: Pipeline stages never hardcode model identifiers. Models are resolved dynamically from database tables (`ai_function_configs` -> `ai_models`).
 - **Two-Phase Translation Pipeline**:

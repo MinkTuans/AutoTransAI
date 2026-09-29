@@ -1,3 +1,8 @@
+- **Windows CI notice-export correction (2026-09-29)**:
+  - Actual Windows run `36547069609` exposed unsupported `deno --license`; reproduced with SHA256-verified upstream Deno 2.9.7 Linux executable. Removed that invalid invocation from `desktop/packaging/export_notices.py` and recheck staged license bytes against `vendor-lock.json` instead.
+  - Added valid/missing/modified notice regressions in `desktop/tests/test_packaging.py`; corrected packaging README/third-party notices and Knowledge Base. Complete Deno transitive notices remain a public-distribution gate; no fabricated aggregate license file is created.
+  - Successful package steps emit public candidate EXE/installer SHA256, size and source revision plus the bounded frozen-backend smoke scope; no credentials or signed URLs. Workflow failure annotations now separate bounded exception and log tail so GitHub's public annotation truncation cannot hide the actual failure. No dependency versions, API, schema, runtime security or payload checks relaxed.
+
 - **Windows desktop implementation and packaging candidate (2026-09-29)**:
   - Added `desktop/` entrypoint, forced WebView2 shell with native failure controls, per-user single-instance mutex, authenticated owned backend supervisor, Windows kill-on-close Job Object, exclusive fixed loopback socket and production frontend hosting. Source web commands remain separate.
   - Added explicit immutable resources/private `%LOCALAPPDATA%/AutoTransAI` paths, isolated SQLite defaults and strict optional private `data/desktop.env` OAuth-client allowlist; source/ancestor dotenv and inherited app credentials are ignored in desktop mode. No ORM schema change or automatic existing-data migration.
