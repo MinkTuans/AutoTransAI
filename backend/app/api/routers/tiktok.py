@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+import time
 from typing import Any
 
 import httpx
@@ -30,7 +31,8 @@ from app.services.video_editor.tiktok_oauth import (
 router = APIRouter(prefix="/tiktok", tags=["tiktok"])
 
 # state -> {code_verifier, redirect_uri}
-_oauth_sessions: dict[str, dict[str, str]] = {}
+_oauth_sessions: dict[str, dict[str, Any]] = {}
+_OAUTH_TTL = 600
 
 
 def _redirect_uri() -> str:
@@ -43,7 +45,7 @@ def _require_tiktok_app() -> tuple[str, str, str]:
     if not curr.TIKTOK_CLIENT_KEY or not curr.TIKTOK_CLIENT_SECRET:
         raise HTTPException(
             status_code=500,
-            detail="TikTok OAuth chưa cấu hình trong .env (TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET)",
+            detail="TikTok OAuth chưa cấu hình (TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET). Desktop: cấu hình data/desktop.env riêng rồi khởi động lại. Web: cấu hình môi trường máy chủ.",
         )
     scopes = (curr.TIKTOK_SCOPES or DEFAULT_SCOPES).strip() or DEFAULT_SCOPES
     return curr.TIKTOK_CLIENT_KEY, curr.TIKTOK_CLIENT_SECRET, scopes
@@ -125,7 +127,10 @@ async def get_auth_url():
     redirect_uri = _redirect_uri()
     verifier, challenge = generate_pkce()
     state = generate_state()
-    _oauth_sessions[state] = {"code_verifier": verifier, "redirect_uri": redirect_uri}
+    now = time.monotonic()
+    for expired in [key for key, item in _oauth_sessions.items() if item["expires_at"] <= now]:
+        _oauth_sessions.pop(expired, None)
+    _oauth_sessions[state] = {"code_verifier": verifier, "redirect_uri": redirect_uri, "expires_at": now + _OAUTH_TTL}
     auth_url = build_authorize_url(
         client_key=client_key,
         redirect_uri=redirect_uri,
@@ -145,16 +150,15 @@ async def oauth_callback(
     error_description: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
+    session = _oauth_sessions.pop(state, None) if state else None
+    if not session or session["expires_at"] <= time.monotonic():
+        html = oauth_done_html("TikTok", False, "Phiên đăng nhập hết hạn. Bấm Kết nối TikTok lại trong app.")
+        return HTMLResponse(content=html, status_code=400)
     if error:
         html = oauth_done_html("TikTok", False, error_description or error)
         return HTMLResponse(content=html, status_code=400)
     if not code or not state:
         html = oauth_done_html("TikTok", False, "Thiếu mã ủy quyền từ TikTok.")
-        return HTMLResponse(content=html, status_code=400)
-
-    session = _oauth_sessions.pop(state, None)
-    if not session:
-        html = oauth_done_html("TikTok", False, "Phiên đăng nhập hết hạn. Bấm Kết nối TikTok lại trong app.")
         return HTMLResponse(content=html, status_code=400)
 
     try:

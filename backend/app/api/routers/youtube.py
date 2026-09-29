@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import json
 import uuid
+import time
 import asyncio
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
@@ -51,7 +52,7 @@ def _get_redirect_uri() -> str:
 def _get_client_config() -> dict:
     curr_settings = get_settings()
     if not curr_settings.YOUTUBE_CLIENT_ID or not curr_settings.YOUTUBE_CLIENT_SECRET:
-        raise HTTPException(status_code=500, detail="YouTube OAuth is not configured in .env (YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET)")
+        raise HTTPException(status_code=500, detail="YouTube OAuth is not configured (YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET). Desktop: configure private data/desktop.env and restart. Web: configure the server environment.")
     
     redirect_uri = _get_redirect_uri()
     return {
@@ -67,7 +68,8 @@ def _get_client_config() -> dict:
     }
 
 
-_oauth_verifiers: dict[str, str] = {}
+_oauth_verifiers: dict[str, dict[str, Any]] = {}
+_OAUTH_TTL = 600
 
 
 @router.get("/auth-url")
@@ -85,8 +87,11 @@ async def get_auth_url(redirect_uri: str = None):
             include_granted_scopes="true",
             prompt="consent"
         )
-        if getattr(flow, "code_verifier", None):
-            _oauth_verifiers[state] = flow.code_verifier
+        now = time.monotonic()
+        for expired in [key for key, item in _oauth_verifiers.items() if item["expires_at"] <= now]:
+            _oauth_verifiers.pop(expired, None)
+        _oauth_verifiers[state] = {"code_verifier": getattr(flow, "code_verifier", None),
+                                   "redirect_uri": flow.redirect_uri, "expires_at": now + _OAUTH_TTL}
 
         return {"auth_url": authorization_url, "state": state}
     except Exception as e:
@@ -96,6 +101,10 @@ async def get_auth_url(redirect_uri: str = None):
 @router.get("/oauth-callback")
 async def oauth_callback(request: Request, state: str = None, code: str = None, db: AsyncSession = Depends(get_db)):
     """Handle the Google OAuth 2.0 callback."""
+    session = _oauth_verifiers.pop(state, None) if state else None
+    if not session or session["expires_at"] <= time.monotonic():
+        html = oauth_done_html("YouTube", False, "Phiên đăng nhập hết hạn. Bấm Kết nối YouTube lại trong app.")
+        return HTMLResponse(content=html, status_code=400)
     if not code:
         html = oauth_done_html("YouTube", False, "Thiếu mã ủy quyền từ Google.")
         return HTMLResponse(content=html, status_code=400)
@@ -105,14 +114,13 @@ async def oauth_callback(request: Request, state: str = None, code: str = None, 
         flow = google_auth_oauthlib.flow.Flow.from_client_config(
             client_config, scopes=SCOPES
         )
-        flow.redirect_uri = _get_redirect_uri()
-        if state and state in _oauth_verifiers:
-            flow.code_verifier = _oauth_verifiers.pop(state)
+        flow.redirect_uri = session["redirect_uri"]
+        flow.code_verifier = session["code_verifier"]
 
-        # Use the full URL to fetch tokens
-        authorization_response = str(request.url)
-
-        flow.fetch_token(authorization_response=authorization_response)
+        # State and code were validated and the state consumed above. Pass the
+        # code directly: OAuthlib rejects the loopback HTTP callback URL, while
+        # the token exchange still uses the configured HTTPS token endpoint.
+        flow.fetch_token(code=code)
         credentials = flow.credentials
         
         # Fetch channel info

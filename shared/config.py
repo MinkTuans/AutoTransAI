@@ -17,6 +17,8 @@ def get_project_root() -> Path:
     Find the root directory of the WorkflowVdAi project.
     Searches upward from this file location until finding .env or README.md.
     """
+    if os.environ.get("AUTOTRANSAI_DESKTOP") == "1":
+        return Path(os.environ["AUTOTRANSAI_RESOURCE_ROOT"]).resolve()
     current = Path(__file__).resolve().parent
     while current != current.parent:
         if (current / ".env").exists() or (current / "README.md").exists():
@@ -59,6 +61,8 @@ def load_root_env(override: bool = True) -> Dict[str, str]:
     Args:
         override: If True, overwrite existing os.environ keys with values from .env.
     """
+    if os.environ.get("AUTOTRANSAI_DESKTOP") == "1":
+        return {}
     parsed = parse_env_file(ROOT_ENV_PATH)
     for k, v in parsed.items():
         if override or k not in os.environ:

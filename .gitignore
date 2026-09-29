@@ -67,3 +67,8 @@ scratch_*.py
 # Build
 frontend/dist/
 analysis/
+
+# Verified desktop build inputs and generated artifacts
+/bin/
+/.desktop-cache/
+/.venv-desktop/

@@ -55,6 +55,20 @@ AutoTransAI uses a **Local-First Client-Server Architecture** designed for stand
 └───────────────────────────────────────┘  └─────────────────────────────┘
 ```
 
+### Packaged Windows desktop entrypoint (2026-09-29)
+
+The new `desktop/` package implements the accepted Windows conversion separately from the historical source launcher shown above. `python -m desktop` (or frozen `AutoTransAI.exe`) requires pywebview Edge/WebView2 and owns a hidden child of the same executable with `--desktop-backend`. The child receives a protocol-1 stdin handshake only after assignment to a kill-on-close Windows Job Object. An exclusive `127.0.0.1:8000` socket serves compiled `frontend/dist` and the existing FastAPI app at the same origin. Authenticated identity/lifespan readiness precedes Studio navigation. A foreign listener produces a retryable error and is never killed.
+
+Immutable resources and writable state are separate. `%LOCALAPPDATA%\AutoTransAI` contains `data`, `storage`, `logs`, and `webview`; desktop startup bypasses ancestor/source dotenv loading and inherited application settings, using its own SQLite by default. It does not migrate an existing web installation automatically. An explicit optional private `data/desktop.env` accepts only YouTube client ID/secret and TikTok client key/secret/scopes (16 KiB, no interpolation, malformed/unknown/duplicate entries rejected); restart to apply. It cannot override roots, database or session values. The new desktop wrapper authenticates all static/API/media/SSE routes using a one-use bootstrap and HttpOnly SameSite=Strict cookie, exact Host and unsafe-request Origin checks. Exact GET OAuth callbacks remain accessible only with validated expiring single-use state. The shell offers native Retry/View Logs/Close, blocks external navigation, and provides no general native JavaScript API.
+
+Windows distribution configuration uses PyInstaller onedir and Inno Setup per-user install, with verified FFmpeg/FFprobe, official yt-dlp/EJS and private Deno payloads. Node is build-only; optional fpcalc remains unbundled. The existing web commands and historical launcher remain separate. Linux tests do not establish Windows GUI/installer/Job Object acceptance; see `docs/desktop/FINAL_REPORT.md` for actual evidence and outstanding release gates.
+
+Windows CI **succeeded** on 2026-09-29: [run 36549227445](https://github.com/MinkTuans/AutoTransAI/actions/runs/36549227445), artifact source `eba42a9867d53375c496cbd73fe6cb99c1b6ac04`, completed EXE freezing, private-data/payload audit, authenticated windowed-backend smoke, Inno Setup and unsigned candidate upload (artifact `11024087673`). Download requires GitHub authentication; metadata/hashes and remaining GUI/install/media/performance gates are in `docs/desktop/FINAL_REPORT.md`. Feature-branch pushes/CI were authorized; main and public Releases are unchanged.
+
+Installed acceptance **passed** on 2026-09-29 in [run 36551294736](https://github.com/MinkTuans/AutoTransAI/actions/runs/36551294736), source `c3bc02e17c5d915314ef57e3248af5f4ffbaaad5`, new unsigned artifact `11024283910`. The candidate upload gate runs the actual silent installer to a disposable Unicode/space directory, verifies payload hashes and Desktop/Start Menu targets/uninstall registration, exercises two installed authenticated backend launches with a retained SQLite marker/storage sentinel and prior-session rejection, and invokes the actual uninstaller with removal and retained disposable-data assertions. Runner GUI capability was available; installed shortcut/current visible window/backend/no observed console/WM_CLOSE/observed tree exit passed. No product/API/schema/provider changes were needed. Raw coverage and one-run metrics are in `installed-acceptance.json`: installed 508,156,076 bytes; install 14.017 s; uninstall 1.316 s; backend startup 5.250/3.719 s and shutdown 0.453/0.360 s. These are not p95 or complete GUI/media/failure/clean-machine/performance acceptance. See FINAL_REPORT for hashes and remaining manual gates. Earlier artifact `11024087673` remains unchanged.
+
+Windows CI diagnostics (2026-09-29) verified dependency installation, vendor staging and frontend compilation, then identified unsupported `deno --license` in notice export. The exporter now retains and rechecks the pinned vendor source licenses without invoking that nonexistent command. SQLAlchemy DBAPI packages (`aiosqlite`, `aiomysql`, `pymysql`) are explicit PyInstaller hidden imports because the dialects load them dynamically; the native smoke caught omitted `aiosqlite`. Complete Deno transitive notices remain a public-distribution gate; candidate build status is tracked in `docs/desktop/FINAL_REPORT.md`. No API/database behavior changed. Frozen startup failures now log exception type, bounded code locations and valid missing-module identifiers without exception values/source lines; CI smoke preserves a bounded supervisor-redacted log tail before deleting its disposable data.
+
 ### Architectural Pillars
 - **Single Source of Truth AI Model Routing (`AIModelResolver`)**: Pipeline stages never hardcode model identifiers. Models are resolved dynamically from database tables (`ai_function_configs` -> `ai_models`).
 - **Two-Phase Translation Pipeline**:
@@ -663,7 +677,7 @@ storage/
 
 ## 13. Authentication & Authorization
 
-- **Application Access**: Local-first standalone deployment. No user authentication is required for internal studio tools.
+- **Application Access**: Existing web mode retains its local-first access policy. The new packaged desktop adds an outer authenticated loopback session boundary covering static/API/media/SSE; it is not an OS-user authorization system.
 - **External OAuth 2.0**:
   - **YouTube**: Google OAuth 2.0 with offline access (`access_type=offline`, `prompt=consent`). Tokens are encrypted at rest in `youtube_channels.credentials_json` using Fernet symmetric encryption.
   - **TikTok**: TikTok Login Kit with desktop PKCE (Proof Key for Code Exchange) using SHA-256 code challenges. Tokens encrypted in `tiktok_accounts.credentials_json`.
@@ -778,6 +792,10 @@ AutoTransAI is designed for local Windows desktop execution:
 ---
 
 ## 22. Development Commands
+
+### New Desktop Commands
+
+See `docs/desktop/BUILD.md` for the development, build, package and release commands and verified dependency requirements. `python -m desktop` starts the new Windows shell after production resources have been staged; `--desktop-backend` is a private stdin-controlled child mode. It is not an independently configured public server command.
 
 ### Running Backend (Development)
 ```powershell

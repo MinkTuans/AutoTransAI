@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import sys
+from html import escape
 import shutil
 import subprocess
 from urllib.parse import urlparse
@@ -69,6 +71,11 @@ def open_oauth_in_chrome(url: str) -> dict:
     if not is_allowed_oauth_url(url):
         raise ValueError("URL này không được phép mở ngoài app (chỉ Google/TikTok OAuth).")
 
+    if os.environ.get("AUTOTRANSAI_DESKTOP") == "1" and sys.platform == "win32":
+        # Shell broker opens the user browser outside the backend Job Object.
+        os.startfile(url)
+        return {"ok": True, "browser": "default", "url": url}
+
     chrome_path = resolve_chrome_path()
     if not chrome_path:
         raise FileNotFoundError(
@@ -81,6 +88,8 @@ def open_oauth_in_chrome(url: str) -> dict:
 
 
 def oauth_done_html(platform: str, ok: bool, detail: str = "") -> str:
+    platform = escape(platform, quote=True)
+    detail = escape(detail, quote=True)
     title = f"Đã kết nối {platform}" if ok else f"Không kết nối được {platform}"
     color = "#16a34a" if ok else "#dc2626"
     extra = f"<p style='color:#64748b'>{detail}</p>" if detail else ""
@@ -88,6 +97,8 @@ def oauth_done_html(platform: str, ok: bool, detail: str = "") -> str:
 <html lang="vi">
 <head>
   <meta charset="utf-8"/>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"/>
+  <meta name="referrer" content="no-referrer"/>
   <title>{title}</title>
   <style>
     body {{ font-family: system-ui, sans-serif; background:#0f172a; color:#e2e8f0;
@@ -99,7 +110,7 @@ def oauth_done_html(platform: str, ok: bool, detail: str = "") -> str:
 <body>
   <div class="card">
     <h1>{title}</h1>
-    <p>Bạn có thể đóng tab Chrome này và quay lại AutoTransAI.</p>
+    <p>Bạn có thể đóng tab trình duyệt này và quay lại AutoTransAI.</p>
     {extra}
   </div>
 </body>

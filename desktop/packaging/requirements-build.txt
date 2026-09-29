@@ -1,0 +1,3 @@
+# Plan entrypoint: Windows x64 CPython 3.12 hash-locked runtime and freezer dependencies.
+# Bootstrap build-bootstrap.lock first; see build.ps1 for no-isolation installation.
+-r requirements.lock

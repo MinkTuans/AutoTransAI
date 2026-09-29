@@ -1,3 +1,32 @@
+- **Successful Windows EXE and installer CI candidate (2026-09-29)**:
+  - GitHub Actions [run 36549227445](https://github.com/MinkTuans/AutoTransAI/actions/runs/36549227445), source `eba42a9867d53375c496cbd73fe6cb99c1b6ac04`, passed Windows x64 PyInstaller build, payload audit, actual authenticated frozen-backend smoke, Inno Setup compilation and artifact upload.
+  - Artifact `11024087673` (`AutoTransAI-Windows-x64-candidate`): 335,650,389 bytes, archive SHA256 `b40ce0e95d186dafec86f5ed34c7d22fb800149b230683eab846c51b32924d8c`; retention expires 2026-10-13. Setup is 141,470,190 bytes. Exact EXE/Setup hashes and public metadata links are in `docs/desktop/FINAL_REPORT.md`.
+  - Updated desktop report/build/readme/test plan, packaging README and Knowledge Base with actual CI evidence and remaining GUI/install/provider/performance/distribution gates. Anonymous archive API returns 401; no local binary download is claimed. Feature-branch pushes/CI were authorized; no main merge, release publication or signing. Documentation uses `[skip ci]` and does not change the artifact source revision.
+
+- **Frozen SQLAlchemy driver inclusion (2026-09-29)**:
+  - Run `36548693407` identified missing `aiosqlite` at SQLAlchemy `import_dbapi` during frozen startup. `autotransai.spec` now explicitly includes the three installed DBAPI packages loaded dynamically by its selected SQLite/MySQL dialects (`aiosqlite`, `aiomysql`, `pymysql`).
+  - Added a regression that observes the real dialect loaders and checks their external imports against the freezer specification: all three failed before the fix. Updated Knowledge Base; package versions/hashes, schemas, API and runtime database selection are unchanged. Actual Windows smoke remains the production verification gate.
+
+- **Safe frozen startup diagnostics (2026-09-29)**:
+  - Run `36548102112` confirmed the backend emitted only a generic error before readiness. `desktop/backend.py` now logs unexpected exception type, up to eight code locations and a validated missing-module identifier without exception values, source lines, locals or handshake data.
+  - Added regressions proving import identification and exclusion of secret-bearing exception/source values; updated Knowledge Base. Startup still fails closed; no database/API/provider or session-policy changes.
+
+- **Frozen Windows smoke failure diagnostics (2026-09-29)**:
+  - Windows run `36547711142` built the PyInstaller EXE and passed payload audit, then the backend exited before readiness. `smoke_frozen.py` now preserves a bounded 2 KiB tail of its disposable, supervisor-redacted log before temporary cleanup; failure and owned shutdown still propagate.
+  - Added red/green regression proving diagnostic visibility and bounded output. Runtime root cause remains under investigation; no API/schema/configuration or security-policy change.
+
+- **Windows CI notice-export correction (2026-09-29)**:
+  - Actual Windows run `36547069609` exposed unsupported `deno --license`; reproduced with SHA256-verified upstream Deno 2.9.7 Linux executable. Removed that invalid invocation from `desktop/packaging/export_notices.py` and recheck staged license bytes against `vendor-lock.json` instead.
+  - Added valid/missing/modified notice regressions in `desktop/tests/test_packaging.py`; corrected packaging README/third-party notices and Knowledge Base. Complete Deno transitive notices remain a public-distribution gate; no fabricated aggregate license file is created.
+  - Successful package steps emit public candidate EXE/installer SHA256, size and source revision plus the bounded frozen-backend smoke scope; no credentials or signed URLs. Workflow failure annotations now separate bounded exception and log tail so GitHub's public annotation truncation cannot hide the actual failure. No dependency versions, API, schema, runtime security or payload checks relaxed.
+
+- **Windows desktop implementation and packaging candidate (2026-09-29)**:
+  - Added `desktop/` entrypoint, forced WebView2 shell with native failure controls, per-user single-instance mutex, authenticated owned backend supervisor, Windows kill-on-close Job Object, exclusive fixed loopback socket and production frontend hosting. Source web commands remain separate.
+  - Added explicit immutable resources/private `%LOCALAPPDATA%/AutoTransAI` paths, isolated SQLite defaults and strict optional private `data/desktop.env` OAuth-client allowlist; source/ancestor dotenv and inherited app credentials are ignored in desktop mode. No ORM schema change or automatic existing-data migration.
+  - Added outer static/API/media/SSE session protection and tightened existing YouTube/TikTok callbacks to mandatory expiring single-use state, escaped inert HTML and safe desktop external-browser launch. Existing endpoint URLs/request shapes remain; invalid/replayed OAuth callbacks intentionally reject. Settings missing-client guidance now refers to OAuth configuration rather than a developer `.env`.
+  - Added hash-locked Windows dependencies, verified vendor staging, inventories/licenses, PyInstaller onedir build, frozen-backend smoke, manual Windows CI artifact workflow and per-user Inno packaging with verified WebView2 prerequisite. Installer retains private data; signing hooks are external; no updater, publishing, remote push or configured-data writes.
+  - Added desktop unit/real-process tests and development/build/package/release/troubleshooting/acceptance documentation. Updated `PROJECT_KNOWLEDGE_BASE.md` architecture, paths, access policy and commands. `docs/desktop/FINAL_REPORT.md` records verification, independent review and remaining Windows release gates. Linux evidence does not establish a built Setup.exe, installed GUI/media behavior or measured Windows performance.
+
 - **Retire Live Audio / Video Translation (2026-09-26)**:
   - Removed the Gemini Live page, navigation, API, standalone service, configuration, dependency and feature-only tests after the reported session timeout. Existing `?page=live_audio` bookmarks now open Studio. The established Studio video translation and AI Provider Catalog are unchanged.
 
@@ -1250,3 +1279,10 @@
 - Added an independent `?page=live_audio` page with upload, automatic source-language label, Vietnamese target, session status/cancel, audio playback, and WAV download. The existing video Studio and STT → Translation → Glossary → TTS flow are untouched.
 - Added dedicated FastAPI upload/status/cancel/result routes and a process-local job manager. A separate FFmpeg audio adapter converts bounded uploads to Gemini Live 16 kHz PCM; a request-local WebSocket sends audio to configurable Gemini 3.5 Live Translate Preview and writes its 24 kHz output to WAV. Upstream errors use safe codes; there is no Edge TTS or old-pipeline fallback.
 - Added `LIVE_AUDIO_TRANSLATION_ENABLED`, `GEMINI_LIVE_TRANSLATE_API_KEY`, and `GEMINI_LIVE_TRANSLATE_MODEL` without reusing current provider keys or model routing. Inputs over 25 MiB or five minutes are rejected; active status is process-local and not resumed after restart. Terminal jobs are limited to ten; tracked files are removed on shutdown and crash leftovers older than 24 hours on startup. No database schema change. Synthetic tests use no real key; the real FFmpeg conversion test skips on hosts without FFmpeg/FFprobe. The final output drain follows Google's four-second file-stream example; a real-key check is needed to verify end-of-file completeness.
+
+## 2026-09-29 — Installed Windows candidate acceptance harness
+- Added real silent install/shortcut/registration/payload/restart/uninstall CI gate before candidate upload, with marked disposable Unicode/space roots and retained user-data assertions.
+- Added optional installed shortcut GUI capability/window/owned-close checks, safe phase diagnostics and raw one-run timing/size JSON. No API, database schema, provider, product settings or installer behavior change.
+- Files: desktop/scripts/smoke-installed*.ps1, desktop/packaging/smoke_frozen.py, desktop/tests/test_installed_smoke.py, .github/workflows/desktop-windows.yml and desktop documentation.
+- Verification: 26 targeted portable tests and all six PowerShell scripts parsed; independent review findings closed. Windows run `36551294736` source `c3bc02e17c5d915314ef57e3248af5f4ffbaaad5` passed actual install/restart/GUI-window-close/uninstall/retention and upload. New unsigned artifact `11024283910`; earlier successful candidate remains unchanged.
+- Knowledge base, FINAL_REPORT, TEST_PLAN and BUILD updated with actual native coverage, artifact SHA256 and one-run timings/sizes. Interactive/media/failure/clean-machine/provider/full-performance and signing/public-distribution gates remain open. No production code changed.
