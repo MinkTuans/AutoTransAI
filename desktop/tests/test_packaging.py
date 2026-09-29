@@ -148,3 +148,32 @@ def test_notice_export_uses_hash_verified_vendor_license_without_cli(tmp_path, m
     else:
         with pytest.raises(ValueError, match='Vendor license checksum mismatch'):
             exporter.export(destination)
+
+
+def test_frozen_smoke_preserves_bounded_failure_log_before_temp_cleanup(tmp_path, monkeypatch, capsys):
+    smoke = helper('smoke_frozen')
+    monkeypatch.setattr(smoke.sys, 'platform', 'win32')
+    stopped = []
+
+    class FailingManager:
+        def __init__(self, command, resources, data):
+            self.log_dir = data / 'logs'
+            self.log_dir.mkdir()
+            (self.log_dir / 'backend.log').write_text('old log\n' * 1000 + 'diagnostic tail\n')
+
+        def start(self):
+            raise RuntimeError('failed readiness')
+
+        def stop(self):
+            stopped.append(True)
+
+        def is_running(self):
+            return False
+
+    monkeypatch.setattr(smoke, 'BackendManager', FailingManager)
+    with pytest.raises(RuntimeError, match='failed readiness'):
+        smoke.main(tmp_path)
+    output = capsys.readouterr().out
+    assert 'diagnostic tail' in output
+    assert len(output) < 4500
+    assert stopped

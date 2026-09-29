@@ -37,6 +37,17 @@ def main(payload: Path) -> None:
             with client.open('http://127.0.0.1:8000/api/system/health', timeout=5) as response:
                 assert response.status == 200
             assert manager.is_running()
+        except Exception:
+            # Disposable smoke data only. The supervisor redacts handshake tokens
+            # before writing this log; preserve a bounded tail before temp cleanup.
+            log = manager.log_dir / 'backend.log'
+            try:
+                with log.open('rb') as stream:
+                    stream.seek(max(0, log.stat().st_size - 2048))
+                    print('Frozen backend log tail:', stream.read(2048).decode('utf-8', errors='replace'))
+            except OSError:
+                print('Frozen backend log unavailable.')
+            raise
         finally:
             manager.stop()
             if manager.is_running():

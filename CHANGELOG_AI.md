@@ -1,3 +1,7 @@
+- **Frozen Windows smoke failure diagnostics (2026-09-29)**:
+  - Windows run `36547711142` built the PyInstaller EXE and passed payload audit, then the backend exited before readiness. `smoke_frozen.py` now preserves a bounded 2 KiB tail of its disposable, supervisor-redacted log before temporary cleanup; failure and owned shutdown still propagate.
+  - Added red/green regression proving diagnostic visibility and bounded output. Runtime root cause remains under investigation; no API/schema/configuration or security-policy change.
+
 - **Windows CI notice-export correction (2026-09-29)**:
   - Actual Windows run `36547069609` exposed unsupported `deno --license`; reproduced with SHA256-verified upstream Deno 2.9.7 Linux executable. Removed that invalid invocation from `desktop/packaging/export_notices.py` and recheck staged license bytes against `vendor-lock.json` instead.
   - Added valid/missing/modified notice regressions in `desktop/tests/test_packaging.py`; corrected packaging README/third-party notices and Knowledge Base. Complete Deno transitive notices remain a public-distribution gate; no fabricated aggregate license file is created.
