@@ -850,3 +850,5 @@ npm run build
 2. **Empirical Verification**: Never guess or assume model names, table columns, or endpoint paths. Introspect active source code directly.
 3. **Keep Ground Truth**: If documentation conflicts with active source code, inspect the source code, adhere to its implementation, and update this file immediately.
 - **Retired Gemini Live translation (2026-09-26)**: The separate `?page=live_audio` page, `/api/live-audio-translations` endpoints, Live service and related settings were removed after a reported timeout. Old bookmarks open Studio. The Studio STT → Translation → Glossary → TTS workflow and Gemini Catalog keys remain available.
+
+- **Desktop reload controls (2026-09-29)**: The packaged shell has no native App menu. WebView2 browser shortcuts are enabled on navigation so F5 reloads the current page in production without enabling debug/devtools. Reload does not restart the owned backend; backend failure pages direct users to close and reopen the application. Logs remain in the private data directory.

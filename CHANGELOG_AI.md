@@ -1,3 +1,8 @@
+- **Desktop F5 reload and menu removal (2026-09-29)**:
+  - Removed the native App / Retry / View Logs / Close menu at the user’s request. Enabled WebView2 browser shortcuts on the UI-thread navigation event, restoring F5 in non-debug builds.
+  - Updated failure-page guidance to close/reopen for backend failures; reload leaves the backend running. Updated shell test control fixture and Knowledge Base. No database, API, storage or provider changes.
+  - Windows keyboard interaction and replacement installer verification remain pending.
+
 - **Successful Windows EXE and installer CI candidate (2026-09-29)**:
   - GitHub Actions [run 36549227445](https://github.com/MinkTuans/AutoTransAI/actions/runs/36549227445), source `eba42a9867d53375c496cbd73fe6cb99c1b6ac04`, passed Windows x64 PyInstaller build, payload audit, actual authenticated frozen-backend smoke, Inno Setup compilation and artifact upload.
   - Artifact `11024087673` (`AutoTransAI-Windows-x64-candidate`): 335,650,389 bytes, archive SHA256 `b40ce0e95d186dafec86f5ed34c7d22fb800149b230683eab846c51b32924d8c`; retention expires 2026-10-13. Setup is 141,470,190 bytes. Exact EXE/Setup hashes and public metadata links are in `docs/desktop/FINAL_REPORT.md`.
