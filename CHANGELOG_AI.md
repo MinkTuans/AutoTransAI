@@ -1,3 +1,8 @@
+- **Successful Windows EXE and installer CI candidate (2026-09-29)**:
+  - GitHub Actions [run 36549227445](https://github.com/MinkTuans/AutoTransAI/actions/runs/36549227445), source `eba42a9867d53375c496cbd73fe6cb99c1b6ac04`, passed Windows x64 PyInstaller build, payload audit, actual authenticated frozen-backend smoke, Inno Setup compilation and artifact upload.
+  - Artifact `11024087673` (`AutoTransAI-Windows-x64-candidate`): 335,650,389 bytes, archive SHA256 `b40ce0e95d186dafec86f5ed34c7d22fb800149b230683eab846c51b32924d8c`; retention expires 2026-10-13. Setup is 141,470,190 bytes. Exact EXE/Setup hashes and public metadata links are in `docs/desktop/FINAL_REPORT.md`.
+  - Updated desktop report/build/readme/test plan, packaging README and Knowledge Base with actual CI evidence and remaining GUI/install/provider/performance/distribution gates. Anonymous archive API returns 401; no local binary download is claimed. Feature-branch pushes/CI were authorized; no main merge, release publication or signing. Documentation uses `[skip ci]` and does not change the artifact source revision.
+
 - **Frozen SQLAlchemy driver inclusion (2026-09-29)**:
   - Run `36548693407` identified missing `aiosqlite` at SQLAlchemy `import_dbapi` during frozen startup. `autotransai.spec` now explicitly includes the three installed DBAPI packages loaded dynamically by its selected SQLite/MySQL dialects (`aiosqlite`, `aiomysql`, `pymysql`).
   - Added a regression that observes the real dialect loaders and checks their external imports against the freezer specification: all three failed before the fix. Updated Knowledge Base; package versions/hashes, schemas, API and runtime database selection are unchanged. Actual Windows smoke remains the production verification gate.

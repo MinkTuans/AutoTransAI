@@ -56,11 +56,12 @@ application executable path, then verifies Authenticode before writing hashes.
 `release.ps1 -SignToolCommand '...'` forwards an external Inno signing command to
 package.ps1 (including installer/uninstaller signing). Credentials remain outside
 the repository. No automatic publishing/updater is configured. CI runs manually
-and uploads unsigned candidate artifacts unless operators add their signing setup.
+or on pushes to `feat/windows-desktop` and uploads unsigned candidate artifacts. Signing requires separately authorized external setup.
 
 The Linux implementation host verified downloads, locks, unit tests, Python/spec
-syntax and PowerShell parsing. Actual Windows freezer/installer runs and installed
-acceptance remain required. The GPL-enabled FFmpeg build also requires appropriate
-corresponding source/build material or another valid compliance arrangement before
+syntax and PowerShell parsing. Windows CI subsequently passed freezing, audit,
+frozen-backend smoke, Inno compilation and artifact upload; exact run/source/hashes
+are in `docs/desktop/FINAL_REPORT.md`. Installed acceptance remains required.
+The GPL-enabled FFmpeg build also requires appropriate corresponding source/build material or another valid compliance arrangement before
 public redistribution; see THIRD_PARTY_NOTICES.md. Build success alone does not
 establish redistribution readiness.

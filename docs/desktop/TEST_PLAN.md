@@ -2,6 +2,8 @@
 
 The automated portable tests are necessary but do not establish Windows installer or GUI acceptance. Run Windows checks on a disposable Windows 10/11 x64 machine, using a standard user with no developer Python, Node, FFmpeg or yt-dlp installed. Do not use production credentials or projects. Preserve raw command output and artifact hashes with the release candidate.
 
+Executed CI evidence: [run 36549227445](https://github.com/MinkTuans/AutoTransAI/actions/runs/36549227445) passed EXE freezing, payload audit, authenticated frozen-backend smoke, Inno compilation and artifact upload. [FINAL_REPORT.md](FINAL_REPORT.md) records the exact source SHA and hashes. No interactive installer, WebView2 GUI, live-provider or performance result is inferred from that run.
+
 ## Portable verification
 
 Run backend tests from the isolated checkout with its empty ignored `.env` and the project's dependency environment. Unset `AUTOTRANSAI_DISPOSABLE_MYSQL_URL` unless intentionally exercising a disposable database. Existing test isolation provisions temporary SQLite/data/storage. Historical cleanup tests also derive source-root paths, so never run this suite against a checkout containing valuable runtime files.

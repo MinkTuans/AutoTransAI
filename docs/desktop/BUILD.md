@@ -1,6 +1,6 @@
 # Windows development, build, package and release
 
-Use a Windows x64 build machine with Python 3.12 x64, Node/npm and internet access for dependency downloads. Inno Setup 6.4+ is additionally required to compile Setup.exe. WebView2 is required to run the shell. These instructions do not mean the Linux implementation host produced or tested Windows binaries.
+Use a Windows x64 build machine with Python 3.12 x64, Node/npm and internet access for dependency downloads. Inno Setup 6.4+ is additionally required to compile Setup.exe. WebView2 is required to run the shell. The Windows CI candidate build, frozen-backend smoke and installer compile have passed; see [FINAL_REPORT.md](FINAL_REPORT.md) for the exact artifact source revision, hashes and remaining acceptance gates. The Linux coordinator did not produce or locally download those binaries.
 
 Run PowerShell from the repository root. Keep developer credentials, databases and storage outside build staging; the scripts use an isolated desktop virtual environment and explicit resource inputs. Never point acceptance checks at valuable user data.
 
@@ -42,6 +42,6 @@ Retain the git revision, pinned input locks, build/smoke logs, dependency invent
 
 ## CI and troubleshooting
 
-The manual Windows workflow `.github/workflows/desktop-windows.yml` builds and packages artifacts without automatic publication. Run it only after separately authorizing a remote push/workflow invocation. Inspect its generated logs and artifacts; this Linux work did not dispatch it.
+The Windows workflow `.github/workflows/desktop-windows.yml` supports manual dispatch and pushes only to `feat/windows-desktop`. The user authorized feature-branch pushes and Windows CI; the successful candidate is linked in [FINAL_REPORT.md](FINAL_REPORT.md). It builds and retains unsigned artifacts for 14 days without creating GitHub Releases. Public annotations report bounded failure diagnostics and successful candidate hashes/sizes. Artifact download requires GitHub authentication in the coordinator environment. Documentation-only follow-ups use `[skip ci]` and retain the successful artifact source SHA separately.
 
 Missing vendor assets, hash mismatches, dependency installation failures or payload-audit failures stop the build. Do not bypass integrity checks to make an artifact appear successful. Repair the cache/input or update the lock deliberately from verified upstream releases. For launch/runtime issues, see [README.md](README.md). Final build and acceptance status is recorded in [FINAL_REPORT.md](FINAL_REPORT.md).

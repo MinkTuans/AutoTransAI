@@ -2,7 +2,7 @@
 
 The Windows desktop entrypoint reuses the existing React Studio and FastAPI workflow engine. A pywebview window requires Edge/WebView2. Its owned hidden backend serves the production Vite build and API at `http://127.0.0.1:8000`; Node/Vite is not a packaged runtime requirement. OAuth deliberately opens the default external browser.
 
-This branch supplies implementation and build configuration. Windows installation, renderer/media and performance acceptance must be established on Windows; see [FINAL_REPORT.md](FINAL_REPORT.md) and [TEST_PLAN.md](TEST_PLAN.md).
+This branch has a successful Windows CI EXE/installer candidate build and frozen-backend smoke. Windows installation, renderer/media and performance acceptance remain pending; see [FINAL_REPORT.md](FINAL_REPORT.md) and [TEST_PLAN.md](TEST_PLAN.md).
 
 ## Private data and process lifecycle
 
