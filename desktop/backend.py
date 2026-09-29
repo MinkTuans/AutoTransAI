@@ -5,9 +5,11 @@ import json
 import os
 from pathlib import Path
 import socket
+import re
 import subprocess
 import sys
 import threading
+import traceback
 
 
 def restore_standard_streams() -> None:
@@ -153,5 +155,12 @@ def run_backend() -> int:
         if isinstance(exc, (RuntimeError, ValueError)):
             print(str(exc), file=sys.stderr)
         else:
-            print('Desktop backend startup failed. Inspect application logs.', file=sys.stderr)
+            print(f'Desktop backend startup failed ({type(exc).__name__}).', file=sys.stderr)
+            # Exception values/source lines can contain credentials. Only emit
+            # code locations and a syntactically valid missing-module identifier.
+            for frame in traceback.extract_tb(exc.__traceback__)[-8:]:
+                print(f'  at {Path(frame.filename).name}:{frame.lineno} ({frame.name})', file=sys.stderr)
+            if isinstance(exc, ImportError) and exc.name and len(exc.name) <= 128:
+                if re.fullmatch(r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*', exc.name, flags=re.ASCII):
+                    print(f'  import: {exc.name}', file=sys.stderr)
         return 1

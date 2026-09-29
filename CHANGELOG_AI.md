@@ -1,3 +1,7 @@
+- **Safe frozen startup diagnostics (2026-09-29)**:
+  - Run `36548102112` confirmed the backend emitted only a generic error before readiness. `desktop/backend.py` now logs unexpected exception type, up to eight code locations and a validated missing-module identifier without exception values, source lines, locals or handshake data.
+  - Added regressions proving import identification and exclusion of secret-bearing exception/source values; updated Knowledge Base. Startup still fails closed; no database/API/provider or session-policy changes.
+
 - **Frozen Windows smoke failure diagnostics (2026-09-29)**:
   - Windows run `36547711142` built the PyInstaller EXE and passed payload audit, then the backend exited before readiness. `smoke_frozen.py` now preserves a bounded 2 KiB tail of its disposable, supervisor-redacted log before temporary cleanup; failure and owned shutdown still propagate.
   - Added red/green regression proving diagnostic visibility and bounded output. Runtime root cause remains under investigation; no API/schema/configuration or security-policy change.

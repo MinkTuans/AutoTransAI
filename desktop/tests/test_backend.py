@@ -176,3 +176,23 @@ except ValueError as e:
     assert output.returncode == 2
     assert 'desktop.env' in output.stdout
     assert 'private-secret' not in output.stdout + output.stderr
+
+
+@pytest.mark.parametrize('module_name', ['missing.dependency', 'private/credential-value'])
+def test_startup_diagnostics_identify_import_without_exception_values(monkeypatch, capsys, module_name):
+    from desktop import backend
+    monkeypatch.setattr(backend, 'restore_standard_streams', lambda: None)
+
+    def failing_import(stream):
+        raise ModuleNotFoundError('private-exception-value', name=module_name)
+
+    monkeypatch.setattr(backend, 'read_handshake', failing_import)
+    assert backend.run_backend() == 1
+    diagnostic = capsys.readouterr().err
+    assert 'ModuleNotFoundError' in diagnostic
+    assert 'failing_import' in diagnostic
+    assert 'test_backend.py:' in diagnostic
+    assert 'private-exception-value' not in diagnostic
+    assert 'private/credential-value' not in diagnostic
+    if module_name == 'missing.dependency':
+        assert module_name in diagnostic
