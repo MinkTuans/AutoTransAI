@@ -23,7 +23,10 @@ class Event:
 class Window:
     def __init__(self):
         self.events = SimpleNamespace(before_show=Event(), closed=Event())
-        self.native = SimpleNamespace(webview=SimpleNamespace(NavigationStarting=Event()))
+        self.native = SimpleNamespace(webview=SimpleNamespace(
+            NavigationStarting=Event(),
+            CoreWebView2=SimpleNamespace(Settings=SimpleNamespace(
+                AreBrowserAcceleratorKeysEnabled=False))))
         self.html = []
         self.urls = []
         self.destroyed = 0

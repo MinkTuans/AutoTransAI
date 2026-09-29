@@ -32,14 +32,14 @@ def navigation_allowed(uri: str, port: int = 8000) -> bool:
 
 
 def _page(title: str, message: str) -> str:
-    # This document never contains a privileged script or link. Actions live in
-    # the native menu so backend/remote HTML cannot call process operations.
+    # This document never contains a privileged script or link; backend/remote
+    # HTML cannot call process operations.
     return ("<!doctype html><html><head><meta charset='utf-8'>"
             "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; style-src 'unsafe-inline'\">"
             "<style>body{font:16px Segoe UI,Arial,sans-serif;background:#171923;color:#f7f7fa;"
             "padding:55px;line-height:1.6}h1{font-size:26px}p{max-width:720px}"
             "</style></head><body><h1>" + html.escape(title) + "</h1><p>"
-            + html.escape(message) + "</p><p>Use the App menu for Retry, View Logs, or Close."
+            + html.escape(message) + "</p><p>Press F5 to reload. If the problem persists, close and reopen the app."
             "</p></body></html>")
 
 
@@ -120,6 +120,10 @@ class DesktopShell:
                 raise RuntimeError('WebView2 navigation protection is unavailable.')
 
             def guard(sender, args):
+                # pywebview disables browser shortcuts outside debug mode.
+                # NavigationStarting runs on the UI thread after CoreWebView2
+                # initialization, so F5 can be enabled without enabling devtools.
+                control.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = True
                 if not navigation_allowed(str(args.Uri), self.manager.port):
                     args.Cancel = True
 
@@ -191,9 +195,9 @@ class DesktopShell:
         except Exception as exc:
             with self._lock:
                 self._cleanup_failed = True
-            self._show_error(f'The backend stopped and cleanup failed: {exc}. Close the app and view logs.')
+            self._show_error(f'The backend stopped and cleanup failed: {exc}. Close and reopen the app.')
         else:
-            self._show_error('The backend stopped unexpectedly. View Logs or Retry.')
+            self._show_error('The backend stopped unexpectedly. Close and reopen the app.')
         finally:
             with self._lock:
                 self._reaping = False
@@ -254,7 +258,6 @@ def run_shell() -> int:
             return 0
         try:
             import webview
-            from webview.menu import Menu, MenuAction
         except Exception as exc:
             _message_box(f'Cannot load the desktop window: {exc}')
             return 1
@@ -271,12 +274,9 @@ def run_shell() -> int:
         shell = DesktopShell(manager, window)
         window.events.before_show += shell.on_before_show
         window.events.closed += shell.close
-        menu = [Menu('App', [MenuAction('Retry', shell.retry),
-                             MenuAction('View Logs', shell.view_logs),
-                             MenuAction('Close', window.destroy)])]
         icon = resources / 'frontend' / 'public' / 'app-logo.ico'
         try:
-            webview.start(gui='edgechromium', menu=menu, icon=str(icon),
+            webview.start(gui='edgechromium', icon=str(icon),
                           storage_path=str(writable / 'webview'))
         finally:
             shell.close()
