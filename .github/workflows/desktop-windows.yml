@@ -28,8 +28,13 @@ jobs:
             & ./desktop/scripts/build.ps1 *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/desktop-build.log"
           } catch {
             $tail = (Get-Content "$env:RUNNER_TEMP/desktop-build.log" -Tail 60 -ErrorAction SilentlyContinue) -join "`n"
-            $detail = ($tail + "`n" + ($_ | Out-String)).Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-            Write-Output "::error title=Windows desktop build diagnostics::$detail"
+            $exception = ($_ | Out-String)
+            if ($exception.Length -gt 3000) { $exception = $exception.Substring(0, 3000) }
+            if ($tail.Length -gt 3000) { $tail = $tail.Substring($tail.Length - 3000) }
+            $exception = $exception.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            $tail = $tail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Windows desktop build exception::$exception"
+            Write-Output "::error title=Windows desktop build log tail::$tail"
             throw
           }
       - name: Compile per-user installer (Microsoft online WebView2 bootstrap)
@@ -39,8 +44,13 @@ jobs:
             & ./desktop/scripts/package.ps1 *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/desktop-package.log"
           } catch {
             $tail = (Get-Content "$env:RUNNER_TEMP/desktop-package.log" -Tail 60 -ErrorAction SilentlyContinue) -join "`n"
-            $detail = ($tail + "`n" + ($_ | Out-String)).Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-            Write-Output "::error title=Windows installer diagnostics::$detail"
+            $exception = ($_ | Out-String)
+            if ($exception.Length -gt 3000) { $exception = $exception.Substring(0, 3000) }
+            if ($tail.Length -gt 3000) { $tail = $tail.Substring($tail.Length - 3000) }
+            $exception = $exception.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            $tail = $tail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Windows installer exception::$exception"
+            Write-Output "::error title=Windows installer log tail::$tail"
             throw
           }
       - name: Retain unsigned candidate and provenance
