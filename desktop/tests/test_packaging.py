@@ -177,3 +177,33 @@ def test_frozen_smoke_preserves_bounded_failure_log_before_temp_cleanup(tmp_path
     assert 'diagnostic tail' in output
     assert len(output) < 4500
     assert stopped
+
+
+@pytest.mark.parametrize('dialect_name', ['sqlite.aiosqlite', 'mysql.aiomysql', 'mysql.pymysql'])
+def test_freezer_includes_dbapi_loaded_dynamically_by_sqlalchemy(monkeypatch, dialect_name):
+    """Check the spec against actual dialect imports; native smoke remains required."""
+    import ast
+    import builtins
+    import importlib
+    import sys
+
+    dialect = importlib.import_module('sqlalchemy.dialects.' + dialect_name).dialect
+    loader = dialect.import_dbapi.__func__
+    direct_imports = set()
+    original_import = builtins.__import__
+
+    def track_import(name, *args, **kwargs):
+        if sys._getframe(1).f_code is loader.__code__:
+            direct_imports.add(name)
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', track_import)
+    dialect.import_dbapi()
+    external_drivers = direct_imports - sys.stdlib_module_names
+    assert external_drivers, 'Dialect no longer uses this dynamic-import contract'
+    spec = ast.parse((ROOT / 'desktop/packaging/autotransai.spec').read_text())
+    explicit_imports = set()
+    for node in spec.body:
+        if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name) and node.target.id == 'hiddenimports':
+            explicit_imports.update(ast.literal_eval(node.value))
+    assert external_drivers <= explicit_imports, f'Unbundled dynamic DBAPI: {external_drivers - explicit_imports}'

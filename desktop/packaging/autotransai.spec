@@ -46,6 +46,8 @@ hiddenimports += ['webview.platforms.winforms', 'webview.platforms.edgechromium'
                   'uvicorn.logging', 'uvicorn.loops.asyncio', 'uvicorn.protocols.http.h11_impl',
                   'uvicorn.lifespan.on', 'sqlalchemy.dialects.sqlite.aiosqlite',
                   'sqlalchemy.dialects.mysql.aiomysql', 'sqlalchemy.dialects.mysql.pymysql',
+                  # SQLAlchemy dialects load DBAPI packages through __import__.
+                  'aiosqlite', 'aiomysql', 'pymysql',
                   'alembic', 'alembic.migration', 'alembic.operations', 'clr', 'pythonnet']
 a = Analysis([str(root / 'desktop/__main__.py')], pathex=[str(root), str(root / 'backend')],
              binaries=binaries, datas=datas, hiddenimports=hiddenimports,

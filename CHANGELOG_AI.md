@@ -1,3 +1,7 @@
+- **Frozen SQLAlchemy driver inclusion (2026-09-29)**:
+  - Run `36548693407` identified missing `aiosqlite` at SQLAlchemy `import_dbapi` during frozen startup. `autotransai.spec` now explicitly includes the three installed DBAPI packages loaded dynamically by its selected SQLite/MySQL dialects (`aiosqlite`, `aiomysql`, `pymysql`).
+  - Added a regression that observes the real dialect loaders and checks their external imports against the freezer specification: all three failed before the fix. Updated Knowledge Base; package versions/hashes, schemas, API and runtime database selection are unchanged. Actual Windows smoke remains the production verification gate.
+
 - **Safe frozen startup diagnostics (2026-09-29)**:
   - Run `36548102112` confirmed the backend emitted only a generic error before readiness. `desktop/backend.py` now logs unexpected exception type, up to eight code locations and a validated missing-module identifier without exception values, source lines, locals or handshake data.
   - Added regressions proving import identification and exclusion of secret-bearing exception/source values; updated Knowledge Base. Startup still fails closed; no database/API/provider or session-policy changes.
