@@ -53,6 +53,9 @@ jobs:
             Write-Output "::error title=Windows installer log tail::$tail"
             throw
           }
+      - name: Accept actual installed package and uninstall
+        shell: pwsh
+        run: ./desktop/scripts/smoke-installed.ps1
       - name: Record candidate hashes and smoke evidence
         shell: pwsh
         run: |
@@ -62,7 +65,7 @@ jobs:
             $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
             Write-Output "::notice title=Unsigned candidate evidence::$($file.Name); bytes=$($file.Length); sha256=$hash; source=$env:GITHUB_SHA"
           }
-          Write-Output '::notice title=Frozen backend smoke evidence::Passed actual windowed executable authenticated startup, anonymous UI rejection, cookie UI/API access and owned shutdown with disposable Unicode-path data. GUI and installed acceptance remain pending.'
+          Write-Output '::notice title=Frozen backend smoke evidence::Passed actual windowed executable authenticated startup, anonymous UI rejection, cookie UI/API access and owned shutdown with disposable Unicode-path data. Installed acceptance is separately gated; full interactive/media acceptance remains pending.'
       - name: Retain unsigned candidate and provenance
         uses: actions/upload-artifact@v4
         with:
@@ -75,4 +78,4 @@ jobs:
       - name: State acceptance boundary
         shell: pwsh
         run: |
-          'Build artifacts are unsigned candidates. Backend smoke is not GUI, installation, OAuth, media or performance acceptance.' >> $env:GITHUB_STEP_SUMMARY
+          'Build artifacts are unsigned candidates. Installed smoke covers silent installation, shortcuts, backend restart and uninstall. See installed-acceptance.json for GUI capability and one-run timings; clean-machine, interactive, OAuth, media and performance matrix remain separate.' >> $env:GITHUB_STEP_SUMMARY
