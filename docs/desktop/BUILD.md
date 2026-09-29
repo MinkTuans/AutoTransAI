@@ -1,6 +1,6 @@
 # Windows development, build, package and release
 
-Use a Windows x64 build machine with Python 3.12 x64, Node/npm and internet access for dependency downloads. Inno Setup 6.4+ is additionally required to compile Setup.exe. WebView2 is required to run the shell. The Windows CI candidate build, frozen-backend smoke and installer compile have passed; see [FINAL_REPORT.md](FINAL_REPORT.md) for the exact artifact source revision, hashes and remaining acceptance gates. The Linux coordinator did not produce or locally download those binaries.
+Use a Windows x64 build machine with Python 3.12 x64, Node/npm and internet access for dependency downloads. Inno Setup 6.4+ is additionally required to compile Setup.exe. WebView2 is required to run the shell. The Windows CI build, real silent install, installed backend restart, basic shortcut/GUI-window/close and uninstall smoke have passed; see [FINAL_REPORT.md](FINAL_REPORT.md) for the exact artifact source revision, hashes and remaining acceptance gates. The Linux coordinator did not produce or locally download those binaries.
 
 Run PowerShell from the repository root. Keep developer credentials, databases and storage outside build staging; the scripts use an isolated desktop virtual environment and explicit resource inputs. Never point acceptance checks at valuable user data.
 

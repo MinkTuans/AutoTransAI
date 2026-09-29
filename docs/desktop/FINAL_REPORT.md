@@ -2,27 +2,41 @@
 
 Date: 2026-09-29. Branch: `feat/windows-desktop`, isolated worktree `windows-desktop`. Source base: `4c867ea`; accepted architecture/plan: `0deba00`.
 
-**Status: Windows x64 EXE, payload audit, actual frozen-backend smoke, Inno Setup installer and CI artifact upload succeeded.** [GitHub Actions run 36549227445](https://github.com/MinkTuans/AutoTransAI/actions/runs/36549227445) built source commit `eba42a9867d53375c496cbd73fe6cb99c1b6ac04` on `windows-2022`. Artifacts are unsigned candidates; installed GUI/media/lifecycle/performance acceptance remains pending. Feature-branch pushes and Windows CI were explicitly authorized. Main remained unchanged; no GitHub Release, signing, external message, duplicate wakeup or repository/data deletion was performed. The Linux coordinator did not build or download a local Windows binary.
+**Status: Windows x64 build and actual installed-package acceptance succeeded.** [Run 36551294736](https://github.com/MinkTuans/AutoTransAI/actions/runs/36551294736) built source `c3bc02e17c5d915314ef57e3248af5f4ffbaaad5` on `windows-2022`, installed the generated Setup.exe, passed installed backend restart and GUI shortcut/window/close smoke, uninstalled it, and uploaded a new unsigned candidate. Full original user acceptance remains incomplete: interactive Studio/media, failure scenarios, clean-machine/upgrade and performance matrix still need evidence. Feature pushes and CI were authorized; main and public Releases are unchanged.
 
 ## Windows CI evidence
 
-Run #7 completed successfully at **2026-09-29 09:30:48 UTC**. Every build, audit, smoke, installer, evidence and upload step passed. [Public check annotations](https://api.github.com/repos/MinkTuans/AutoTransAI/check-runs/109343000519/annotations) record file hashes and the smoke scope; [artifact metadata](https://api.github.com/repos/MinkTuans/AutoTransAI/actions/artifacts/11024087673) records archive size/digest.
+Run #8 completed successfully at **2026-09-29 09:50:56 UTC**. Build, payload audit, frozen smoke, Inno compilation, installed acceptance and candidate upload all passed. [Public annotations](https://api.github.com/repos/MinkTuans/AutoTransAI/check-runs/109349829463/annotations) report successful scope, hashes and measurements; [artifact metadata](https://api.github.com/repos/MinkTuans/AutoTransAI/actions/artifacts/11024283910) reports archive size/digest.
 
-[Download candidate artifact](https://github.com/MinkTuans/AutoTransAI/actions/runs/36549227445/artifacts/11024087673): **AutoTransAI-Windows-x64-candidate**, artifact ID `11024087673`, expires **2026-10-13 09:30:22 UTC**. It contains the complete onedir application, installer, hash inventory and provenance. Keep the full onedir directory when running the portable executable.
+[Download installed-tested candidate](https://github.com/MinkTuans/AutoTransAI/actions/runs/36551294736/artifacts/11024283910): **AutoTransAI-Windows-x64-candidate**, artifact `11024283910`, expires **2026-10-13 09:50:30 UTC**. It contains the complete onedir application, Setup.exe, inventories/provenance and `installer/installed-acceptance.json`. Keep the full onedir directory for portable execution. GitHub artifact access/login is required; hashes below are public GitHub metadata/runner measurements, not a locally downloaded archive verification.
 
-| CI output | Bytes | SHA256 |
+| New CI output | Bytes | SHA256 |
 | --- | ---: | --- |
-| Candidate archive | 335,650,389 | `b40ce0e95d186dafec86f5ed34c7d22fb800149b230683eab846c51b32924d8c` |
-| `AutoTransAI.exe` | 15,180,836 | `7901fe3dfcac46d3d97e63ca9c58baa76974a95908d499d11c0b84c0e29e1f2e` |
-| `AutoTransAI-0.1.0-Setup.exe` | 141,470,190 | `2946f3d954ee3b87caeae1bda94d51833105b49142c3a349423f914a66489591` |
+| Candidate archive | 335,658,837 | `184fad8409460c22b13da04bff23b83c1eec4f69715b90a2f8399cfd6f2684c8` |
+| `AutoTransAI.exe` | 15,180,836 | `a184188245909686bb25ee4fe5d7a1274e2ff213b7c0f7c8ea75fb8d4eae4bbd` |
+| `AutoTransAI-0.1.0-Setup.exe` | 141,476,326 | `efb8aaa834df0d431381b41617f8e6b52e2a72ffa5f42e7c9b21dfceb41051fa` |
 
-The anonymous artifact download API returned **401 Requires authentication**. These are runner annotations and public GitHub metadata, not hashes recomputed from a locally downloaded archive. A GitHub login with artifact access is needed to retrieve it; no unrelated credentials were sought.
+The actual installer ran silently with an explicit fresh Unicode/space installation directory and requested Desktop task; silent mode did not autorun the app. Every inventoried installed payload file matched the build hash. Desktop and Start Menu shortcuts resolved to the installed executable/working directory; the single uninstall registration matched that installation. The installed executable reached authenticated lifespan readiness twice using disposable Unicode/space data, rejected anonymous UI requests, loaded cookie-authenticated HTML/API, initialized SQLite, rejected the prior session after restart and preserved a test database marker and storage sentinel. Both owned backend process handles exited, and no process executable under the install directory survived the checks.
 
-The actual frozen smoke launched the windowed EXE through the supervisor with disposable Unicode/space-path data, reached authenticated backend readiness, rejected anonymous UI access, loaded cookie-authenticated HTML/API and stopped the owned backend. Startup also executed the bundled tools' version checks. This does not establish WebView2 rendering, full media workflows, descendant cleanup during media work/parent crash, or installed behavior.
+The runner passed the GUI capability prerequisite (interactive, nonzero session and accessible input desktop). ShellExecute launched the **installed Start Menu shortcut**, and the harness observed a currently visible `AutoTransAI Studio` main window with one installed backend for ten seconds, no observed visible owned console window, then WM_CLOSE and exit of the observed owned process tree. This verifies native window/shortcut/lifecycle basics; it does **not** inspect Studio pixels, navigation, media, provider behavior or renderer responsiveness. It does not substitute for crash/active-media descendant cleanup acceptance.
 
-CI exposed two root causes: unsupported `deno --license` in notice export ([diagnostic run](https://github.com/MinkTuans/AutoTransAI/actions/runs/36547069609)), and omitted dynamically loaded SQLAlchemy `aiosqlite` ([diagnostic run](https://github.com/MinkTuans/AutoTransAI/actions/runs/36548693407)). Notice export now verifies staged vendor source licenses, and the spec explicitly bundles its selected dialects' DBAPI packages. No dependency locks or security/payload checks were relaxed. Bounded public annotations and value-free startup locations enabled diagnosis without authenticated log access. Targeted fixes and diagnostics received independent review with no remaining actionable findings. Complete Deno transitive notices remain a public-distribution gate.
+The actual installed `unins000.exe` exited successfully; program directory, both shortcuts and uninstall registration were absent afterward. Disposable SQLite and storage sentinel survived. All writable state was explicitly temporary; no arbitrary `%LOCALAPPDATA%\AutoTransAI` or shared directory was deleted. The harness retains its marked scratch tree until runner retirement. WebView2 was available by GUI launch; this evidence does not distinguish preinstalled versus provisioned runtime. Absent-runtime provisioning/offline failure remains a separate matrix case.
 
-Later documentation-only commits use `[skip ci]`; **the artifact source revision remains the SHA above**, separate from the documentation head.
+| One-run CI measurement | Result |
+| --- | ---: |
+| Installed directory bytes (including uninstaller) | 508,156,076 |
+| Silent installation | 14.017 s |
+| Installed backend authenticated readiness, first / restart | 5.250 / 3.719 s |
+| Owned backend shutdown, first / restart | 0.453 / 0.360 s |
+| Uninstall plus removal assertions | 1.316 s |
+
+Raw values and coverage flags are in `installed-acceptance.json`. These are two sequential backend launches in **one CI run**, not cold/warm distributions, user-machine p95, GUI startup timing, whole-tree memory/CPU or full performance acceptance.
+
+The earlier [successful candidate](https://github.com/MinkTuans/AutoTransAI/actions/runs/36549227445/artifacts/11024087673) remains unchanged: run `36549227445`, source `eba42a9867d53375c496cbd73fe6cb99c1b6ac04`, artifact `11024087673`, archive 335,650,389 bytes / SHA256 `b40ce0e95d186dafec86f5ed34c7d22fb800149b230683eab846c51b32924d8c`; Setup 141,470,190 bytes / SHA256 `2946f3d954ee3b87caeae1bda94d51833105b49142c3a349423f914a66489591`. That run established build/frozen smoke/Inno only. No prior artifact was replaced or removed.
+
+Earlier CI diagnosed unsupported `deno --license` and omitted dynamically loaded SQLAlchemy `aiosqlite`; source license verification and explicit selected DBAPI hidden imports fixed them. No dependency/security checks were relaxed. Installed acceptance needed no product fix: only smoke tooling, workflow and documentation changed. Independent review closed missing restart-session rejection, stale GUI-window observation and raw error rethrow findings before the successful push. All six PowerShell scripts parsed and **26 targeted packaging/guard tests passed** locally; the independent reviewer reran two guard tests/parser. GitHub emitted an action Node-runtime deprecation warning, without a failing step.
+
+Documentation-only follow-ups use `[skip ci]`; **the new candidate source remains `c3bc02e17c5d915314ef57e3248af5f4ffbaaad5`**, separate from the documentation head. No local Windows binary build/download, public Release or signing occurred.
 
 ## Architecture
 
@@ -81,7 +95,7 @@ Inno configuration supplies stable app identity/version, per-user directory sele
 
 Packaging embeds an official Microsoft WebView2 prerequisite only after signature verification and records its hash/provenance. Installation rechecks hash/signature, provisions only when absent and redetects success. The default small bootstrapper requires internet on a machine without WebView2; an explicitly supplied signed x64 Evergreen Standalone Installer supports offline deployment. Installer/uninstaller signing hooks keep credentials external.
 
-**Inno Setup compilation and candidate upload succeeded**, with the Setup.exe size/hash recorded above. Install/upgrade/uninstall interactions and signing remain unverified.
+**Inno compilation, silent installation, installed shortcut/backend/GUI-window smoke, uninstall and candidate upload succeeded**, with evidence above. Interactive installer choices, absent WebView2, upgrade/running-app cases and signing remain unverified.
 
 ## Tests
 
@@ -97,9 +111,11 @@ Packaging embeds an official Microsoft WebView2 prerequisite only after signatur
 | Python/spec syntax and Git whitespace checks | Passed |
 | CI notice, smoke-diagnostic and dynamic DBAPI packaging regressions | **24 passed**, independently rerun |
 | Safe startup diagnostic + then-current packaging suite | **37 passed**, two dependency deprecations, independently rerun |
-| Actual Windows x64 CI build/audit/frozen smoke/Inno/upload | **All succeeded**, run `36549227445` |
+| Initial Windows x64 CI build/audit/frozen smoke/Inno/upload | **All succeeded**, run `36549227445` |
+| Installed-smoke portable guard + packaging regressions; six-script PowerShell parse | **26 passed**, parser passed; independently reviewed |
+| Actual install, installed restart/session invalidation, shortcut/GUI-window/close, uninstall/retention and upload | **All succeeded**, run `36551294736` |
 
-The real-process integration test uses actual FastAPI lifespan, temporary SQLite migrations, authenticated bootstrap/static/API, media byte-range 206, CSRF rejection, restart/session invalidation, retained media and owned shutdown. Tool-version fixtures are deliberately fake and do not prove FFmpeg or provider behavior. Supervisor/shell tests exercise real descendants and unrelated-process survival. Live provider and installed renderer acceptance were not run.
+The real-process integration test uses actual FastAPI lifespan, temporary SQLite migrations, authenticated bootstrap/static/API, media byte-range 206, CSRF rejection, restart/session invalidation, retained media and owned shutdown. Tool-version fixtures are deliberately fake and do not prove FFmpeg or provider behavior. Supervisor/shell tests exercise real descendants and unrelated-process survival. Live provider and full interactive renderer acceptance were not run; installed native window/close smoke passed as scoped above.
 
 The original baseline stalled near completion and was stopped; a 240-second diagnostic run ended at 62% without failures because its bound was too short. The later 900-second-bounded verbose full run completed in 376.62 seconds. The original stall was not reproduced. No product fix was inferred from that incomplete baseline. The final full-suite result precedes the two narrow review fixes; the 168-test final covering run and independent regressions validate those fixes.
 
@@ -107,7 +123,7 @@ Raw job evidence is in `/tmp/autotransai-desktop-backend-full.log`, `-final-targ
 
 ## Known Limitations
 
-1. Windows freezing, payload audit, windowed backend pipes/readiness/shutdown and Inno compilation passed in CI. WebView2 UI/media/download/SSE, Job descendant cleanup including parent crash, clean install/reopen/upgrade/uninstall and measured performance remain **unverified**. The CI runner is not the clean-machine acceptance matrix, and all original user A–J acceptance criteria are not yet established.
+1. Windows build, silent installed package, shortcut targets, basic GUI window/close, installed backend restart/session invalidation, uninstall/retention and single-run backend timings passed. Interactive WebView2 UI/media/download/SSE, error/Retry interactions, close-during-startup/media, parent-crash cleanup, single-instance UX, clean Windows 10/11 machine/absent-runtime/upgrade and full performance matrix remain **unverified on Windows**. The hosted runner is not a clean standard-user target machine; original user A–J acceptance is not complete.
 2. Live Google/TikTok OAuth and AI/media provider workflows require configured accounts/credentials and separate evidence. Portable tests do not establish live provider approval or codec/rendering compatibility.
 3. Signing/SmartScreen and public distribution are pending. The GPL-enabled FFmpeg binary needs corresponding source/build material or another valid redistribution arrangement; notices alone do not complete that obligation. Complete Deno transitive notices also remain pending. No GitHub Release/public-distribution publication was performed; only the authorized unsigned CI candidate was retained.
 4. Authentication does not protect against same-user malware or authenticated frontend XSS. The pre-existing unrestricted YouTube upload `video_path` remains a recorded audit residual outside this conversion.
@@ -116,7 +132,7 @@ Raw job evidence is in `/tmp/autotransai-desktop-backend-full.log`, `-final-targ
 
 ## How To Run
 
-On Windows, run `desktop\scripts\dev.ps1` from source, or launch the installed shortcut once a Windows-validated package is available. Configure provider keys in Settings and optional private OAuth client values as described in [README.md](README.md). Runtime errors expose native Retry/View Logs/Close.
+On Windows, run `desktop\scripts\dev.ps1` from source, or install the unsigned candidate above and launch its shortcut. Configure provider keys in Settings and optional private OAuth client values as described in [README.md](README.md). Runtime errors expose native Retry/View Logs/Close.
 
 ## How To Build
 

@@ -2,7 +2,11 @@
 
 The automated portable tests are necessary but do not establish Windows installer or GUI acceptance. Run Windows checks on a disposable Windows 10/11 x64 machine, using a standard user with no developer Python, Node, FFmpeg or yt-dlp installed. Do not use production credentials or projects. Preserve raw command output and artifact hashes with the release candidate.
 
-Executed CI evidence: [run 36549227445](https://github.com/MinkTuans/AutoTransAI/actions/runs/36549227445) passed EXE freezing, payload audit, authenticated frozen-backend smoke, Inno compilation and artifact upload. [FINAL_REPORT.md](FINAL_REPORT.md) records the exact source SHA and hashes. No interactive installer, WebView2 GUI, live-provider or performance result is inferred from that run.
+Executed CI evidence: [run 36551294736](https://github.com/MinkTuans/AutoTransAI/actions/runs/36551294736), source `c3bc02e17c5d915314ef57e3248af5f4ffbaaad5`, passed build/audit/frozen smoke/Inno, real silent install, installed payload hashes, Desktop/Start Menu targets, uninstall registration, installed backend restart with data retention and prior-session rejection, actual uninstaller removal and retained disposable data. Runner GUI capability was available; installed Start Menu launch, stable visible owned main window/backend, no observed owned console, WM_CLOSE and observed process exit passed. This is not Studio interaction or renderer/media acceptance. Artifact `11024283910` contains raw `installed-acceptance.json`; [FINAL_REPORT.md](FINAL_REPORT.md) records hashes and measured times.
+
+The harness runs only on ephemeral GitHub-hosted Windows, refuses existing matching registration/shortcuts, uses fresh marked Unicode/space installation/data roots, invokes only that installation's uninstaller, and leaves scratch data for runner retirement. Failure blocks candidate upload. Capability absence is explicitly recorded as GUI not-run; observed GUI failure on a capable runner fails the gate. The previously published candidate `11024087673` remains unchanged.
+
+Still manual/native-matrix gates: clean standard-user Windows 10/11 without developer tools, interactive directory/task choices, absent/offline WebView2, actual Studio interaction/navigation/media/SSE, port conflict and Retry/error UX, close during startup/media, forced shell termination with active descendants, single-instance UX, upgrade, live OAuth/providers and representative performance distributions. No result is inferred for these from the basic window smoke.
 
 ## Portable verification
 
@@ -36,6 +40,8 @@ Portable tests must exercise authenticated readiness, child exit/timeout, foreig
 Live provider checks require separately supplied disposable provider credentials and permission for billable calls. OAuth registration constraints remain provider-specific. Do not fabricate successful media/provider results from mocked tests.
 
 ## Performance collection
+
+Measured in the successful single CI run: Setup **141,476,326 bytes**, installed directory **508,156,076 bytes**, installation **14.017 s**, uninstall/removal checks **1.316 s**; backend authenticated startup **5.250 / 3.719 s**, shutdown **0.453 / 0.360 s** over two sequential launches. These raw samples are not user-machine p95, GUI timings or memory/CPU evidence. The following collection protocol remains open.
 
 Record OS build, CPU/RAM, storage, WebView2 version, app revision, dependency inventory, antivirus state and power profile. Collect at least 10 cold launches after process/cache conditions are documented, and 20 warm launches. Measure executable start → loading window, authenticated ready, and interactive Studio separately. Record individual samples in CSV with monotonic timestamps. Report median and p95 with sample count, never estimates.
 
