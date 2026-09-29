@@ -1,6 +1,9 @@
 name: Windows desktop candidate
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feat/windows-desktop
 permissions:
   contents: read
 jobs:
