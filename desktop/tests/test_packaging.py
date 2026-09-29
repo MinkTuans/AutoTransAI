@@ -1,0 +1,109 @@
+"""The package boundary rejects developer data and verifies all shipped bytes."""
+import importlib.util
+import json
+from pathlib import Path
+import zipfile
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def helper(name):
+    path = ROOT / 'desktop' / 'packaging' / (name + '.py')
+    assert path.exists(), f'{name} package boundary is required'
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_vendor_checksum_rejects_modified_download(tmp_path):
+    vendor = helper('prepare_vendor')
+    path = tmp_path / 'download'
+    path.write_bytes(b'changed')
+    with pytest.raises(ValueError, match='checksum'):
+        vendor.verify_hash(path, '0' * 64)
+
+
+def test_vendor_extracts_only_requested_members(tmp_path):
+    vendor = helper('prepare_vendor')
+    archive = tmp_path / 'tools.zip'
+    with zipfile.ZipFile(archive, 'w') as handle:
+        handle.writestr('build/bin/ffmpeg.exe', b'MZbinary')
+        handle.writestr('../../escape.exe', b'untrusted')
+    target = tmp_path / 'ffmpeg.exe'
+    vendor.extract_member(archive, 'bin/ffmpeg.exe', target)
+    assert target.read_bytes() == b'MZbinary'
+    assert not (tmp_path.parent / 'escape.exe').exists()
+
+
+def test_vendor_extract_rejects_ambiguous_member(tmp_path):
+    vendor = helper('prepare_vendor')
+    archive = tmp_path / 'tools.zip'
+    with zipfile.ZipFile(archive, 'w') as handle:
+        handle.writestr('a/deno.exe', b'a')
+        handle.writestr('b/deno.exe', b'b')
+    with pytest.raises(ValueError, match='exactly one'):
+        vendor.extract_member(archive, 'deno.exe', tmp_path / 'deno.exe')
+
+
+@pytest.mark.parametrize('name', ['.env', '.env.production', 'desktop.env', '_internal/desktop.env', 'data/workflow.db', 'storage/video.mp4', 'api_keys.json', 'private.pem', '.git/config', 'backend/tests/test_secret.py'])
+def test_payload_audit_rejects_developer_files(tmp_path, name):
+    audit = helper('verify_payload')
+    path = tmp_path / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('not a real secret')
+    with pytest.raises(ValueError, match='Forbidden'):
+        audit.audit_paths(tmp_path)
+
+
+def test_payload_inventory_detects_tampering(tmp_path):
+    audit = helper('verify_payload')
+    (tmp_path / 'AutoTransAI.exe').write_bytes(b'MZapp')
+    audit.write_inventory(tmp_path)
+    audit.verify_inventory(tmp_path)
+    (tmp_path / 'AutoTransAI.exe').write_bytes(b'MZchanged')
+    with pytest.raises(ValueError, match='mismatch'):
+        audit.verify_inventory(tmp_path)
+
+
+def test_vendor_lock_has_pinned_release_and_verified_digest():
+    lock = json.loads((ROOT / 'desktop/packaging/vendor-lock.json').read_text())
+    assert len(lock['assets']) == 3
+    for item in lock['assets']:
+        assert '/latest/' not in item['url']
+        assert len(item['sha256']) == 64
+        assert item['provenance'].startswith('https://api.github.com/repos/')
+
+
+def test_dependency_license_export_keeps_license_text_only(tmp_path):
+    exporter = helper('export_notices')
+    package = tmp_path / 'package'
+    package.mkdir()
+    (package / 'LICENSE').write_text('MIT terms')
+    (package / '.env').write_text('sensitive')
+    (package / 'index.js').write_text('source')
+    destination = tmp_path / 'notices'
+    copied = exporter.copy_licenses(package, destination)
+    assert copied == ['LICENSE']
+    assert (destination / 'LICENSE').read_text() == 'MIT terms'
+    assert not (destination / '.env').exists()
+
+
+def test_payload_requires_x64_webview_loader(tmp_path):
+    audit = helper('verify_payload')
+    for name in audit.REQUIRED:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'fixture')
+    for name in ['_internal/webview/lib/Microsoft.Web.WebView2.Core.dll',
+                 '_internal/webview/lib/Microsoft.Web.WebView2.WinForms.dll',
+                 '_internal/pythonnet/runtime/Python.Runtime.dll',
+                 '_internal/webview/lib/runtimes/win-x86/native/WebView2Loader.dll']:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'fixture')
+    audit.write_inventory(tmp_path)
+    with pytest.raises(ValueError, match='win-x64'):
+        audit.verify(tmp_path)

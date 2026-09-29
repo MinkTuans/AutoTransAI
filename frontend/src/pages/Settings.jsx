@@ -126,8 +126,8 @@ export default function Settings() {
         : await youtubeApi.getAuthUrl();
       if (!res?.auth_url) {
         alert(platform === 'tiktok'
-          ? '❌ Không thể khởi tạo TikTok OAuth. Kiểm tra TIKTOK_CLIENT_KEY / TIKTOK_CLIENT_SECRET trong .env'
-          : '❌ Không thể khởi tạo kết nối Google OAuth. Vui lòng kiểm tra lại YOUTUBE_CLIENT_ID trong file .env');
+          ? '❌ Không thể khởi tạo TikTok OAuth. Kiểm tra cấu hình ứng dụng OAuth TikTok.'
+          : '❌ Không thể khởi tạo kết nối Google OAuth. Vui lòng kiểm tra cấu hình ứng dụng OAuth Google.');
         return;
       }
       await openOAuthInChrome(res.auth_url);

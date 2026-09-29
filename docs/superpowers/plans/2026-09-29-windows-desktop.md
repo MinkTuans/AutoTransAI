@@ -95,7 +95,10 @@
 
 ## Progress ledger
 
-- Audit complete: Agents 1, 5 and 8; architecture selected with Agent 2; security/build specialist input in progress.
-- Baseline first attempt used system Python and stopped at 112 collection errors (missing dependencies), then job was stopped. No tests executed during that collection failure. Full suite moved to isolated worktree because legacy cleanup tests derive source-root paths.
-- Baseline job `67975f28` uses existing repo `.venv` and isolated worktree `.env`; results pending.
-- Decision: preserve fixed internal port for OAuth compatibility; conflict produces actionable startup failure. No Windows runner detected; release acceptance is not yet proven.
+- 2026-09-29: Accepted architecture/plan committed as `0deba00` from source `4c867ea`; work remains isolated on `feat/windows-desktop`.
+- Tasks 1–4: supervisor/Job Object, runtime/paths, HTTP/OAuth security and native shell implementation completed with tests. Independent review found HTTP-loopback OAuthlib transport and crash-descendant cleanup defects; both fixed with red/green regressions and independently rereviewed. Private OAuth-client configuration was added after source inspection showed the existing UI cannot configure client secrets and inherited environment is intentionally excluded.
+- Tasks 5–6: buildable PyInstaller/dependency/vendor/CI configuration and Inno per-user installer configuration completed. Exact planned interfaces retained; additional packaging helpers implement integrity, inventories, notices and frozen-backend smoke. All 76 Python artifacts and vendor binaries actually downloaded/hash-verified; native payload audit tightened through independent review.
+- Task 7 portable work: full backend 1,826 passed/42 skipped; final post-review covering suite 168 passed; frontend 36 passed and Vite build passed. PowerShell scripts parsed with official verified portable PowerShell on Linux. Independent code/security review has no remaining important findings in reviewed scope.
+- Earlier baseline `67975f28` stalled and was stopped; bounded 240-second diagnostic was too short. Later 900-second-bounded verbose full run completed in 376.62 seconds. No pass claim is based on an interrupted run.
+- Windows build, actual Setup.exe, installed GUI/media/Job behavior, live provider acceptance, install/upgrade/uninstall, signing and performance remain open. No Windows runner was dispatched, no artifact published, no main checkout changed or worktree removed. GPL FFmpeg corresponding-source redistribution arrangement remains a public-release gate.
+- Final implementation/evidence and commands: `docs/desktop/FINAL_REPORT.md`. Historical task checkbox lists above retain the original acceptance requirements; configuration/portable implementation does not imply checked Windows acceptance.

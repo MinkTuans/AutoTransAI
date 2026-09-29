@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "application": "AutoTransAI",
+  "version_file": "version.txt",
+  "target": "windows-x64-cpython3.12",
+  "distribution": "dist/AutoTransAI",
+  "resource_root": "_internal",
+  "entrypoint": "desktop/__main__.py",
+  "python_lock": "requirements.lock",
+  "python_artifact_inventory": "python-artifacts.json",
+  "vendor_lock": "vendor-lock.json",
+  "notices": "THIRD_PARTY_NOTICES.md",
+  "required_files": [
+    "AutoTransAI.exe",
+    "_internal/frontend/dist/index.html",
+    "_internal/frontend/public/app-logo.ico",
+    "_internal/bin/ffmpeg.exe",
+    "_internal/bin/ffprobe.exe",
+    "_internal/bin/yt-dlp.exe",
+    "_internal/bin/deno.exe",
+    "_internal/backend/alembic/versions/20260916_glossary_single_source.py",
+    "_internal/alembic/versions/20260916_glossary_single_source.py",
+    "_internal/notices/THIRD_PARTY_NOTICES.md",
+    "_internal/notices/python-inventory.json",
+    "_internal/notices/frontend-inventory.json",
+    "_internal/notices/vendor-lock.json"
+  ],
+  "optional_tools": [
+    "fpcalc"
+  ],
+  "runtime_prerequisites": [
+    "Microsoft WebView2 Evergreen Runtime",
+    ".NET Framework (Windows 10/11)"
+  ],
+  "excluded_payloads": [
+    "developer .env",
+    "desktop.env",
+    "databases",
+    "storage",
+    "logs",
+    "test suites",
+    "source venv",
+    "node_modules"
+  ]
+}

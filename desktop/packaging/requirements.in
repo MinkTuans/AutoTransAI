@@ -1,0 +1,30 @@
+# Windows CPython 3.12 x64 application and freezer inputs; no test dependencies.
+fastapi>=0.115.0
+uvicorn>=0.30.0
+pydantic>=2.8.0
+pydantic-settings>=2.4.0
+python-dotenv>=1.0.0
+python-multipart>=0.0.20
+sqlalchemy[asyncio]>=2.0.30
+aiosqlite>=0.20.0
+aiomysql>=0.2.0
+pymysql>=1.1.0
+alembic>=1.13.0
+httpx>=0.27.0
+edge-tts>=6.1.0
+Pillow>=11,<13
+structlog>=24.1.0
+sse-starlette>=2.0.0
+cryptography>=41.0.0
+google-api-python-client>=2.0.0
+google-auth-oauthlib>=1.0.0
+google-auth-httplib2>=0.1.0
+pywebview==6.2.1
+pythonnet==3.0.5
+pyinstaller==6.20.0
+pefile
+pywin32-ctypes
+# Explicit build backend for the small proxy-tools sdist; no floating build deps.
+pip==26.2.1
+setuptools==84.0.0
+wheel==0.48.0

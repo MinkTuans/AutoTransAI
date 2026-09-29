@@ -55,6 +55,14 @@ AutoTransAI uses a **Local-First Client-Server Architecture** designed for stand
 └───────────────────────────────────────┘  └─────────────────────────────┘
 ```
 
+### Packaged Windows desktop entrypoint (2026-09-29)
+
+The new `desktop/` package implements the accepted Windows conversion separately from the historical source launcher shown above. `python -m desktop` (or frozen `AutoTransAI.exe`) requires pywebview Edge/WebView2 and owns a hidden child of the same executable with `--desktop-backend`. The child receives a protocol-1 stdin handshake only after assignment to a kill-on-close Windows Job Object. An exclusive `127.0.0.1:8000` socket serves compiled `frontend/dist` and the existing FastAPI app at the same origin. Authenticated identity/lifespan readiness precedes Studio navigation. A foreign listener produces a retryable error and is never killed.
+
+Immutable resources and writable state are separate. `%LOCALAPPDATA%\AutoTransAI` contains `data`, `storage`, `logs`, and `webview`; desktop startup bypasses ancestor/source dotenv loading and inherited application settings, using its own SQLite by default. It does not migrate an existing web installation automatically. An explicit optional private `data/desktop.env` accepts only YouTube client ID/secret and TikTok client key/secret/scopes (16 KiB, no interpolation, malformed/unknown/duplicate entries rejected); restart to apply. It cannot override roots, database or session values. The new desktop wrapper authenticates all static/API/media/SSE routes using a one-use bootstrap and HttpOnly SameSite=Strict cookie, exact Host and unsafe-request Origin checks. Exact GET OAuth callbacks remain accessible only with validated expiring single-use state. The shell offers native Retry/View Logs/Close, blocks external navigation, and provides no general native JavaScript API.
+
+Windows distribution configuration uses PyInstaller onedir and Inno Setup per-user install, with verified FFmpeg/FFprobe, official yt-dlp/EJS and private Deno payloads. Node is build-only; optional fpcalc remains unbundled. The existing web commands and historical launcher remain separate. Linux tests do not establish Windows GUI/installer/Job Object acceptance; see `docs/desktop/FINAL_REPORT.md` for actual evidence and outstanding release gates.
+
 ### Architectural Pillars
 - **Single Source of Truth AI Model Routing (`AIModelResolver`)**: Pipeline stages never hardcode model identifiers. Models are resolved dynamically from database tables (`ai_function_configs` -> `ai_models`).
 - **Two-Phase Translation Pipeline**:
@@ -663,7 +671,7 @@ storage/
 
 ## 13. Authentication & Authorization
 
-- **Application Access**: Local-first standalone deployment. No user authentication is required for internal studio tools.
+- **Application Access**: Existing web mode retains its local-first access policy. The new packaged desktop adds an outer authenticated loopback session boundary covering static/API/media/SSE; it is not an OS-user authorization system.
 - **External OAuth 2.0**:
   - **YouTube**: Google OAuth 2.0 with offline access (`access_type=offline`, `prompt=consent`). Tokens are encrypted at rest in `youtube_channels.credentials_json` using Fernet symmetric encryption.
   - **TikTok**: TikTok Login Kit with desktop PKCE (Proof Key for Code Exchange) using SHA-256 code challenges. Tokens encrypted in `tiktok_accounts.credentials_json`.
@@ -778,6 +786,10 @@ AutoTransAI is designed for local Windows desktop execution:
 ---
 
 ## 22. Development Commands
+
+### New Desktop Commands
+
+See `docs/desktop/BUILD.md` for the development, build, package and release commands and verified dependency requirements. `python -m desktop` starts the new Windows shell after production resources have been staged; `--desktop-backend` is a private stdin-controlled child mode. It is not an independently configured public server command.
 
 ### Running Backend (Development)
 ```powershell

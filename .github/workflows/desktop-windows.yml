@@ -1,0 +1,39 @@
+name: Windows desktop candidate
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build, audit and smoke-test frozen backend
+        shell: pwsh
+        run: ./desktop/scripts/build.ps1
+      - name: Compile per-user installer (Microsoft online WebView2 bootstrap)
+        shell: pwsh
+        run: ./desktop/scripts/package.ps1
+      - name: Retain unsigned candidate and provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoTransAI-Windows-x64-candidate
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist/AutoTransAI/
+            dist/installer/
+      - name: State acceptance boundary
+        shell: pwsh
+        run: |
+          'Build artifacts are unsigned candidates. Backend smoke is not GUI, installation, OAuth, media or performance acceptance.' >> $env:GITHUB_STEP_SUMMARY

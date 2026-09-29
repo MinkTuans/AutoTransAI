@@ -7,6 +7,7 @@ environment variables. No magic numbers should exist outside this module.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Literal, Optional
@@ -24,6 +25,8 @@ from shared.config import PROJECT_ROOT as ROOT_DIR, ROOT_ENV_PATH, load_root_env
 # Ensure root .env is loaded into environment
 load_root_env(override=True)
 
+DESKTOP_MODE = os.environ.get("AUTOTRANSAI_DESKTOP") == "1"
+DESKTOP_DATA_ROOT = Path(os.environ["AUTOTRANSAI_DATA_ROOT"]) if DESKTOP_MODE else ROOT_DIR
 ENV_FILE_PATH = ROOT_ENV_PATH if ROOT_ENV_PATH.exists() else ROOT_DIR / ".env"
 
 
@@ -32,7 +35,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables and .env file."""
 
     model_config = SettingsConfigDict(
-        env_file=str(ENV_FILE_PATH),
+        env_file=None if DESKTOP_MODE else str(ENV_FILE_PATH),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -40,8 +43,8 @@ class Settings(BaseSettings):
     # ── Database & Storage Paths ───────────────────────────────────────────────
     DATABASE_URL: Optional[str] = ""
     ROOT_DIR: Path = ROOT_DIR
-    DATA_DIR: Path = ROOT_DIR / "data"
-    STORAGE_ROOT: Path = ROOT_DIR / "storage"
+    DATA_DIR: Path = DESKTOP_DATA_ROOT / "data"
+    STORAGE_ROOT: Path = DESKTOP_DATA_ROOT / "storage"
     STORAGE_DRIVER: str = "local"
     DB_FILENAME: str = "workflow.db"
 
