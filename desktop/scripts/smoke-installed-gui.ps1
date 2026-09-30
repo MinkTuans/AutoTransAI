@@ -60,7 +60,7 @@ function Invoke-Cdp([string]$Method, [hashtable]$Parameters) {
     $cancel = [Threading.CancellationTokenSource]::new(10000)
     try {
         $bytes = [Text.Encoding]::UTF8.GetBytes((@{ id=$id; method=$Method; params=$Parameters } | ConvertTo-Json -Depth 8 -Compress))
-        $socket.SendAsync([ArraySegment[byte]]::new($bytes), [Net.WebSockets.WebSocketMessageType]::Text, $true, $cancel.Token).GetAwaiter().GetResult()
+        [void]$socket.SendAsync([ArraySegment[byte]]::new($bytes), [Net.WebSockets.WebSocketMessageType]::Text, $true, $cancel.Token).GetAwaiter().GetResult()
         do {
             $stream = [IO.MemoryStream]::new()
             try {
@@ -133,7 +133,7 @@ try {
     if ($targets.Count -ne 1) { throw 'studio-debug-target-count' }
     $socket = [Net.WebSockets.ClientWebSocket]::new()
     $cancel = [Threading.CancellationTokenSource]::new(10000)
-    try { $socket.ConnectAsync([Uri]$targets[0].webSocketDebuggerUrl, $cancel.Token).GetAwaiter().GetResult() } finally { $cancel.Dispose() }
+    try { [void]$socket.ConnectAsync([Uri]$targets[0].webSocketDebuggerUrl, $cancel.Token).GetAwaiter().GetResult() } finally { $cancel.Dispose() }
     $result.phase = 'page-state'
     $before = Get-PageState
     if ($before.status -ne 200 -or -not $before.studio -or $before.ready -ne 'complete') { throw 'studio-not-ready' }
