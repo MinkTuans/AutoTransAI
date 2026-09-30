@@ -1309,3 +1309,5 @@ Acceptance harness continuation: installed WebView2 now attempts authenticated s
 Inline review correction: upstream pywebview implements MenuStrip rather than HMENU. Added populated native UI Automation tree/zero MenuBar assertion alongside GetMenu, and synchronized stale Retry/menu architecture prose with current shell.py. Parser passed; native result pending CI.
 
 Refresh harness diagnosis: run 36782340856 failed before GUI in installed backend helper. Local undrained listen(1) reproduction filled backlog after two probes, timing out later connects. Owned listener now drains probes with fixed 503 responses; helper forwards only exception type/code locations, without values. Packaging/guard 26 passed and all PowerShell scripts parsed after the repair. Native rerun required; no product fix or pass claim.
+
+Run 36783021400 passed installed backend, same-version data preservation and bundled FFmpeg synthetic checks, then stopped at GUI with PropertyNotFoundException. Added fixed phase/code/type/line GUI diagnostics; F5/menu not yet claimed. No product changes.
