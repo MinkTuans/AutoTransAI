@@ -1313,3 +1313,9 @@ Refresh harness diagnosis: run 36782340856 failed before GUI in installed backen
 Run 36783021400 passed installed backend, same-version data preservation and bundled FFmpeg synthetic checks, then stopped at GUI with PropertyNotFoundException. Added fixed phase/code/type/line GUI diagnostics; F5/menu not yet claimed. No product changes.
 
 CDP helper red/green reproduction: PowerShell emits VoidTaskResult from SendAsync.GetAwaiter().GetResult(), contaminating the function result and causing missing result property. A local synthetic websocket response reproduced the PropertyNotFound error; explicit [void] suppression then returned the expected authenticated-page-state object. ConnectAsync output suppressed too. No product change; native rerun remains required.
+
+## 2026-09-30 — Windows refresh acceptance evidence finalized
+- Run 36783740842, source 333b3922d4ecb6b8c47da560d34d6859a4cc0115, unsigned artifact 11129520663: build/install/shortcut/window/close/uninstall, foreground F5/backend-session preservation, native menu absence and available local media/error/install-over checks passed.
+- Raw startup/shutdown/install/uninstall and one instrumented idle CPU/RAM sample recorded with explicit scope in FINAL_REPORT; no performance distributions claimed.
+- Updated BUILD, TEST_PLAN, FINAL_REPORT and PROJECT_KNOWLEDGE_BASE to the new candidate; retained earlier evidence/checkpoints and exact unsupported cases.
+- Live speech/providers/OAuth, older-version migration and physical-user Windows matrix remain pending. No product/API/database/provider/storage change, main merge/push or public release.

@@ -1,3 +1,48 @@
+# Windows acceptance refresh — 2026-09-30
+
+Latest candidate: **[run 36783740842](https://github.com/MinkTuans/AutoTransAI/actions/runs/36783740842) succeeded**, source `333b3922d4ecb6b8c47da560d34d6859a4cc0115`, including Studio/F5 product revision `21970901c5b2dae3ae79f234389f51c2727fa347`. All build/audit/frozen smoke, Inno, installed acceptance and upload steps succeeded; final job completed at **2026-09-30 22:13:12 UTC**. This is runner acceptance evidence for #3 and available parts of #4; the parent owns plan completion decisions. Main and public Releases were not changed.
+
+[Download unsigned Windows candidate](https://github.com/MinkTuans/AutoTransAI/actions/runs/36783740842/artifacts/11129520663) — artifact `11129520663`, `AutoTransAI-Windows-x64-candidate`. It includes the complete onedir payload, Setup.exe, provenance/inventories and `installer/installed-acceptance.json`. GitHub login is required to download. Public Actions HTML reports archive **320 MB** (rounded) and SHA256 `bbe0ac4ff1c6f848118b128c66f7a696f50c8531cbe76552fa242e2539dd32ad`. No archive was downloaded locally; anonymous REST reached its hourly limit, so final metadata/annotations were captured from the public run/job HTML. Exact archive byte count/expiry was not obtained; retention is configured for 14 days.
+
+| Output | Bytes | Runner SHA256 |
+| --- | ---: | --- |
+| AutoTransAI-0.1.0-Setup.exe | 141,490,668 | `a2a2845e5b2743ce1cf1a66eac7f71901e3d49adf116708b529e00956cd1df8e` |
+| AutoTransAI.exe | 15,180,732 | `c9d7030212b26e8c644e82b763ae7aef9222406dd58e42439905492849767372` |
+
+| Subtest | Outcome and boundary |
+| --- | --- |
+| Install/open/shortcut/close/uninstall | Passed actual silent installer, fresh Unicode/space directory, payload hashes, Desktop and Start Menu targets, uninstall registration, installed shortcut/current visible window, no observed owned console, WM_CLOSE/observed tree exit, actual uninstaller removal with retained disposable SQLite/storage. No physical-user directory-selection matrix. |
+| Keyboard F5 | Passed **WScript SendKeys F5 to verified foreground installed window**, changed `performance.timeOrigin`, complete Studio DOM and authenticated health 200 afterward; backend PID and session cookie unchanged. This uses actual keyboard delivery, not a shell unit-test inference or CDP reload command. |
+| Native menu removal | Passed Win32 HMENU absence and zero MenuBar controls in a populated native UI Automation tree, covering pywebview's WinForms MenuStrip. |
+| Owned port conflict/crash | Passed installed BackendManager failure checks: harness-owned exclusive listener rejected and survived, exact owned backend killed/detected/reaped. Evidence is gated in `backend.failures` in the artifact JSON; it does not assert shell error-page/Retry UX or forced shell termination with active media descendants. |
+| Install-over preservation | Passed same-version installer over existing disposable installation with SQLite marker and storage sentinel retained. This is **not** older-version migration acceptance. |
+| Bundled local media | Passed installed FFmpeg generation/probe/full decode of 2-second 320×180/25fps H264/AAC synthetic clip at Unicode path. |
+| Installed WebView2 media flow | Passed authenticated browser upload, real merger API creation/start/poll to completed, two-clip FFmpeg concat, media HTTP range 206, video metadata and seek. Invalid extension and empty merge job returned 400. Uses synthetic content and fetch instrumentation; no native picker, real speech/dubbing/provider or SSE claim. |
+| Performance | Raw samples below only. Representative startup/active-workload/CPU/RAM/responsiveness matrix remains pending. |
+| Live STT/translation/TTS/API/OAuth | **Not run:** no explicitly supplied disposable provider credentials, speech sample, registered OAuth clients/accounts or billable authorization for those calls. Existing arbitrary production credentials were not used. |
+
+| Raw sample in this one windows-2022 CI run | Result |
+| --- | ---: |
+| Installed bytes | 508,166,970 |
+| Silent install / uninstall plus assertions | 13.936 / 1.346 s |
+| Backend authenticated startup, first / restart | 4.594 / 4.063 s |
+| Backend shutdown, first / restart | 0.437 / 0.469 s |
+| Observed live processes in idle sample | 8 |
+| Summed working set / private bytes | 596,557,824 / 323,551,232 |
+| CPU process seconds over elapsed seconds | 0 / 2.0152762 |
+
+Timing annotations are displayed newest-first; first/restart order follows the harness's chronological emission. Idle sample follows synthetic concat with CDP instrumentation enabled and covers the observed shell/backend/renderer tree. Summed working sets may count shared pages repeatedly. These are not p95, cold/warm distributions, active-render measurements or user-machine benchmarks.
+
+Remaining concrete resources/checks: disposable standard-user Windows 10/11 machine without developer tools for manual UI/picker/installer choices and absent/offline WebView2; old installer/download authorization for true version-to-version upgrade; real speech video plus authorized disposable provider keys and Google/TikTok clients/accounts; representative hardware/workloads and repeated cold/warm/active-tree samples; native close-during-startup/media and forced-shell descendant cases; Studio dubbing/review/SSE/publishing E2E. #4 remains partial. No signing or public release was performed.
+
+Local verification: `python -m pytest desktop/tests -q` **73 passed**, two dependency deprecation warnings; packaging/installed guard subset **26 passed**; frontend **113 passed** and production build succeeded. All PowerShell scripts and both browser acceptance JavaScript programs parse. Inline review found that MenuStrip is not an HMENU and added native accessibility coverage. A local CDP websocket reproduction failed with the old helper's missing `result` property and passed after suppressing async VoidTaskResult output.
+
+Checkpoints: baseline run `36781928499`/`2197090` succeeded with artifact `11128053036` and basic installed GUI acceptance. Extended runs `36782340856`, `36782579122`, `36782743622` failed before GUI in the backend helper; an undrained `listen(1)` backlog was reproduced locally and replaced with a bounded owned 503 responder. Run `36783021400` advanced to GUI and reported PropertyNotFoundException; diagnostic run `36783594301` reported a CDP-target RuntimeException. The independent local websocket probe exposed async VoidTaskResult contamination; latest run above passed all gates. No product fix, API/schema/provider/storage change or security/payload-check bypass was required. The warning about action Node.js runtime deprecation remained non-failing.
+
+## Historical implementation and earlier candidate evidence
+
+The report below records the older c3bc02e candidate; the refresh above supersedes its latest-candidate and acceptance status.
+
 # AutoTransAI Windows desktop conversion — implementation report
 
 Date: 2026-09-29. Branch: `feat/windows-desktop`, isolated worktree `windows-desktop`. Source base: `4c867ea`; accepted architecture/plan: `0deba00`.
@@ -141,9 +186,3 @@ Use Windows x64, Python 3.12 x64 and Node/npm, then run `desktop\scripts\build.p
 ## How To Package
 
 Install Inno Setup 6.4+, build first, then run `desktop\scripts\package.ps1`. Supply `-WebView2Installer` for an offline standalone prerequisite and external signing options when authorized. Complete the clean-machine matrix in [TEST_PLAN.md](TEST_PLAN.md) before calling installer delivery or Windows acceptance complete.
-
-### Acceptance refresh checkpoint (2026-09-30)
-
-Candidate source `21970901c5b2dae3ae79f234389f51c2727fa347` is building in run `36781928499`; this checkpoint does not claim acceptance passed. The feature-branch harness now attempts actual foreground keyboard F5, CDP document reload/Studio DOM/authenticated health, unchanged session cookie/backend PID, and Win32 native menu absence. Debug instrumentation is restricted to the marked disposable runner launch. Additional checks cover same-version install-over retention, bundled synthetic FFmpeg generation/probe/full decode, owned port conflict and backend crash cleanup. Same-version reinstall is not an older-version migration; synthetic media is not provider E2E. Live STT/TTS/OAuth and physical-user clean-machine/performance matrix remain separate. Final run evidence will supersede this checkpoint. No product, API, schema or provider changes.
-
-Acceptance harness continuation: installed WebView2 now attempts authenticated synthetic upload → real merger API/FFmpeg → completion polling → HTTP range 206 → video metadata/seek and invalid-extension/empty-job 400 checks, plus one raw observed-process-tree idle RAM/CPU sample. No native picker, real speech/provider, SSE, OAuth, representative performance or physical-machine assertion follows. Native results remain pending CI.
