@@ -1532,3 +1532,40 @@ code {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Studio: phase sections keep their forms mounted while hidden. */
+.video-translator-studio [hidden] { display: none !important; }
+.video-translator-studio { min-width: 0; }
+.video-translator-studio .studio-section { border: 1px solid #334155; border-radius: 10px; background: #111827; margin: 12px 0; min-width: 0; }
+.video-translator-studio .studio-section h2 { margin: 0; font-size: 16px; }
+.video-translator-studio .studio-section h2 > button { display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; padding: 14px; color: #e2e8f0; background: transparent; border: 0; text-align: left; cursor: pointer; }
+.video-translator-studio .studio-section h2 > button:focus-visible { outline: 2px solid #818cf8; outline-offset: -3px; border-radius: 10px; }
+.video-translator-studio .studio-section-summary { margin: 0; padding: 0 14px 12px; color: #94a3b8; font-size: 12px; overflow-wrap: anywhere; }
+.video-translator-studio .studio-section > [role="region"] { padding: 0 14px 14px; min-width: 0; }
+.video-translator-studio .translator-studio-grid { grid-template-columns: minmax(0, 1fr); }
+.video-translator-studio .studio-header,
+.video-translator-studio .project-picker,
+.video-translator-studio .inline-row,
+.video-translator-studio .wf-panel-head,
+.video-translator-studio .wf-actions,
+.video-translator-studio .compact-card-header { flex-wrap: wrap; }
+.video-translator-studio input,
+.video-translator-studio select,
+.video-translator-studio textarea,
+.video-translator-studio video { max-width: 100%; min-width: 0; box-sizing: border-box; }
+.video-translator-studio .compact-card,
+.video-translator-studio .card,
+.video-translator-studio .wf-panel,
+.video-translator-studio .wf-stages,
+.video-translator-studio .wf-stage { min-width: 0; }
+.video-translator-studio .wf-stages { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.video-translator-studio .wf-stage-label { overflow-wrap: anywhere; }
+.video-translator-studio .wf-stage-desc { display: none; }
+.video-translator-studio .studio-section .card { overflow-x: auto; }
+.video-translator-studio #studio-review-panel { overflow-x: auto; }
+.video-translator-studio button { max-width: 100%; white-space: normal; }
+@media (max-width: 900px) {
+  .video-translator-studio .wf-stages { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .video-translator-studio .studio-header { flex-direction: column; align-items: stretch; }
+  .video-translator-studio .project-picker { width: 100%; }
+}

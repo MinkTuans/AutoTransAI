@@ -856,8 +856,24 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     };
   }, [activeProjectId]);
 
+  const revealInvalidField = (field, message) => {
+    const groups = { watermark_text: 'output', watermark_image_path: 'output' };
+    setWatermarkValidationError(message);
+    setOpenSections(prev => ({ ...prev, setup: true, [groups[field]]: true }));
+    requestAnimationFrame(() => document.querySelector(`[data-studio-field="${field}"]`)?.focus());
+  };
+
   const handleOpenPreflightOrPromptProject = async () => {
     if (studioPhase !== 'setup' || isPreflighting || loadingWorkflowAction) return;
+    if (watermarkEnabled && watermarkType === 'image' && !watermarkImagePath) {
+      revealInvalidField('watermark_image_path', '❌ Vui lòng upload logo ảnh trước khi bắt đầu.');
+      return;
+    }
+    if (watermarkEnabled && watermarkType === 'text' && !watermarkText.trim()) {
+      revealInvalidField('watermark_text', '❌ Vui lòng nhập nội dung văn bản watermark.');
+      return;
+    }
+    setWatermarkValidationError('');
     if (!activeProjectId || activeProjectId === 'default_project') {
       setShowNoProjectModal(true);
       return;
@@ -1593,7 +1609,20 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   };
 
   return (
-    <div className="video-translator-studio">
+    <div className="video-translator-studio" onInvalidCapture={event => {
+      event.preventDefault();
+      const target = event.target;
+      setOpenSections(prev => {
+        const next = { ...prev };
+        let section = target.closest('[data-studio-section]');
+        while (section) {
+          next[section.dataset.studioSection.replace('studio-', '')] = true;
+          section = section.parentElement.closest('[data-studio-section]');
+        }
+        return next;
+      });
+      requestAnimationFrame(() => target.focus());
+    }}>
       <div className="studio-header">
         <div>
           <h1 className="studio-title">Studio dịch & lồng tiếng</h1>
@@ -1709,12 +1738,6 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
 
       </StudioSection>
       <StudioSection id="studio-setup" title="Nhập & cấu hình" open={!!openSections.setup} onToggle={open => toggleSection('setup', open)}>
-      {/* MAIN 2-COLUMN STUDIO GRID */}
-      <div className="translator-studio-grid">
-
-        {/* LEFT PRIMARY COLUMN: PIPELINE + CONFIG */}
-        <div className="studio-left-col">
-
           {/* Compact Input Video & Configuration Options */}
           <div className="compact-card">
             <div className="compact-card-header">
@@ -1783,19 +1806,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
             {/* Compact Configuration Grid */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', marginBottom: '14px' }}>
               <div>
-                <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: '#94a3b8' }}>LLM Provider:</label>
-                <select
-                  value={llmProviderId}
-                  onChange={(e) => setLlmProviderId(e.target.value)}
-                  style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
-                >
-                  <option value="gemini">✨ Google Gemini AI Studio</option>
-                  <option value="openai">🤖 OpenAI ChatGPT</option>
-                </select>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: '#94a3b8' }}>Target Language:</label>
+                <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: '#94a3b8' }}>Ngôn ngữ đích:</label>
                 <select
                   value={targetLanguage}
                   onChange={(e) => {
@@ -1943,6 +1954,25 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                 </select>
               </div>
 
+            </div>
+
+<StudioSection id="studio-ai" title="AI & dịch thuật" open={!!openSections.ai} onToggle={open => toggleSection('ai', open)} summary={`${llmProviderId} · ${sttModel}`}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: '#94a3b8' }}>LLM Provider:</label>
+                <select
+                  aria-label="LLM Provider"
+                  value={llmProviderId}
+                  onChange={(e) => setLlmProviderId(e.target.value)}
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
+                >
+                  <option value="gemini">✨ Google Gemini AI Studio</option>
+                  <option value="openai">🤖 OpenAI ChatGPT</option>
+                </select>
+              </div>
+
+
+</StudioSection>
+<StudioSection id="studio-audio" title="Giọng & xử lý âm thanh" open={!!openSections.audio} onToggle={open => toggleSection('audio', open)} summary={`Âm thanh gốc: ${originalAudioMode}`}>
               <div>
                 <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: '#94a3b8' }}>Âm thanh gốc:</label>
                 <select
@@ -1955,8 +1985,157 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                   <option value="keep">Giữ âm thanh gốc trộn cùng</option>
                 </select>
               </div>
+
+</StudioSection>
+<StudioSection id="studio-output" title="Hình ảnh đầu ra" open={!!openSections.output} onToggle={open => toggleSection('output', open)} summary={`Watermark: ${watermarkEnabled ? `bật (${watermarkType})` : 'tắt'}`}>
+          {/* Watermark Branding Section */}
+          <div className="compact-card">
+            <div className="compact-card-header">
+              <h3 className="compact-card-title">
+                🏷️ Watermark (Logo/Branding)
+              </h3>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
+                <input
+                  type="checkbox"
+                  aria-label="Bật watermark"
+                  checked={watermarkEnabled}
+                  onChange={(e) => setWatermarkEnabled(e.target.checked)}
+                  style={{ width: '16px', height: '16px', accentColor: '#6366f1', cursor: 'pointer' }}
+                />
+                Bật
+              </label>
             </div>
 
+            {watermarkEnabled ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ display: 'flex', gap: '12px', fontSize: '12px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: '#cbd5e1' }}>
+                    <input
+                      type="radio"
+                      name="wm_type"
+                      value="image"
+                      checked={watermarkType === 'image'}
+                      onChange={() => setWatermarkType('image')}
+                      style={{ accentColor: '#6366f1' }}
+                    />
+                    🖼️ Logo Ảnh
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: '#cbd5e1' }}>
+                    <input
+                      type="radio"
+                      name="wm_type"
+                      value="text"
+                      checked={watermarkType === 'text'}
+                      onChange={() => setWatermarkType('text')}
+                      style={{ accentColor: '#6366f1' }}
+                    />
+                    🔤 Text
+                  </label>
+                </div>
+
+                {watermarkType === 'image' ? (
+                  <div>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        data-studio-field="watermark_image_path"
+                        onChange={handleLogoUpload}
+                        disabled={isUploadingLogo}
+                        style={{ background: '#0f172a', padding: '6px', borderRadius: '6px', color: '#fff', border: '1px solid #475569', fontSize: '11px', flex: 1 }}
+                      />
+                      {isUploadingLogo && <span style={{ color: '#818cf8', fontSize: '11px' }}><ButtonSpinner /></span>}
+                    </div>
+                    {watermarkImagePreview && (
+                      <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px', background: '#0f172a', padding: '4px 8px', borderRadius: '6px' }}>
+                        <img src={watermarkImagePreview} alt="Logo" style={{ maxHeight: '28px', maxWidth: '80px', objectFit: 'contain' }} />
+                        <span style={{ color: '#4ade80', fontSize: '11px' }}>✓ Đã chọn logo</span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div>
+                    <input
+                      type="text"
+                      data-studio-field="watermark_text"
+                      value={watermarkText}
+                      onChange={(e) => setWatermarkText(e.target.value)}
+                      placeholder="© Watermark Text"
+                      style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', border: '1px solid #475569', color: '#fff', fontSize: '12px' }}
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '3px' }}>Vị trí:</label>
+                  <select
+                    value={watermarkPosition}
+                    onChange={(e) => setWatermarkPosition(e.target.value)}
+                    style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
+                  >
+                    <option value="bottom_right">↘️ Góc Dưới Phải</option>
+                    <option value="bottom_left">↙️ Góc Dưới Trái</option>
+                    <option value="top_right">↗️ Góc Trên Phải</option>
+                    <option value="top_left">↖️ Góc Trên Trái</option>
+                    <option value="center">⏹️ Chính Giữa</option>
+                  </select>
+                </div>
+
+                <div>
+                  <button
+                    type="button"
+                    aria-expanded={showWatermarkDetails}
+                    aria-controls="studio-watermark-details"
+                    onClick={() => setShowWatermarkDetails(!showWatermarkDetails)}
+                    style={{ background: 'none', border: 'none', color: '#818cf8', fontSize: '11px', cursor: 'pointer', padding: 0, fontWeight: 'bold' }}
+                  >
+                    {showWatermarkDetails ? '▲ Thu gọn tùy chỉnh' : '⚙️ Tùy chỉnh kích thước & opacity'}
+                  </button>
+                </div>
+
+                <div id="studio-watermark-details" hidden={!showWatermarkDetails} style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '8px', background: '#0f172a', borderRadius: '6px', fontSize: '11px' }}>
+                    <div>
+                      <span style={{ color: '#94a3b8' }}>Scale ({Math.round(watermarkScale * 100)}%):</span>
+                      <input
+                        type="range"
+                        min="0.10"
+                        max="0.50"
+                        step="0.05"
+                        value={watermarkScale}
+                        onChange={(e) => setWatermarkScale(parseFloat(e.target.value))}
+                        style={{ width: '100%', accentColor: '#818cf8' }}
+                      />
+                    </div>
+                    <div>
+                      <span style={{ color: '#94a3b8' }}>Opacity ({Math.round(watermarkOpacity * 100)}%):</span>
+                      <input
+                        type="range"
+                        min="0.10"
+                        max="1.00"
+                        step="0.05"
+                        value={watermarkOpacity}
+                        onChange={(e) => setWatermarkOpacity(parseFloat(e.target.value))}
+                        style={{ width: '100%', accentColor: '#818cf8' }}
+                      />
+                    </div>
+                  </div>
+
+                {watermarkValidationError && (
+                  <div style={{ color: '#ef4444', fontSize: '11px', fontWeight: 'bold' }}>
+                    {watermarkValidationError}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ fontSize: '12px', color: '#94a3b8', fontStyle: 'italic' }}>
+                🚫 Watermark hiện đang TẮT.
+              </div>
+            )}
+          </div>
+
+
+</StudioSection>
+<StudioSection id="studio-automatic" title="Tùy chọn tự động" open={!!openSections.automatic} onToggle={open => toggleSection('automatic', open)} summary={`Tự xác nhận dịch: ${autoConfirmTranslation ? 'bật' : 'tắt'} · Tự xác nhận giọng: ${autoConfirmVoice ? 'bật' : 'tắt'} · Cắt intro/outro: ${trimFillerEnabled ? 'bật' : 'tắt'} · Bản quyền: ${copyrightCheckEnabled ? 'bật' : 'tắt'} · Thumbnail: ${thumbnailEnabled ? 'bật' : 'tắt'}`}>
             <div
               style={{
                 display: 'grid',
@@ -2004,177 +2183,6 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
               </label>
             </div>
 
-            {/* Start Pipeline Action Button */}
-            <button
-              onClick={handleOpenPreflightOrPromptProject}
-              disabled={studioPhase !== 'setup' || isPreflighting || !!loadingWorkflowAction}
-              style={{
-                width: '100%',
-                padding: '10px 16px',
-                borderRadius: '8px',
-                background: 'linear-gradient(90deg, #4f46e5 0%, #7c3aed 100%)',
-                color: '#fff',
-                fontWeight: 'bold',
-                fontSize: '14px',
-                border: 'none',
-                cursor: isProcessing ? 'not-allowed' : 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-              }}
-            >
-              {isProcessing ? <><ButtonSpinner /> Đang xử lý...</> : 'Bắt đầu dịch'}
-            </button>
-          </div>
-
-        </div>
-
-        {/* RIGHT SIDEBAR COLUMN: WATERMARK & AI THUMBNAIL */}
-        <div className="studio-right-col">
-
-          {/* Watermark Branding Section */}
-          <div className="compact-card">
-            <div className="compact-card-header">
-              <h3 className="compact-card-title">
-                🏷️ Watermark (Logo/Branding)
-              </h3>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
-                <input
-                  type="checkbox"
-                  checked={watermarkEnabled}
-                  onChange={(e) => setWatermarkEnabled(e.target.checked)}
-                  style={{ width: '16px', height: '16px', accentColor: '#6366f1', cursor: 'pointer' }}
-                />
-                Bật
-              </label>
-            </div>
-
-            {watermarkEnabled ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <div style={{ display: 'flex', gap: '12px', fontSize: '12px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: '#cbd5e1' }}>
-                    <input
-                      type="radio"
-                      name="wm_type"
-                      value="image"
-                      checked={watermarkType === 'image'}
-                      onChange={() => setWatermarkType('image')}
-                      style={{ accentColor: '#6366f1' }}
-                    />
-                    🖼️ Logo Ảnh
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: '#cbd5e1' }}>
-                    <input
-                      type="radio"
-                      name="wm_type"
-                      value="text"
-                      checked={watermarkType === 'text'}
-                      onChange={() => setWatermarkType('text')}
-                      style={{ accentColor: '#6366f1' }}
-                    />
-                    🔤 Text
-                  </label>
-                </div>
-
-                {watermarkType === 'image' ? (
-                  <div>
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                      <input
-                        type="file"
-                        accept="image/png,image/jpeg,image/webp"
-                        onChange={handleLogoUpload}
-                        disabled={isUploadingLogo}
-                        style={{ background: '#0f172a', padding: '6px', borderRadius: '6px', color: '#fff', border: '1px solid #475569', fontSize: '11px', flex: 1 }}
-                      />
-                      {isUploadingLogo && <span style={{ color: '#818cf8', fontSize: '11px' }}><ButtonSpinner /></span>}
-                    </div>
-                    {watermarkImagePreview && (
-                      <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px', background: '#0f172a', padding: '4px 8px', borderRadius: '6px' }}>
-                        <img src={watermarkImagePreview} alt="Logo" style={{ maxHeight: '28px', maxWidth: '80px', objectFit: 'contain' }} />
-                        <span style={{ color: '#4ade80', fontSize: '11px' }}>✓ Đã chọn logo</span>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div>
-                    <input
-                      type="text"
-                      value={watermarkText}
-                      onChange={(e) => setWatermarkText(e.target.value)}
-                      placeholder="© Watermark Text"
-                      style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', border: '1px solid #475569', color: '#fff', fontSize: '12px' }}
-                    />
-                  </div>
-                )}
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '3px' }}>Vị trí:</label>
-                  <select
-                    value={watermarkPosition}
-                    onChange={(e) => setWatermarkPosition(e.target.value)}
-                    style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', background: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
-                  >
-                    <option value="bottom_right">↘️ Góc Dưới Phải</option>
-                    <option value="bottom_left">↙️ Góc Dưới Trái</option>
-                    <option value="top_right">↗️ Góc Trên Phải</option>
-                    <option value="top_left">↖️ Góc Trên Trái</option>
-                    <option value="center">⏹️ Chính Giữa</option>
-                  </select>
-                </div>
-
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => setShowWatermarkDetails(!showWatermarkDetails)}
-                    style={{ background: 'none', border: 'none', color: '#818cf8', fontSize: '11px', cursor: 'pointer', padding: 0, fontWeight: 'bold' }}
-                  >
-                    {showWatermarkDetails ? '▲ Thu gọn tùy chỉnh' : '⚙️ Tùy chỉnh kích thước & opacity'}
-                  </button>
-                </div>
-
-                {showWatermarkDetails && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '8px', background: '#0f172a', borderRadius: '6px', fontSize: '11px' }}>
-                    <div>
-                      <span style={{ color: '#94a3b8' }}>Scale ({Math.round(watermarkScale * 100)}%):</span>
-                      <input
-                        type="range"
-                        min="0.10"
-                        max="0.50"
-                        step="0.05"
-                        value={watermarkScale}
-                        onChange={(e) => setWatermarkScale(parseFloat(e.target.value))}
-                        style={{ width: '100%', accentColor: '#818cf8' }}
-                      />
-                    </div>
-                    <div>
-                      <span style={{ color: '#94a3b8' }}>Opacity ({Math.round(watermarkOpacity * 100)}%):</span>
-                      <input
-                        type="range"
-                        min="0.10"
-                        max="1.00"
-                        step="0.05"
-                        value={watermarkOpacity}
-                        onChange={(e) => setWatermarkOpacity(parseFloat(e.target.value))}
-                        style={{ width: '100%', accentColor: '#818cf8' }}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {watermarkValidationError && (
-                  <div style={{ color: '#ef4444', fontSize: '11px', fontWeight: 'bold' }}>
-                    {watermarkValidationError}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div style={{ fontSize: '12px', color: '#94a3b8', fontStyle: 'italic' }}>
-                🚫 Watermark hiện đang TẮT.
-              </div>
-            )}
-          </div>
-
           {/* AI Auto Thumbnail Branding Section */}
           <div className="compact-card">
             <div className="compact-card-header">
@@ -2184,6 +2192,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
               <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: '#e2e8f0' }}>
                 <input
                   type="checkbox"
+                  aria-label="Bật thumbnail"
                   checked={thumbnailEnabled}
                   onChange={(e) => setThumbnailEnabled(e.target.checked)}
                   style={{ width: '16px', height: '16px', accentColor: '#6366f1', cursor: 'pointer' }}
@@ -2370,10 +2379,30 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
             )}
           </div>
 
-        </div>
-
-      </div>
-
+</StudioSection>
+            {/* Start Pipeline Action Button */}
+            <button
+              onClick={handleOpenPreflightOrPromptProject}
+              disabled={studioPhase !== 'setup' || isPreflighting || !!loadingWorkflowAction}
+              style={{
+                width: '100%',
+                padding: '10px 16px',
+                borderRadius: '8px',
+                background: 'linear-gradient(90deg, #4f46e5 0%, #7c3aed 100%)',
+                color: '#fff',
+                fontWeight: 'bold',
+                fontSize: '14px',
+                border: 'none',
+                cursor: isProcessing ? 'not-allowed' : 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+              }}
+            >
+              {isProcessing ? <><ButtonSpinner /> Đang xử lý...</> : 'Bắt đầu dịch'}
+            </button>
+          </div>
       {/* BELOW VIEWPORT SECTION: GLOSSARY MANAGER (DEFAULT CLOSED) */}
       <div style={{ marginTop: '20px' }}>
         <StudioSection id="studio-glossary" title="Thuật ngữ" open={!!openSections.glossary} onToggle={open => toggleSection('glossary', open)}>
@@ -2744,6 +2773,10 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
             >
               📥 Tải Video Lồng Tiếng (MP4)
             </a>
+
+          </div>
+
+<StudioSection id="studio-publishing" title="Đăng video tùy chọn" open={!!openSections.publishing} onToggle={open => toggleSection('publishing', open)}>
             <button
               onClick={() => setShowYouTubeModal(true)}
               style={{
@@ -2759,10 +2792,15 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
             >
               🔴 Tự Động SEO & Đăng Bài YouTube
             </button>
-          </div>
+</StudioSection>
+<StudioSection id="studio-qc" title="Kiểm định chất lượng" open={!!openSections.qc} onToggle={open => toggleSection('qc', open)}>
+<AIQCScorecard jobId={job.id} />
+</StudioSection>
 
-          <AIQCScorecard jobId={job.id} />
-          <VideoEditorStudio jobId={job.id} />
+<StudioSection id="studio-editor" title="Chỉnh sửa video & phụ đề" open={!!openSections.editor} onToggle={open => toggleSection('editor', open)}>
+<VideoEditorStudio jobId={job.id} />
+</StudioSection>
+
         </div>
       )}
 
