@@ -82,7 +82,11 @@ try {
     Assert-NoInstalledProcesses # skipifsilent must prevent autorun.
     $Result.phase = 'installed-backend-restart'
     & $Python (Join-Path $Repo 'desktop/packaging/smoke_frozen.py') $Install --data-root $Data --evidence (Join-Path $Workspace 'backend.json') *> (Join-Path $Workspace 'backend-smoke.log')
-    Assert-Check ($LASTEXITCODE -eq 0) 'installed-backend-smoke-failed'
+    if ($LASTEXITCODE -ne 0) {
+        # Forward only helper-owned fixed type/location diagnostics, never raw log values.
+        Get-Content (Join-Path $Workspace 'backend-smoke.log') | Where-Object { $_ -cmatch '^::error title=Installed backend helper failure::type=[A-Za-z]+; locations=[A-Za-z0-9_.,:-]+$' } | Write-Output
+        throw 'installed-backend-smoke-failed'
+    }
     Assert-NoInstalledProcesses
     $Result.backend = Get-Content (Join-Path $Workspace 'backend.json') -Raw | ConvertFrom-Json
     $Result.phase = 'install-over'

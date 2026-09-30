@@ -14,11 +14,12 @@ import json
 import os
 import sqlite3
 import socket
+import threading
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from desktop.process_manager import BackendManager
+from desktop.process_manager import BackendManager, StartupError
 
 
 def validate_data_root(root: Path, temporary: Path) -> Path:
@@ -87,21 +88,39 @@ def run_failure_checks(payload: Path, data: Path):
     listener = socket.socket()
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
     listener.bind(('127.0.0.1', 8000))
-    listener.listen(1)
+    listener.listen(8)
+    listener.settimeout(0.2)
+    stopped = threading.Event()
+    def respond():
+        while not stopped.is_set():
+            try:
+                connection, _ = listener.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            with connection:
+                try:
+                    connection.sendall(b'HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
+                except OSError:
+                    pass
+    responder = threading.Thread(target=respond, daemon=True)
+    responder.start()
     manager = BackendManager([str(payload / 'AutoTransAI.exe')], payload / '_internal', data)
     try:
         try:
             manager.start()
-        except Exception:
+        except StartupError:
             pass
         else:
             raise AssertionError('Foreign owned listener was accepted')
-        with socket.create_connection(('127.0.0.1', 8000), timeout=2):
-            connection, _ = listener.accept()
-            connection.close()
+        with socket.create_connection(('127.0.0.1', 8000), timeout=2) as probe:
+            assert probe.recv(1024).startswith(b'HTTP/1.1 503')
     finally:
         manager.stop()
+        stopped.set()
         listener.close()
+        responder.join(timeout=2)
     # A crash of our exact backend process is reaped by the supervisor.
     manager = BackendManager([str(payload / 'AutoTransAI.exe')], payload / '_internal', data)
     try:
@@ -156,4 +175,12 @@ if __name__ == '__main__':
     parser.add_argument('--data-root', type=Path)
     parser.add_argument('--evidence', type=Path)
     args = parser.parse_args()
-    main(args.payload, args.data_root, args.evidence)
+    try:
+        main(args.payload, args.data_root, args.evidence)
+    except Exception as error:
+        # Public diagnostic deliberately excludes exception values and source lines.
+        import traceback
+        frames = traceback.extract_tb(error.__traceback__)
+        locations = ','.join(f'{Path(f.filename).name}:{f.lineno}' for f in frames[-5:])
+        print(f'::error title=Installed backend helper failure::type={type(error).__name__}; locations={locations}')
+        raise SystemExit(1) from None

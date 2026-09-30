@@ -1307,3 +1307,5 @@
 Acceptance harness continuation: installed WebView2 now attempts authenticated synthetic upload → real merger API/FFmpeg → completion polling → HTTP range 206 → video metadata/seek and invalid-extension/empty-job 400 checks, plus one raw observed-process-tree idle RAM/CPU sample. No native picker, real speech/provider, SSE, OAuth, representative performance or physical-machine assertion follows. Native results remain pending CI.
 
 Inline review correction: upstream pywebview implements MenuStrip rather than HMENU. Added populated native UI Automation tree/zero MenuBar assertion alongside GetMenu, and synchronized stale Retry/menu architecture prose with current shell.py. Parser passed; native result pending CI.
+
+Refresh harness diagnosis: run 36782340856 failed before GUI in installed backend helper. Local undrained listen(1) reproduction filled backlog after two probes, timing out later connects. Owned listener now drains probes with fixed 503 responses; helper forwards only exception type/code locations, without values. Packaging/guard 26 passed and all PowerShell scripts parsed after the repair. Native rerun required; no product fix or pass claim.
