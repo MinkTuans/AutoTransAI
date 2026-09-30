@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 
 const STAGES = [
-  { id: 'INGEST', label: '1. INGEST', desc: 'Import & Audio Extract', icon: '📥' },
-  { id: 'ANALYZE', label: '2. ANALYZE', desc: 'STT & Timeline Cleanup', icon: '🔍' },
-  { id: 'TRANSLATE', label: '3. TRANSLATE', desc: 'Glossary & Translation', icon: '🌐' },
-  { id: 'DUB', label: '4. DUB', desc: 'Voice Mapping & Dubbing', icon: '🎙️' },
-  { id: 'PRODUCE', label: '5. PRODUCE', desc: 'Subtitles & Final Render', icon: '🎬' },
-  { id: 'PUBLISH', label: '6. PUBLISH', desc: 'SEO & YouTube Upload', icon: '🚀' },
+  { id: 'INGEST', label: 'Nhập video', desc: 'Nguồn video', icon: '📥' },
+  { id: 'ANALYZE', label: 'Nhận dạng', desc: 'Nhận dạng lời thoại', icon: '🔍' },
+  { id: 'TRANSLATE', label: 'Dịch', desc: 'Bản dịch', icon: '🌐' },
+  { id: 'DUB', label: 'Lồng tiếng', desc: 'Giọng đọc', icon: '🎙️' },
+  { id: 'PRODUCE', label: 'Xuất video', desc: 'Video kết quả', icon: '🎬' },
+  { id: 'PUBLISH', label: 'Đăng video', desc: 'Tùy chọn', icon: '🚀' },
 ];
 
 const STAGE_ORDER_MAP = {
@@ -29,7 +29,7 @@ const STAGE_ORDER_MAP = {
   RENDER_DONE: { id: 'PRODUCE', idx: 5 },
   PUBLISH: { id: 'PUBLISH', idx: 6 },
   PUBLISHING: { id: 'PUBLISH', idx: 6 },
-  COMPLETED: { id: 'PUBLISH', idx: 6 },
+  COMPLETED: { id: 'PRODUCE', idx: 5 },
 };
 
 export default function WorkflowTimeline({
@@ -37,7 +37,6 @@ export default function WorkflowTimeline({
   statusData,
   job,
   pipelineError,
-  onStart,
   onPause,
   onResume,
   onCancel,
@@ -49,6 +48,7 @@ export default function WorkflowTimeline({
   lastApiResponseTime,
   segments = [],
   transferProgress = null,
+  showDiagnostics = false,
 }) {
   const [selectedStageOverride, setSelectedStageOverride] = useState(null);
   const [showDebug, setShowDebug] = useState(false);
@@ -56,13 +56,14 @@ export default function WorkflowTimeline({
   if (!statusData && !job) return null;
 
   const currentJob = job || {};
-  const currentStatus = job?.status || statusData?.status || 'not_started';
-  const overallProgress = job?.overall_progress_pct ?? statusData?.overall_progress_pct ?? 0;
+  const currentStatus = String(job?.status || statusData?.status || 'not_started').toLowerCase();
+  const overallProgress = job?.overall_progress_pct ?? statusData?.overall_progress_pct;
+  const hasProgress = currentStatus !== 'not_started' && Number.isFinite(overallProgress);
 
   // Resolve active stage unambiguously
   const curStageObj = STAGE_ORDER_MAP[job?.stage] || STAGE_ORDER_MAP[statusData?.current_stage] || { id: 'INGEST', idx: 1 };
-  const currentStageName = currentStatus === 'completed' ? 'PUBLISH' : curStageObj.id;
-  const curStageIdx = currentStatus === 'completed' ? 6 : curStageObj.idx;
+  const currentStageName = currentStatus === 'completed' ? 'PRODUCE' : curStageObj.id;
+  const curStageIdx = currentStatus === 'completed' ? 5 : curStageObj.idx;
   const activeStage = selectedStageOverride || currentStageName;
 
   const formatTime = (sec) => {
@@ -79,7 +80,7 @@ export default function WorkflowTimeline({
     return `${(num / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  const transferPct = Math.min(100, Math.max(0, Number(transferProgress?.percent) || 0));
+  const transferPct = Number.isFinite(transferProgress?.percent) ? Math.min(100, Math.max(0, transferProgress.percent)) : null;
   const transferKind = transferProgress?.kind === 'upload' ? 'Tải lên' : 'Tải xuống';
 
   const getStatusBadge = (status) => {
@@ -87,25 +88,25 @@ export default function WorkflowTimeline({
       case 'passed':
       case 'completed':
       case 'success':
-        return <span className="wf-chip ok">Passed</span>;
+        return <span className="wf-chip ok">Hoàn tất</span>;
       case 'running':
       case 'processing':
         return (
           <span className="wf-chip run">
-            <span className="spinner-icon">⚙</span> Running
+            <span className="spinner-icon">⚙</span> Đang xử lý
           </span>
         );
       case 'paused':
-        return <span className="wf-chip warn">Paused</span>;
+        return <span className="wf-chip warn">Tạm dừng</span>;
       case 'needs_review':
       case 'segment_editing':
         return <span className="wf-chip warn">Chờ xác nhận</span>;
       case 'failed':
-        return <span className="wf-chip err">Failed</span>;
+        return <span className="wf-chip err">Thất bại</span>;
       case 'cancelled':
-        return <span className="wf-chip idle">Cancelled</span>;
+        return <span className="wf-chip idle">Đã hủy</span>;
       default:
-        return <span className="wf-chip idle">Waiting</span>;
+        return <span className="wf-chip idle">Chờ</span>;
     }
   };
 
@@ -138,9 +139,9 @@ export default function WorkflowTimeline({
   }
 
   const selectedStageData = stagesMap[activeStage] || {};
-  const isRunning = currentStatus === 'running' || ['extracting_audio', 'stt', 'translating', 'generating_tts', 'syncing_audio', 'rendering'].includes(currentStatus);
+  const isRunning = currentStatus === 'running' || ['checking', 'downloading', 'extracting_audio', 'stt', 'translating', 'generating_tts', 'syncing_audio', 'rendering', 'processing'].includes(currentStatus);
   const isPaused = currentStatus === 'paused';
-  const isFailed = currentStatus === 'failed' || Boolean(pipelineError);
+  const isFailed = ['failed', 'interrupted'].includes(currentStatus);
   const isCompleted = currentStatus === 'completed';
   const isNeedsReview = currentStatus === 'needs_review' || currentStatus === 'segment_editing';
 
@@ -149,52 +150,47 @@ export default function WorkflowTimeline({
       <div className="wf-panel-head">
         <div>
           <h3 className="compact-card-title" style={{ color: isFailed ? '#fca5a5' : undefined }}>
-            Pipeline 6 bước
-            {job?.id && <span className="collapse-chip">Job {job.id}</span>}
+            Trạng thái video
+            {showDiagnostics && job?.id && <span className="collapse-chip">Job {job.id}</span>}
           </h3>
           <div className="page-subtitle" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: 4 }}>
             <span>{getStatusBadge(currentStatus)}</span>
-            <span>Tiến độ <strong>{overallProgress}%</strong></span>
-            <span>Stage <strong>{currentStageName}</strong></span>
+            {hasProgress && <span>Tiến độ <strong>{overallProgress}%</strong></span>}
+            {currentStatus !== 'not_started' && <span>Bước <strong>{STAGES.find(st => st.id === currentStageName)?.label}</strong></span>}
           </div>
         </div>
 
         <div className="wf-actions">
-          {onOpenLogs && (
+          {showDiagnostics && onOpenLogs && (
             <button type="button" className="btn btn-secondary btn-sm" onClick={onOpenLogs}>
               Log
             </button>
           )}
-          {!isRunning && !isPaused && !isCompleted && !isNeedsReview && !isFailed && (
-            <button type="button" className="btn btn-primary btn-sm" onClick={onStart} disabled={loadingAction}>
-              {loadingAction === 'start' ? 'Starting...' : 'Start'}
-            </button>
-          )}
           {isRunning && (
             <button type="button" className="btn btn-secondary btn-sm" onClick={onPause} disabled={loadingAction}>
-              {loadingAction === 'pause' ? 'Pausing...' : 'Pause'}
+              {loadingAction === 'pause' ? 'Đang tạm dừng...' : 'Tạm dừng'}
             </button>
           )}
           {isPaused && (
             <button type="button" className="btn btn-primary btn-sm" onClick={onResume} disabled={loadingAction}>
-              {loadingAction === 'resume' ? 'Resuming...' : 'Resume'}
+              {loadingAction === 'resume' ? 'Đang tiếp tục...' : 'Tiếp tục'}
             </button>
           )}
           {(isRunning || isPaused) && onCancel && (
             <button type="button" className="btn btn-danger btn-sm" onClick={onCancel} disabled={loadingAction}>
-              {loadingAction === 'cancel' ? 'Cancelling...' : 'Cancel'}
+              {loadingAction === 'cancel' ? 'Đang hủy...' : 'Hủy tác vụ'}
             </button>
           )}
           {isFailed && onRetryJob && (
-            <button type="button" className="btn btn-secondary btn-sm" onClick={onRetryJob} disabled={loadingAction === 'retry'}>
-              {loadingAction === 'retry' ? 'Retrying...' : 'Retry'}
+            <button type="button" className="btn btn-secondary btn-sm" onClick={onRetryJob} disabled={!!loadingAction}>
+              {loadingAction === 'retry' ? 'Đang thử lại...' : 'Thử lại'}
             </button>
           )}
         </div>
       </div>
 
       <div className="progress-container">
-        <div className="progress-bar-bg">
+        {hasProgress && <div className="progress-bar-bg">
           <div
             className={`progress-bar-fill ${isFailed ? 'warning' : ''}`}
             style={{
@@ -202,18 +198,18 @@ export default function WorkflowTimeline({
               background: isFailed ? '#ef4444' : undefined,
             }}
           />
-        </div>
+        </div>}
         {transferProgress && (
           <div style={{ marginTop: 8 }}>
             <div className="progress-label" style={{ fontSize: 11 }}>
-              <span>{transferKind}: <strong>{transferProgress.message || `${transferPct.toFixed(0)}%`}</strong></span>
+              <span>{transferKind}: <strong>{transferProgress.message || (transferPct !== null ? `${transferPct.toFixed(0)}%` : 'Đang truyền video')}</strong></span>
               <span>
                 {formatBytes(transferProgress.downloaded_bytes)} / {formatBytes(transferProgress.total_bytes)}
                 {transferProgress.speed ? ` · ${transferProgress.speed}` : ''}
                 {transferProgress.eta ? ` · ETA ${transferProgress.eta}` : ''}
               </span>
             </div>
-            <div className="progress-bar-bg">
+            {transferPct !== null && <div className="progress-bar-bg">
               <div
                 className="progress-bar-fill success"
                 style={{
@@ -221,7 +217,7 @@ export default function WorkflowTimeline({
                   background: transferProgress.status === 'failed' ? '#ef4444' : undefined,
                 }}
               />
-            </div>
+            </div>}
           </div>
         )}
       </div>
@@ -232,7 +228,11 @@ export default function WorkflowTimeline({
           const isSelected = activeStage === st.id;
 
           let stDataStatus = 'pending';
-          if (currentStatus === 'completed') {
+          if (st.id === 'PUBLISH') {
+            stDataStatus = stagesMap.PUBLISH?.status || 'pending';
+          } else if (currentStatus === 'not_started') {
+            stDataStatus = 'pending';
+          } else if (currentStatus === 'completed') {
             stDataStatus = 'passed';
           } else if (stIdx < curStageIdx) {
             stDataStatus = 'passed';
@@ -279,7 +279,7 @@ export default function WorkflowTimeline({
         })}
       </div>
 
-      <div className="wf-telemetry">
+      {showDiagnostics && <div className="wf-telemetry">
         <div className="wf-telemetry-grid">
           <div>
             <span style={{ color: '#94a3b8' }}>Bước hiện tại:</span>
@@ -345,7 +345,7 @@ export default function WorkflowTimeline({
             <div>API Time: <strong style={{ color: '#cbd5e1' }}>{lastApiResponseTime || 'N/A'}</strong></div>
           </div>
         )}
-      </div>
+      </div>}
 
       {/* Compact Error Banner Integrated Inside Pipeline Footer */}
       {(pipelineError || currentJob.status === 'failed' || currentJob.error_message) && (
@@ -357,7 +357,7 @@ export default function WorkflowTimeline({
             </div>
           </div>
           <div style={{ display: 'flex', gap: '6px' }}>
-            {onOpenLogs && (
+            {showDiagnostics && onOpenLogs && (
               <button
                 onClick={onOpenLogs}
                 style={{ padding: '4px 10px', borderRadius: '4px', background: '#78350f', color: '#fef3c7', border: '1px solid #d97706', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
@@ -365,21 +365,13 @@ export default function WorkflowTimeline({
                 📜 Log
               </button>
             )}
-            {onRetryJob && (
-              <button
-                onClick={onRetryJob}
-                disabled={loadingAction === 'retry'}
-                style={{ padding: '4px 10px', borderRadius: '4px', background: '#d97706', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
-              >
-                🔄 Thử lại
-              </button>
-            )}
+
           </div>
         </div>
       )}
 
       {/* Selected Stage Detail Drawer */}
-      {activeStage && (
+      {showDiagnostics && activeStage && (
         <div style={{ marginTop: '12px', background: '#0f172a', padding: '12px', borderRadius: '8px', border: '1px solid #334155' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
             <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#cbd5e1' }}>Chi tiết Stage: {activeStage}</span>
@@ -389,7 +381,7 @@ export default function WorkflowTimeline({
                 disabled={loadingAction}
                 style={{ padding: '3px 8px', background: '#4338ca', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
               >
-                🔄 Retry Stage {activeStage}
+                🔄 Thử lại bước {activeStage}
               </button>
             )}
           </div>
