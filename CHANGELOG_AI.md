@@ -1305,3 +1305,5 @@
 - No product/API/database/configuration change. Disposable instrumentation only. Native results pending new CI; local portable tests/parser are recorded in job progress.
 
 Acceptance harness continuation: installed WebView2 now attempts authenticated synthetic upload → real merger API/FFmpeg → completion polling → HTTP range 206 → video metadata/seek and invalid-extension/empty-job 400 checks, plus one raw observed-process-tree idle RAM/CPU sample. No native picker, real speech/provider, SSE, OAuth, representative performance or physical-machine assertion follows. Native results remain pending CI.
+
+Inline review correction: upstream pywebview implements MenuStrip rather than HMENU. Added populated native UI Automation tree/zero MenuBar assertion alongside GetMenu, and synchronized stale Retry/menu architecture prose with current shell.py. Parser passed; native result pending CI.
