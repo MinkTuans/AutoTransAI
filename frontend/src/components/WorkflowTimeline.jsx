@@ -56,7 +56,7 @@ export default function WorkflowTimeline({
   if (!statusData && !job) return null;
 
   const currentJob = job || {};
-  const currentStatus = String(job?.status || statusData?.status || 'not_started').toLowerCase();
+  const currentStatus = job?.stage === 'CANCELLED' ? 'cancelled' : String(job?.status || statusData?.status || 'not_started').toLowerCase();
   const overallProgress = job?.overall_progress_pct ?? statusData?.overall_progress_pct;
   const hasProgress = currentStatus !== 'not_started' && Number.isFinite(overallProgress);
 
@@ -101,6 +101,8 @@ export default function WorkflowTimeline({
       case 'needs_review':
       case 'segment_editing':
         return <span className="wf-chip warn">Chờ xác nhận</span>;
+      case 'interrupted':
+        return <span className="wf-chip err">Gián đoạn</span>;
       case 'failed':
         return <span className="wf-chip err">Thất bại</span>;
       case 'cancelled':
@@ -141,7 +143,7 @@ export default function WorkflowTimeline({
   const selectedStageData = stagesMap[activeStage] || {};
   const isRunning = currentStatus === 'running' || ['checking', 'downloading', 'extracting_audio', 'stt', 'translating', 'generating_tts', 'syncing_audio', 'rendering', 'processing'].includes(currentStatus);
   const isPaused = currentStatus === 'paused';
-  const isFailed = ['failed', 'interrupted'].includes(currentStatus);
+  const isFailed = ['failed', 'interrupted'].includes(currentStatus) || Boolean(pipelineError);
   const isCompleted = currentStatus === 'completed';
   const isNeedsReview = currentStatus === 'needs_review' || currentStatus === 'segment_editing';
 
@@ -151,7 +153,6 @@ export default function WorkflowTimeline({
         <div>
           <h3 className="compact-card-title" style={{ color: isFailed ? '#fca5a5' : undefined }}>
             Trạng thái video
-            {showDiagnostics && job?.id && <span className="collapse-chip">Job {job.id}</span>}
           </h3>
           <div className="page-subtitle" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: 4 }}>
             <span>{getStatusBadge(currentStatus)}</span>
@@ -161,17 +162,12 @@ export default function WorkflowTimeline({
         </div>
 
         <div className="wf-actions">
-          {showDiagnostics && onOpenLogs && (
-            <button type="button" className="btn btn-secondary btn-sm" onClick={onOpenLogs}>
-              Log
-            </button>
-          )}
-          {isRunning && (
+          {isRunning && onPause && (
             <button type="button" className="btn btn-secondary btn-sm" onClick={onPause} disabled={loadingAction}>
               {loadingAction === 'pause' ? 'Đang tạm dừng...' : 'Tạm dừng'}
             </button>
           )}
-          {isPaused && (
+          {isPaused && onResume && (
             <button type="button" className="btn btn-primary btn-sm" onClick={onResume} disabled={loadingAction}>
               {loadingAction === 'resume' ? 'Đang tiếp tục...' : 'Tiếp tục'}
             </button>
@@ -204,7 +200,8 @@ export default function WorkflowTimeline({
             <div className="progress-label" style={{ fontSize: 11 }}>
               <span>{transferKind}: <strong>{transferProgress.message || (transferPct !== null ? `${transferPct.toFixed(0)}%` : 'Đang truyền video')}</strong></span>
               <span>
-                {formatBytes(transferProgress.downloaded_bytes)} / {formatBytes(transferProgress.total_bytes)}
+                {Number.isFinite(transferProgress.downloaded_bytes) && formatBytes(transferProgress.downloaded_bytes)}
+                {Number.isFinite(transferProgress.total_bytes) && ` / ${formatBytes(transferProgress.total_bytes)}`}
                 {transferProgress.speed ? ` · ${transferProgress.speed}` : ''}
                 {transferProgress.eta ? ` · ETA ${transferProgress.eta}` : ''}
               </span>
@@ -280,7 +277,37 @@ export default function WorkflowTimeline({
         })}
       </div>
 
-      {showDiagnostics && <div className="wf-telemetry">
+      {/* Compact Error Banner Integrated Inside Pipeline Footer */}
+      {currentStatus !== 'cancelled' && (pipelineError || currentJob.status === 'failed' || currentJob.error_message) && (
+        <div style={{ marginTop: '12px', padding: '10px 14px', background: '#450a0a', border: '1px solid #ef4444', borderRadius: '8px', color: '#fee2e2', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+          <div style={{ flex: 1, minWidth: '220px' }}>
+            <div style={{ fontWeight: 'bold', color: '#fca5a5', fontSize: '13px' }}>❌ Xử Lý Thất Bại</div>
+            <div style={{ fontSize: '12px', fontFamily: 'monospace', color: '#fecaca', marginTop: '2px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxWidth: '100%' }}>
+              {currentJob.error_message || pipelineError || 'Xảy ra lỗi trong quá trình thực thi pipeline.'}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            {showDiagnostics && onOpenLogs && (
+              <button
+                onClick={onOpenLogs}
+                style={{ padding: '4px 10px', borderRadius: '4px', background: '#78350f', color: '#fef3c7', border: '1px solid #d97706', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
+              >
+                📜 Log
+              </button>
+            )}
+
+          </div>
+        </div>
+      )}
+
+      <div hidden={!showDiagnostics} id="studio-diagnostics" className="wf-telemetry" role="region" aria-label="Chi tiết kỹ thuật">
+        <h3 className="compact-card-title">Chi tiết kỹ thuật</h3>
+          {onOpenLogs && (
+            <button type="button" className="btn btn-secondary btn-sm" onClick={onOpenLogs}>
+              Log
+            </button>
+          )}
+
         <div className="wf-telemetry-grid">
           <div>
             <span style={{ color: '#94a3b8' }}>Bước hiện tại:</span>
@@ -346,33 +373,8 @@ export default function WorkflowTimeline({
             <div>API Time: <strong style={{ color: '#cbd5e1' }}>{lastApiResponseTime || 'N/A'}</strong></div>
           </div>
         )}
-      </div>}
-
-      {/* Compact Error Banner Integrated Inside Pipeline Footer */}
-      {(pipelineError || currentJob.status === 'failed' || currentJob.error_message) && (
-        <div style={{ marginTop: '12px', padding: '10px 14px', background: '#450a0a', border: '1px solid #ef4444', borderRadius: '8px', color: '#fee2e2', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-          <div style={{ flex: 1, minWidth: '220px' }}>
-            <div style={{ fontWeight: 'bold', color: '#fca5a5', fontSize: '13px' }}>❌ Xử Lý Thất Bại</div>
-            <div style={{ fontSize: '12px', fontFamily: 'monospace', color: '#fecaca', marginTop: '2px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxWidth: '100%' }}>
-              {currentJob.error_message || pipelineError || 'Xảy ra lỗi trong quá trình thực thi pipeline.'}
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: '6px' }}>
-            {showDiagnostics && onOpenLogs && (
-              <button
-                onClick={onOpenLogs}
-                style={{ padding: '4px 10px', borderRadius: '4px', background: '#78350f', color: '#fef3c7', border: '1px solid #d97706', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
-              >
-                📜 Log
-              </button>
-            )}
-
-          </div>
-        </div>
-      )}
-
       {/* Selected Stage Detail Drawer */}
-      {showDiagnostics && activeStage && (
+      {activeStage && (
         <div style={{ marginTop: '12px', background: '#0f172a', padding: '12px', borderRadius: '8px', border: '1px solid #334155' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
             <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#cbd5e1' }}>Chi tiết Stage: {activeStage}</span>
@@ -415,6 +417,8 @@ export default function WorkflowTimeline({
           )}
         </div>
       )}
+      </div>
+
 
     </div>
   );

@@ -1143,6 +1143,13 @@
     - Cleaned up `.env.example` removing all `SUPABASE_*` configuration keys.
 
 ### Affected Files
+
+- **Studio state layout (2026-09-30)**:
+  - Implemented the approved single-page Vietnamese setup/progress/review/result layout; mounted accessible sections keep drafts through collapse and polling. Advanced configuration, glossary, optional publishing, AI QC, editing/subtitles and technical support remain available.
+  - Added a pure status classifier and test-first React coverage for phase transitions, exceptions, preflight, focused drafts, stale responses, project/job switches, failed save-and-switch and real numeric progress. Retained both review gates, copyright decisions, existing text autosave and the local F5 change.
+  - Self-review fixed hydration enabling Start too early, import requests leaving actions locked, polling overwriting gender/focused edits and cross-project glossary state. Removed synthetic local overall transfer percentages and ignored backend-synthesized PUBLISH completion in presentation. Direct-job actions use the existing cancel/checkpoint-resume endpoints, unsupported Pause is hidden, and failed/CANCELLED is presented as cancellation.
+  - Affected frontend files: `VideoTranslator.jsx`, `studioPresentation.js`, `StudioSection.jsx`, `WorkflowTimeline.jsx`, their tests and `App.css`; committed the approved spec/plan and updated Knowledge Base. No backend/API/database/storage/provider or runtime dependency changes; no push, merge or release.
+  - Final test/build and fixture-browser evidence are recorded in the implementation plan. Native Windows packaging/GUI acceptance and real provider/OAuth media workflows remain separate and unverified here.
 - `backend/app/config.py`
 - `backend/app/database.py`
 - `backend/app/services/storage_service.py`

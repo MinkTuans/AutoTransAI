@@ -5,12 +5,13 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import VideoTranslator from './VideoTranslator';
 import { videoTranslatorApi, providersApi, projectsApi, thumbnailApi } from '../api';
 vi.mock('../api', () => ({
-  videoTranslatorApi: { getStudioState: vi.fn(), getJob: vi.fn(), getWorkflowStatus: vi.fn(), listCharacterProfiles: vi.fn(), getGlossary: vi.fn(), updateSegments: vi.fn(), preflightWorkflow: vi.fn(), startWorkflow: vi.fn() },
+  videoTranslatorApi: { getStudioState: vi.fn(), getJob: vi.fn(), getWorkflowStatus: vi.fn(), listCharacterProfiles: vi.fn(), getGlossary: vi.fn(), updateSegments: vi.fn(), preflightWorkflow: vi.fn(), startWorkflow: vi.fn(), updateCharacterVoiceReview: vi.fn(), startUrlTransfer: vi.fn(), createJob: vi.fn(), startJob: vi.fn(), cancelJob: vi.fn(), cancelWorkflow: vi.fn(), resumeJobFromCheckpoint: vi.fn() },
   providersApi: { list: vi.fn(), listVoices: vi.fn() },
   projectsApi: { list: vi.fn(), getSettings: vi.fn(), saveSettings: vi.fn() },
   thumbnailApi: { listLibrary: vi.fn() }, aiApi: {}, videoEditorApi: {},
 }));
 const segment = { id: 's1', number: 1, start_time: 0, end_time: 2, original_text: 'Hello', translated_text: 'Xin chào', gender: 'female', voice_provider: 'edge_tts', voice_id: 'vi-VN-HoaiMyNeural' };
+const settings = { input_mode: 'url', video_url: '', source_language: 'auto', target_language: 'vi', llm_provider_id: 'gemini', stt_model: 'gemini-2.0-flash', audio_provider_id: 'edge_tts', voice_id: 'vi-VN-HoaiMyNeural', default_male_voice_id: 'vi-VN-NamMinhNeural', default_female_voice_id: 'vi-VN-HoaiMyNeural', original_audio_mode: 'mute', original_audio_volume: .2, auto_confirm_translation: true, auto_confirm_voice: false, trim_filler_enabled: true, copyright_check_enabled: true, watermark_enabled: false, watermark_type: 'image', watermark_image_path: '', watermark_text: '© AutoTransAI Studio', watermark_position: 'bottom_right', watermark_scale: .2, watermark_opacity: .8, watermark_margin: 20, watermark_font_size: 32, thumbnail_enabled: false, thumbnail_provider: 'pollinations', thumbnail_model: 'default', thumbnail_style: 'auto', thumbnail_custom_instruction: '', thumbnail_source: 'ai', thumbnail_library_path: '' };
 let currentJob, workflow, streams;
 const ok = data => ({ success: true, data });
 beforeEach(() => {
@@ -18,6 +19,7 @@ beforeEach(() => {
   currentJob = { id: 'j1', project_id: 'p1', status: 'translating', stage: 'TRANSLATING', segments: [segment] };
   workflow = { status: 'not_started', stages: [] };
   streams = [];
+  vi.stubGlobal('alert', vi.fn());
   vi.stubGlobal('EventSource', class { constructor() { streams.push(this); } close() {} });
   videoTranslatorApi.getStudioState.mockImplementation(async () => ok({ job: currentJob, asset: { title: 'Video' }, segments: currentJob.segments, settings_snapshot: {} }));
   videoTranslatorApi.getJob.mockImplementation(async () => ok(currentJob));
@@ -28,7 +30,7 @@ beforeEach(() => {
   providersApi.list.mockResolvedValue({ data: { audio: [{ id: 'edge_tts', name: 'Edge TTS', configured: true }] } });
   providersApi.listVoices.mockResolvedValue(ok([{ id: 'vi-VN-HoaiMyNeural', name: 'Hoài My', gender: 'female', language: 'vi-VN' }]));
   projectsApi.list.mockResolvedValue(ok([{ id: 'p1', title: 'Dự án một' }, { id: 'p2', title: 'Dự án hai' }]));
-  projectsApi.getSettings.mockResolvedValue(ok({ video_url: '', target_language: 'vi' }));
+  projectsApi.getSettings.mockResolvedValue(ok(settings));
   thumbnailApi.listLibrary.mockResolvedValue(ok([]));
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -37,10 +39,10 @@ const opened = name => heading(name).getAttribute('aria-expanded');
 async function pollJob() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 1600)); }); }
 it('starts with a single preflight action and closed advanced configuration and support', async () => {
   render(<VideoTranslator initialProjectId="p1" />);
-  await waitFor(() => expect(heading('Bắt đầu dịch').disabled).toBe(false));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Bắt đầu dịch', exact: true }).disabled).toBe(false));
   expect(screen.getAllByRole('button', { name: /^Bắt đầu dịch$/ })).toHaveLength(1);
   expect(opened('Nhập & cấu hình')).toBe('true');
-  expect(screen.queryByText('Worker Heartbeat:')).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Chi tiết kỹ thuật' })).toBeNull();
   videoTranslatorApi.preflightWorkflow.mockResolvedValue(ok({ can_start: false, checks: [{ passed: false, description: 'Thiếu video', category: 'required' }] }));
   fireEvent.click(heading('Bắt đầu dịch'));
   expect(await screen.findByText('Thiếu video')).toBeTruthy();
@@ -73,7 +75,9 @@ it('opens review and result on phase transitions while preserving focused drafts
 it('retains last known state on a connection failure and prevents duplicate start', async () => {
   render(<VideoTranslator initialJobId="j1" initialProjectId="p1" />);
   await waitFor(() => expect(opened('Tiến độ')).toBe('true'));
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
   await act(async () => streams.at(-1).onerror(new Error('offline')));
+  errors.mockRestore();
   expect(screen.getByText(/Mất kết nối/)).toBeTruthy();
   expect(heading('Bắt đầu dịch').disabled).toBe(true);
   expect(opened('Tiến độ')).toBe('true');
@@ -98,7 +102,7 @@ it('guards edited segments and clears old data on confirmed project switch', asy
 });
 it('keeps advanced values and summaries through collapse and reveals invalid watermark', async () => {
   render(<VideoTranslator initialProjectId="p1" />);
-  await waitFor(() => expect(heading('Bắt đầu dịch').disabled).toBe(false));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Bắt đầu dịch', exact: true }).disabled).toBe(false));
   expect(opened('AI & dịch thuật')).toBe('false');
   fireEvent.click(heading('AI & dịch thuật'));
   const provider = screen.getByRole('combobox', { name: 'LLM Provider' });
@@ -134,4 +138,164 @@ it('keeps result tools and publishing closed until explicitly opened', async () 
   expect(opened('Đăng video tùy chọn')).toBe('false');
   expect(screen.queryByRole('button', { name: /Tự Động SEO/ })).toBeNull();
   expect(screen.getByRole('link', { name: /Tải Video Lồng Tiếng/ }).getAttribute('href')).toBe('/media/a.mp4');
+});
+it('keeps start disabled while the requested job is still hydrating', async () => {
+  let resolveState;
+  videoTranslatorApi.getStudioState.mockReturnValue(new Promise(resolve => { resolveState = resolve; }));
+  render(<VideoTranslator initialJobId="j1" initialProjectId="p1" />);
+  await act(async () => {});
+  expect(heading('Bắt đầu dịch').disabled).toBe(true);
+  expect(screen.getByText('Đang xác định trạng thái')).toBeTruthy();
+  await act(async () => resolveState(ok({ job: currentJob, segments: [segment], settings_snapshot: {} })));
+});
+it('refuses to discard an editor draft when save-and-switch fails', async () => {
+  currentJob = { ...currentJob, status: 'segment_editing' };
+  videoTranslatorApi.updateSegments.mockRejectedValue(new Error('offline'));
+  projectsApi.saveSettings.mockResolvedValue(ok(settings));
+  render(<VideoTranslator initialJobId="j1" initialProjectId="p1" />);
+  const editor = await screen.findByDisplayValue('Xin chào');
+  fireEvent.change(editor, { target: { value: 'Bản sửa chưa lưu' } });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Dự án' }), { target: { value: 'p2' } });
+  fireEvent.click(await screen.findByRole('button', { name: /Lưu thay đổi & Chuyển dự án/ }));
+  await act(async () => {});
+  expect(screen.getByRole('combobox', { name: 'Dự án' }).value).toBe('p1');
+  expect(screen.getByDisplayValue('Bản sửa chưa lưu')).toBe(editor);
+});
+it('tracks automatic voice confirmation as an unsaved setting', async () => {
+  render(<VideoTranslator initialProjectId="p1" />);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Bắt đầu dịch', exact: true }).disabled).toBe(false));
+  expect(screen.queryByText('Bạn có thay đổi cấu hình dự án chưa lưu.')).toBeNull();
+  fireEvent.click(heading('Tùy chọn tự động'));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Tự xác nhận nhân vật & giọng đọc hợp lệ' }));
+  expect(screen.getByText('Bạn có thay đổi cấu hình dự án chưa lưu.')).toBeTruthy();
+});
+it('ignores an old job polling response after a confirmed project switch', async () => {
+  currentJob = { ...currentJob, status: 'segment_editing' };
+  let resolvePoll;
+  videoTranslatorApi.getJob.mockReturnValue(new Promise(resolve => { resolvePoll = resolve; }));
+  render(<VideoTranslator initialJobId="j1" initialProjectId="p1" />);
+  await screen.findByDisplayValue('Xin chào');
+  await waitFor(() => expect(videoTranslatorApi.getJob).toHaveBeenCalled());
+  fireEvent.change(screen.getByRole('combobox', { name: 'Dự án' }), { target: { value: 'p2' } });
+  await act(async () => resolvePoll(ok(currentJob)));
+  expect(screen.queryByDisplayValue('Xin chào')).toBeNull();
+  expect(screen.getByRole('combobox', { name: 'Dự án' }).value).toBe('p2');
+});
+it('imports and starts exactly once after successful preflight', async () => {
+  videoTranslatorApi.preflightWorkflow.mockResolvedValue(ok({ can_start: true, checks: [] }));
+  videoTranslatorApi.startUrlTransfer.mockResolvedValue(ok({ status: 'done', id: 't1', asset: { asset_id: 'a1' } }));
+  videoTranslatorApi.createJob.mockResolvedValue(ok({ job_id: 'j1', project_id: 'p1' }));
+  videoTranslatorApi.startJob.mockResolvedValue(ok({}));
+  render(<VideoTranslator initialProjectId="p1" />);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Bắt đầu dịch', exact: true }).disabled).toBe(false));
+  fireEvent.change(screen.getByPlaceholderText(/https:\/\/www.bilibili/), { target: { value: 'https://example.com/video.mp4' } });
+  const start = heading('Bắt đầu dịch');
+  fireEvent.click(start);
+  fireEvent.click(await screen.findByRole('button', { name: /Bắt đầu Workflow ngay/ }));
+  await waitFor(() => expect(opened('Tiến độ')).toBe('true'));
+  expect(videoTranslatorApi.preflightWorkflow).toHaveBeenCalledTimes(1);
+  expect(videoTranslatorApi.startJob).toHaveBeenCalledTimes(1);
+  expect(videoTranslatorApi.createJob).toHaveBeenCalledWith(expect.objectContaining({ asset_id: 'a1', project_id: 'p1' }));
+  expect(start.disabled).toBe(true);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Hủy tác vụ', exact: true }).disabled).toBe(false));
+});
+it('reloads the original job when returning to its project after switching away', async () => {
+  currentJob = { ...currentJob, status: 'segment_editing' };
+  videoTranslatorApi.getWorkflowStatus.mockImplementation(async projectId => ok(projectId === 'p1' ? { status: 'segment_editing', context: { job_id: 'j1' }, stages: [] } : { status: 'not_started', stages: [] }));
+  render(<VideoTranslator initialJobId="j1" initialProjectId="p1" />);
+  await screen.findByDisplayValue('Xin chào');
+  fireEvent.change(screen.getByRole('combobox', { name: 'Dự án' }), { target: { value: 'p2' } });
+  await waitFor(() => expect(screen.queryByDisplayValue('Xin chào')).toBeNull());
+  fireEvent.change(screen.getByRole('combobox', { name: 'Dự án' }), { target: { value: 'p1' } });
+  expect(await screen.findByDisplayValue('Xin chào')).toBeTruthy();
+});
+it('resets glossary drafts on project switch while preserving them through collapse', async () => {
+  render(<VideoTranslator initialProjectId="p1" />);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Bắt đầu dịch', exact: true }).disabled).toBe(false));
+  fireEvent.click(heading('Thuật ngữ'));
+  const source = screen.getByPlaceholderText('Source (ví dụ: 李道天)');
+  fireEvent.change(source, { target: { value: 'Draft p1' } });
+  fireEvent.click(heading('Thuật ngữ'));
+  fireEvent.click(heading('Thuật ngữ'));
+  expect(source.value).toBe('Draft p1');
+  fireEvent.change(screen.getByRole('combobox', { name: 'Dự án' }), { target: { value: 'p2' } });
+  await waitFor(() => expect(screen.getByPlaceholderText('Source (ví dụ: 李道天)').value).toBe(''));
+});
+it('preserves gender drafts during polling and saves them before switching', async () => {
+  currentJob = { ...currentJob, status: 'needs_review', segments: [{ ...segment, gender: 'unknown', character_id: 'c1', character_name: 'Nhân vật một' }] };
+  providersApi.listVoices.mockResolvedValue(ok([{ id: 'vi-VN-HoaiMyNeural', gender: 'female', language: 'vi-VN' }, { id: 'vi-VN-NamMinhNeural', gender: 'male', language: 'vi-VN' }]));
+  videoTranslatorApi.updateCharacterVoiceReview.mockResolvedValue(ok({}));
+  render(<VideoTranslator initialJobId="j1" initialProjectId="p1" />);
+  await screen.findByDisplayValue('Xin chào');
+  fireEvent.click(await screen.findByRole('button', { name: '♂ Nam' }));
+  await pollJob();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Dự án' }), { target: { value: 'p2' } });
+  fireEvent.click(await screen.findByRole('button', { name: /Lưu thay đổi & Chuyển dự án/ }));
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'Dự án' }).value).toBe('p2'));
+  expect(videoTranslatorApi.updateCharacterVoiceReview).toHaveBeenCalledWith('j1', { mappings: [expect.objectContaining({ segment_id: 's1', gender: 'male' })] });
+});
+it('clears the previous job while a new incoming job is loading', async () => {
+  currentJob = { ...currentJob, status: 'segment_editing' };
+  const { rerender } = render(<VideoTranslator initialJobId="j1" initialProjectId="p1" />);
+  await screen.findByDisplayValue('Xin chào');
+  let resolveState;
+  videoTranslatorApi.getStudioState.mockReturnValue(new Promise(resolve => { resolveState = resolve; }));
+  rerender(<VideoTranslator initialJobId="j2" initialProjectId="p2" />);
+  await act(async () => {});
+  expect(screen.queryByDisplayValue('Xin chào')).toBeNull();
+  expect(screen.getByRole('combobox', { name: 'Dự án' }).value).toBe('p2');
+  expect(heading('Bắt đầu dịch').disabled).toBe(true);
+  await act(async () => resolveState(ok({ job: { ...currentJob, id: 'j2', project_id: 'p2' }, segments: [{ ...segment, translated_text: 'Dự án hai' }], settings_snapshot: {} })));
+  expect(await screen.findByDisplayValue('Dự án hai')).toBeTruthy();
+});
+it('keeps a focused transcription draft while a running poll returns older text', async () => {
+  render(<VideoTranslator initialJobId="j1" initialProjectId="p1" />);
+  await waitFor(() => expect(opened('Tiến độ')).toBe('true'));
+  fireEvent.click(heading('Duyệt bản dịch & giọng'));
+  const editor = screen.getByDisplayValue('Xin chào');
+  fireEvent.change(editor, { target: { value: 'Đang gõ bản sửa' } });
+  editor.focus();
+  await pollJob();
+  expect(editor.value).toBe('Đang gõ bản sửa');
+  expect(document.activeElement).toBe(editor);
+  expect(opened('Duyệt bản dịch & giọng')).toBe('true');
+});
+it('guards an unsaved video URL when switching projects', async () => {
+  render(<VideoTranslator initialProjectId="p1" />);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Bắt đầu dịch', exact: true }).disabled).toBe(false));
+  fireEvent.change(screen.getByPlaceholderText(/https:\/\/www.bilibili/), { target: { value: 'https://example.com/draft.mp4' } });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Dự án' }), { target: { value: 'p2' } });
+  expect(await screen.findByText('⚠️ Có thay đổi chưa lưu')).toBeTruthy();
+  expect(screen.getByRole('combobox', { name: 'Dự án' }).value).toBe('p1');
+});
+it('guards a selected local file and requires explicit discard before project switch', async () => {
+  projectsApi.getSettings.mockResolvedValue(ok({ ...settings, input_mode: 'upload' }));
+  render(<VideoTranslator initialProjectId="p1" />);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Bắt đầu dịch', exact: true }).disabled).toBe(false));
+  fireEvent.change(document.querySelector('input[accept="video/*"]'), { target: { files: [new File(['video'], 'draft.mp4', { type: 'video/mp4' })] } });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Dự án' }), { target: { value: 'p2' } });
+  expect(await screen.findByText('⚠️ Có thay đổi chưa lưu')).toBeTruthy();
+  expect(screen.getByRole('button', { name: /Lưu thay đổi & Chuyển dự án/ }).disabled).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: /Bỏ qua thay đổi & Chuyển dự án/ }));
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'Dự án' }).value).toBe('p2'));
+});
+it('offers supported job cancellation without a nonfunctional workflow pause', async () => {
+  videoTranslatorApi.cancelJob.mockImplementation(async () => { currentJob = { ...currentJob, status: 'failed', stage: 'CANCELLED', error_message: 'Job đã bị hủy.' }; return ok({ cancelled: true, job_id: 'j1' }); });
+  render(<VideoTranslator initialJobId="j1" initialProjectId="p1" />);
+  await waitFor(() => expect(opened('Tiến độ')).toBe('true'));
+  expect(screen.queryByRole('button', { name: 'Tạm dừng', exact: true })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Hủy tác vụ', exact: true }));
+  await waitFor(() => expect(screen.getAllByText('Đã hủy').length).toBeGreaterThan(0));
+  expect(videoTranslatorApi.cancelJob).toHaveBeenCalledWith('j1');
+  expect(videoTranslatorApi.cancelWorkflow).not.toHaveBeenCalled();
+  expect(screen.queryByText('❌ Xử Lý Thất Bại')).toBeNull();
+});
+it('resumes a paused job explicitly through its existing checkpoint endpoint', async () => {
+  currentJob = { ...currentJob, status: 'paused', stage: 'RENDERING' };
+  videoTranslatorApi.resumeJobFromCheckpoint.mockImplementation(async () => { currentJob = { ...currentJob, status: 'rendering' }; return ok({ job_id: 'j1' }); });
+  render(<VideoTranslator initialJobId="j1" initialProjectId="p1" />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Tiếp tục', exact: true }));
+  await waitFor(() => expect(videoTranslatorApi.resumeJobFromCheckpoint).toHaveBeenCalledWith('j1'));
+  expect(opened('Tiến độ')).toBe('true');
+  expect(screen.queryByRole('button', { name: 'Tiếp tục', exact: true })).toBeNull();
 });

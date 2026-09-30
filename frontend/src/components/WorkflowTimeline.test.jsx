@@ -22,7 +22,7 @@ it('does not invent progress or offer a second start for idle Studio', () => {
 it('keeps diagnostics hidden by default and exposes logs and stage retry on request', () => {
   const props = { job: { status: 'running' }, onOpenLogs: vi.fn(), onRetryStage: vi.fn() };
   const { rerender } = render(<WorkflowTimeline {...props} />);
-  expect(screen.queryByText(/Heartbeat|FFmpeg Process|DB Sync/)).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Chi tiết kỹ thuật' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Log' })).toBeNull();
   rerender(<WorkflowTimeline {...props} showDiagnostics />);
   expect(screen.getByText('Worker Heartbeat:')).toBeTruthy();
@@ -36,4 +36,10 @@ it.each([['running', 'Tạm dừng'], ['paused', 'Tiếp tục'], ['failed', 'Th
 it('does not mistake synthesized job workflow stages for publishing evidence', () => {
   render(<WorkflowTimeline job={{ id: 'j1', status: 'completed' }} statusData={{ context: { job_id: 'j1' }, stages: [{ name: 'PUBLISH', status: 'passed', steps: [] }] }} />);
   expect(within(screen.getByRole('button', { name: /Đăng video/ })).getByText('Chờ')).toBeTruthy();
+});
+it('does not fabricate a transfer percentage when only a message is available', () => {
+  render(<WorkflowTimeline job={{ status: 'running' }} transferProgress={{ kind: 'download', status: 'running', message: 'Đang nhận video' }} />);
+  expect(screen.queryByText(/0%/)).toBeNull();
+  expect(screen.getByText('Đang nhận video')).toBeTruthy();
+  expect(screen.queryByText(/0 B/)).toBeNull();
 });

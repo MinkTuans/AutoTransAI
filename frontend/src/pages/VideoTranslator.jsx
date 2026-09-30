@@ -12,6 +12,9 @@ import { LoadingSpinner, ButtonSpinner } from '../components/LoadingSpinner';
 
 export default function VideoTranslator({ initialJobId, initialProjectId, onProcessingStateChange }) {
   const [openSections, setOpenSections] = useState({ setup: true });
+  const [selectedStudioJobId, setSelectedStudioJobId] = useState(initialJobId || null);
+  const incomingIdentity = useRef(`${initialProjectId || ''}:${initialJobId || ''}`);
+  const [pendingSwitchJobId, setPendingSwitchJobId] = useState(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [studioLoading, setStudioLoading] = useState(Boolean(initialJobId || initialProjectId));
   const [connectionError, setConnectionError] = useState(false);
@@ -20,6 +23,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   const voiceDirtyRef = useRef(false);
   const editRevision = useRef(0);
   const requestGeneration = useRef(0);
+  const requestedJobHydrating = useRef(Boolean(initialJobId));
   const previousPresentation = useRef(null);
   const markEditorDirty = (voice = false) => {
     editRevision.current += 1;
@@ -198,19 +202,22 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   const defaultSettingsRef = useRef(null);
   if (!defaultSettingsRef.current) defaultSettingsRef.current = getCurrentSettingsObject();
 
-  const switchProject = targetId => {
+  const switchProject = (targetId, targetJobId = null) => {
     requestGeneration.current += 1;
+    requestedJobHydrating.current = Boolean(targetJobId);
+    setSelectedStudioJobId(targetJobId);
     setSelectedProjectId(targetId);
     setJob(null);
     setAsset(null);
     setSegments([]);
     setCharacterProfiles([]);
+    setLibraryThumbs([]);
     setWorkflowStatusData(null);
     setPipelineError(null);
     setTransferProgress(null);
     setIsProcessing(false);
     setConnectionError(false);
-    setStudioLoading(Boolean(targetId));
+    setStudioLoading(Boolean(targetId || targetJobId));
     setShowYouTubeModal(false);
     setShowLogModal(false);
     setUploadFile(null);
@@ -274,6 +281,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   // Job execution state
   const [asset, setAsset] = useState(null);
   const [job, setJob] = useState(null);
+  const hasFileDraft = Boolean(uploadFile && !asset);
   const [segments, setSegments] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [pipelineError, setPipelineError] = useState(null);
@@ -288,14 +296,16 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     const isRunning = isProcessing || (workflowStatusData && ['running', 'processing'].includes(workflowStatusData.status));
 
     if (onProcessingStateChange) {
-      onProcessingStateChange(Boolean(isRunning));
+      onProcessingStateChange(Boolean(isRunning || isSettingsDirty || isEditorDirty || hasFileDraft));
     }
 
-    if (!isRunning && !isSettingsDirty && !isEditorDirty) return;
+    if (!isRunning && !isSettingsDirty && !isEditorDirty && !hasFileDraft) return;
 
     const handleBeforeUnload = (e) => {
       e.preventDefault();
-      const msg = '⚠️ Tiến trình dịch video đang chạy! Nếu bạn đóng hoặc tải lại trang, quá trình theo dõi real-time có thể bị ngắt quãng. Bạn có chắc chắn muốn rời đi?';
+      const msg = isRunning
+        ? '⚠️ Tiến trình dịch video đang chạy! Nếu bạn đóng hoặc tải lại trang, quá trình theo dõi real-time có thể bị ngắt quãng. Bạn có chắc chắn muốn rời đi?'
+        : 'Bạn có thay đổi Studio chưa lưu. Nếu đóng hoặc tải lại trang, bản sửa có thể bị mất.';
       e.returnValue = msg;
       return msg;
     };
@@ -304,12 +314,12 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [isProcessing, workflowStatusData?.status, onProcessingStateChange, isSettingsDirty, isEditorDirty]);
+  }, [isProcessing, workflowStatusData?.status, onProcessingStateChange, isSettingsDirty, isEditorDirty, hasFileDraft]);
 
   const activeProjectId = selectedProjectId || job?.project_id || asset?.project_id || (job?.id && job.id !== 'default_project' ? job.id : null);
 
   const studioPhase = resolveStudioPhase({ job, workflow: workflowStatusData, transfer: transferProgress, busy: isProcessing, loading: studioLoading });
-  const presentationIdentity = `${selectedProjectId || ''}:${job?.id || initialJobId || ''}`;
+  const presentationIdentity = `${selectedProjectId || ''}:${job?.id || selectedStudioJobId || ''}`;
   useEffect(() => {
     const previous = previousPresentation.current;
     if (previous?.identity === presentationIdentity && previous?.phase === studioPhase) return;
@@ -319,18 +329,20 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       const next = { ...prev };
       for (const id of ['setup', 'progress', 'review', 'result']) {
         const focused = document.getElementById(`studio-${id}-panel`)?.contains(document.activeElement);
-        const dirty = (id === 'setup' && isSettingsDirty) || (id === 'review' && isEditorDirty);
+        const dirty = (id === 'setup' && (isSettingsDirty || hasFileDraft)) || (id === 'review' && isEditorDirty);
         next[id] = id === target || Boolean(prev[id] && (focused || dirty));
       }
       return next;
     });
-  }, [studioPhase, presentationIdentity, isSettingsDirty, isEditorDirty]);
+  }, [studioPhase, presentationIdentity, isSettingsDirty, isEditorDirty, hasFileDraft]);
 
   useEffect(() => {
     if (!activeProjectId || !thumbnailEnabled) return;
+    let current = true;
     thumbnailApi.listLibrary(activeProjectId)
-      .then((res) => setLibraryThumbs(res.data || []))
-      .catch(() => setLibraryThumbs([]));
+      .then((res) => { if (current) setLibraryThumbs(res.data || []); })
+      .catch(() => { if (current) setLibraryThumbs([]); });
+    return () => { current = false; };
   }, [activeProjectId, thumbnailEnabled]);
 
   // Load Projects List
@@ -363,13 +375,16 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   // Load Character Profiles when active project changes
   useEffect(() => {
     if (!activeProjectId || activeProjectId === 'default_project') return;
+    let current = true;
     videoTranslatorApi.listCharacterProfiles(activeProjectId)
       .then(res => {
+        if (!current) return;
         if (res?.data && Array.isArray(res.data)) {
           setCharacterProfiles(res.data);
         }
       })
       .catch(err => console.warn('[CHARACTERS] Failed to fetch profiles:', err));
+    return () => { current = false; };
   }, [activeProjectId]);
 
   // Load voices for a given provider
@@ -581,6 +596,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   };
 
   const handleToggleCharacterGender = (charId, newGender) => {
+    markEditorDirty(true);
     setCharacterProfiles(prev => {
       const exists = prev.some(c => c.character_id === charId);
       if (exists) {
@@ -702,8 +718,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     }
     const current = getCurrentSettingsObject();
     const compareKeys = [
-      'target_language', 'source_language', 'audio_provider_id', 'llm_provider_id',
-      'stt_model', 'voice_id', 'default_male_voice_id', 'default_female_voice_id', 'original_audio_mode', 'original_audio_volume', 'auto_confirm_translation',
+      'input_mode', 'video_url', 'target_language', 'source_language', 'audio_provider_id', 'llm_provider_id',
+      'stt_model', 'voice_id', 'default_male_voice_id', 'default_female_voice_id', 'original_audio_mode', 'original_audio_volume', 'auto_confirm_translation', 'auto_confirm_voice',
       'trim_filler_enabled',
       'copyright_check_enabled',
       'watermark_enabled', 'watermark_type', 'watermark_image_path', 'watermark_text',
@@ -715,7 +731,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     let isDifferent = false;
     for (const key of compareKeys) {
       const curVal = current[key];
-      const savedVal = savedProjectSettings[key];
+      const savedVal = savedProjectSettings[key] ?? defaultSettingsRef.current[key];
       if (JSON.stringify(curVal) !== JSON.stringify(savedVal)) {
         isDifferent = true;
         break;
@@ -725,6 +741,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     setIsSettingsDirty(isDifferent);
   }, [
     selectedProjectId,
+    inputMode,
+    videoUrl,
     targetLanguage,
     sourceLanguage,
     audioProviderId,
@@ -734,6 +752,11 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     originalAudioMode,
     originalAudioVolume,
     autoConfirmTranslation,
+    autoConfirmVoice,
+    defaultMaleVoiceId,
+    defaultFemaleVoiceId,
+    thumbnailSource,
+    thumbnailLibraryPath,
     trimFillerEnabled,
     copyrightCheckEnabled,
     watermarkEnabled,
@@ -764,9 +787,12 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         const savedData = res.data || res.settings;
         setSavedProjectSettings(savedData);
         setIsSettingsDirty(false);
+        return true;
       }
+      return false;
     } catch (err) {
       alert('Không thể lưu cấu hình dự án: ' + formatApiError(err, 'Lỗi hệ thống'));
+      return false;
     } finally {
       setIsSavingSettings(false);
     }
@@ -780,7 +806,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
 
   const handleProjectSelectAttempt = (targetId) => {
     if (targetId === selectedProjectId) return;
-    if (isSettingsDirty || isEditorDirty) {
+    setPendingSwitchJobId(null);
+    if (isSettingsDirty || isEditorDirty || hasFileDraft) {
       setPendingSwitchProjectId(targetId);
       setShowSwitchGuardModal(true);
     } else {
@@ -798,7 +825,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       if (!res.success || !res.data) throw new Error('Invalid workflow response');
       setWorkflowStatusData(res.data);
       const discoveredId = res.data.context?.job_id;
-      if (discoveredId && discoveredId !== (job?.id || initialJobId)) {
+      if (discoveredId && discoveredId !== job?.id && !(requestedJobHydrating.current && discoveredId === selectedStudioJobId)) {
         const state = await videoTranslatorApi.getStudioState(discoveredId);
         if (generation !== requestGeneration.current) return;
         if (!state.success || !state.data?.job) throw new Error('Invalid studio response');
@@ -807,13 +834,26 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         setSegments(state.data.segments || []);
       }
       setConnectionError(false);
-      setStudioLoading(false);
+      if (!requestedJobHydrating.current) setStudioLoading(false);
     } catch (err) {
       if (generation !== requestGeneration.current) return;
       setConnectionError(true);
       console.error('Failed fetching workflow status', err);
     }
   };
+
+  useEffect(() => {
+    const next = `${initialProjectId || ''}:${initialJobId || ''}`;
+    if (incomingIdentity.current === next) return;
+    incomingIdentity.current = next;
+    if (isSettingsDirty || isEditorDirty || hasFileDraft) {
+      setPendingSwitchProjectId(initialProjectId || null);
+      setPendingSwitchJobId(initialJobId || null);
+      setShowSwitchGuardModal(true);
+    } else {
+      switchProject(initialProjectId || null, initialJobId || null);
+    }
+  }, [initialProjectId, initialJobId]);
 
   // SSE Real-time workflow status updates
   useEffect(() => {
@@ -935,7 +975,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       status: 'running',
       current_stage: 'INGEST',
       current_step: 'Đang khởi chạy workflow...',
-      overall_progress_pct: 0,
+      overall_progress_pct: undefined,
       stages: [
         { name: 'INGEST', status: 'running' },
         { name: 'ANALYZE', status: 'pending' },
@@ -1076,8 +1116,14 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     if (!activeProjectId) return;
     setLoadingWorkflowAction('resume');
     try {
-      await videoTranslatorApi.resumeWorkflow(activeProjectId);
-      await fetchWorkflowStatus(activeProjectId);
+      if (activeJobId) {
+        await videoTranslatorApi.resumeJobFromCheckpoint(activeJobId);
+        const response = await videoTranslatorApi.getJob(activeJobId);
+        if (response.success && response.data) setJob({ ...response.data, id: response.data.id || response.data.job_id });
+      } else {
+        await videoTranslatorApi.resumeWorkflow(activeProjectId);
+        await fetchWorkflowStatus(activeProjectId);
+      }
     } catch (err) {
       alert('Không thể tiếp tục workflow: ' + formatApiError(err, 'Lỗi hệ thống'));
     } finally {
@@ -1089,8 +1135,14 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     if (!activeProjectId) return;
     setLoadingWorkflowAction('cancel');
     try {
-      await videoTranslatorApi.cancelWorkflow(activeProjectId);
-      await fetchWorkflowStatus(activeProjectId);
+      if (activeJobId) {
+        await videoTranslatorApi.cancelJob(activeJobId);
+        const response = await videoTranslatorApi.getJob(activeJobId);
+        if (response.success && response.data) setJob({ ...response.data, id: response.data.id || response.data.job_id });
+      } else {
+        await videoTranslatorApi.cancelWorkflow(activeProjectId);
+        await fetchWorkflowStatus(activeProjectId);
+      }
     } catch (err) {
       alert('Không thể hủy workflow: ' + formatApiError(err, 'Lỗi hệ thống'));
     } finally {
@@ -1131,12 +1183,14 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
   useEffect(() => {
     let current = true;
     const generation = requestGeneration.current;
-    if (initialJobId) {
+    if (selectedStudioJobId) {
+      requestedJobHydrating.current = true;
       setStudioLoading(true);
-      videoTranslatorApi.getStudioState(initialJobId).then(res => {
+      videoTranslatorApi.getStudioState(selectedStudioJobId).then(res => {
         if (!current || generation !== requestGeneration.current) return;
         if (res.success && res.data) {
           const { job: loadedJob, asset: loadedAsset, settings_snapshot, segments: loadedSegs } = res.data;
+          requestedJobHydrating.current = false;
           setStudioLoading(false);
           setConnectionError(false);
           setAsset(loadedAsset || null);
@@ -1167,7 +1221,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       }).catch(err => { if (current && generation === requestGeneration.current) setConnectionError(true); console.error('Failed to load initial studio state:', err); });
     }
     return () => { current = false; };
-  }, [initialJobId]);
+  }, [selectedStudioJobId]);
 
   useEffect(() => {
     if (!job?.id || !segments || segments.length === 0 || !editorDirtyRef.current) return;
@@ -1248,13 +1302,16 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
               setSegments(prev => {
                 if (!prev || prev.length === 0) return newJob.segments;
                 // In review/editing mode, preserve user's local form inputs
-                if (editorDirtyRef.current || ['needs_review', 'segment_editing'].includes(newJob.status)) {
+                if (editorDirtyRef.current || document.getElementById('studio-review-panel')?.contains(document.activeElement) || ['needs_review', 'segment_editing'].includes(newJob.status)) {
                   return newJob.segments.map(serverSeg => {
                     const localSeg = prev.find(p => p.id === serverSeg.id);
                     if (!localSeg) return serverSeg;
                     return {
                       ...serverSeg,
                       character_id: localSeg.character_id ?? serverSeg.character_id,
+                      character_name: localSeg.character_name ?? serverSeg.character_name,
+                      gender: localSeg.gender ?? serverSeg.gender,
+                      role: localSeg.role ?? serverSeg.role,
                       voice_provider: localSeg.voice_provider ?? serverSeg.voice_provider,
                       voice_id: localSeg.voice_id ?? serverSeg.voice_id,
                       translated_text: localSeg.translated_text ?? serverSeg.translated_text,
@@ -1387,7 +1444,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
           setWorkflowStatusData((prev) => ({
             ...(prev || {}),
             current_step: `Đang tải lên video ${percent}%`,
-            overall_progress_pct: Math.min(8, Math.round(percent * 0.08)),
+            overall_progress_pct: undefined,
           }));
         });
         importedAsset = res.data;
@@ -1403,7 +1460,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
           setWorkflowStatusData((prev) => ({
             ...(prev || {}),
             current_step: transfer.message || `Đang tải xuống ${transfer.percent || 0}%`,
-            overall_progress_pct: Math.min(12, Math.round((transfer.percent || 0) * 0.12)),
+            overall_progress_pct: undefined,
           }));
           await new Promise((r) => setTimeout(r, 700));
           const polled = await videoTranslatorApi.getTransfer(transferId);
@@ -1473,8 +1530,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         project_id: realProjectId,
         status: 'created',
         stage: 'QUEUED',
-        overall_progress_pct: 0,
-        stage_progress_pct: 0,
+
         current_step: 'Đang bắt đầu pipeline...',
       };
       setJob(initialPendingJob);
@@ -1494,6 +1550,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       const detail = formatApiError(err, 'Không thể bắt đầu dịch video');
       setPipelineError(detail);
       setIsProcessing(false);
+    } finally {
+      setLoadingWorkflowAction(null);
     }
   };
 
@@ -1507,24 +1565,28 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
     setSegments(prev => prev.map(s => s.id === segmentId ? { ...s, [field]: value } : s));
   };
 
+  const characterVoiceReviewPayload = () => {
+    const reviewSegments = segments.filter(s => s.speaker_id || s.id);
+    return {
+      mappings: reviewSegments.map(s => ({
+        segment_id: s.id,
+        speaker_id: s.speaker_id || `UNRESOLVED_${(s.segment_number || s.number || s.id)}`,
+        character_id: s.character_id || `character-${(s.speaker_id || s.id || 'default').toLowerCase()}`,
+        character_name: s.character_name || s.character_id || s.speaker_id,
+        gender: s.gender || 'unknown',
+        role: s.role || 'supporting',
+        voice_provider: s.voice_provider || audioProviderId,
+        voice_id: s.voice_id || voiceId,
+      })),
+    };
+  };
+
   const handleValidateAndResumeCharacterVoices = async () => {
     if (isProcessing) return;
     setIsProcessing(true);
     setPipelineError(null);
     try {
-      const reviewSegments = segments.filter(s => s.speaker_id || s.id);
-      await videoTranslatorApi.updateCharacterVoiceReview(job.id, {
-        mappings: reviewSegments.map(s => ({
-          segment_id: s.id,
-          speaker_id: s.speaker_id || `UNRESOLVED_${(s.segment_number || s.number || s.id)}`,
-          character_id: s.character_id || `character-${(s.speaker_id || s.id || 'default').toLowerCase()}`,
-          character_name: s.character_name || s.character_id || s.speaker_id,
-          gender: s.gender || 'unknown',
-          role: s.role || 'supporting',
-          voice_provider: s.voice_provider || audioProviderId,
-          voice_id: s.voice_id || voiceId,
-        })),
-      });
+      await videoTranslatorApi.updateCharacterVoiceReview(job.id, characterVoiceReviewPayload());
       const validation = await videoTranslatorApi.validateCharacterVoiceReview(job.id);
       if (!validation.data?.passed) {
         const issues = validation.data?.issues || [];
@@ -1547,6 +1609,26 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
       setPipelineError(detail);
       setIsProcessing(false);
     }
+  };
+
+  const handleSaveDraftsAndSwitch = async () => {
+    if (isSavingSettings || hasFileDraft) return;
+    if (isSettingsDirty && !(await handleSaveSettingsToProject())) return;
+    if (isEditorDirty) {
+      setIsSavingSettings(true);
+      try {
+        await videoTranslatorApi.updateSegments(activeJobId, segments.map(segment => ({ id: segment.id, translated_text: segment.translated_text })));
+        if (voiceDirtyRef.current) await videoTranslatorApi.updateCharacterVoiceReview(activeJobId, characterVoiceReviewPayload());
+        clearEditorDirty();
+      } catch (err) {
+        alert('Không thể lưu bản sửa: ' + formatApiError(err, 'Lỗi hệ thống'));
+        return;
+      } finally {
+        setIsSavingSettings(false);
+      }
+    }
+    switchProject(pendingSwitchProjectId, pendingSwitchJobId);
+    setShowSwitchGuardModal(false);
   };
 
   const handleRenderFinalVideo = async () => {
@@ -1636,6 +1718,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
           <span style={{ fontSize: '13px', fontWeight: 700, color: '#fff', whiteSpace: 'nowrap' }}>Dự án</span>
           <select
             aria-label="Dự án"
+            disabled={!!loadingWorkflowAction || isSavingSettings || isPreflighting || isCreatingProject || isUploadingLogo || isUploadingLibraryThumb}
             value={selectedProjectId || ''}
             onChange={(e) => handleProjectSelectAttempt(e.target.value || null)}
             style={{ minWidth: '180px' }}
@@ -1652,7 +1735,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
               Sửa tên
             </button>
           )}
-          <button type="button" className="btn btn-primary btn-sm" onClick={() => setShowCreateProjectModal(true)}>
+          <button type="button" className="btn btn-primary btn-sm" disabled={!!loadingWorkflowAction || isSavingSettings || isPreflighting || isCreatingProject} onClick={() => setShowCreateProjectModal(true)}>
             Tạo mới
           </button>
         </div>
@@ -1703,9 +1786,9 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
             showDiagnostics={showDiagnostics}
             job={job}
             pipelineError={pipelineError}
-            onPause={handlePauseWorkflow}
-            onResume={handleResumeWorkflow}
-            onCancel={handleCancelWorkflow}
+            onPause={!job && workflowStatusData?.execution_id ? handlePauseWorkflow : undefined}
+            onResume={job || workflowStatusData?.execution_id ? handleResumeWorkflow : undefined}
+            onCancel={job || workflowStatusData?.execution_id ? handleCancelWorkflow : undefined}
             onRetryStage={handleRetryStage}
             onRetryJob={handleRetryJob}
             onOpenLogs={handleOpenLogs}
@@ -1717,26 +1800,6 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
           />
 
       {connectionError && <p role="status">Mất kết nối. Đang thử lấy trạng thái; giữ thông tin gần nhất.</p>}
-      <StudioSection id="studio-progress" title="Tiến độ" open={!!openSections.progress} onToggle={open => toggleSection('progress', open)}>
-        <p role="status">{({ setup: 'Sẵn sàng nhập video', progress: 'Đang xử lý video', review: 'Cần duyệt bản dịch & giọng', result: 'Kết quả đã sẵn sàng', hold: 'Cần xử lý rủi ro bản quyền', error: job?.status === 'interrupted' ? 'Tác vụ bị gián đoạn' : 'Xử lý thất bại', paused: 'Đã tạm dừng', cancelled: 'Đã hủy', unknown: 'Đang xác định trạng thái', missing_result: 'Chưa có file kết quả. Tác vụ đã hoàn tất nhưng chưa có đường dẫn video.' })[studioPhase]}</p>
-          {job && (job.status === 'copyright_hold' || job.stage === 'COPYRIGHT_HOLD') && (
-            <div style={{ marginTop: '12px', padding: '12px 14px', background: '#7f1d1d', border: '1px solid #ef4444', borderRadius: '10px', color: '#fecaca' }}>
-              <div style={{ fontWeight: 700, marginBottom: '6px' }}>Rủi ro bản quyền CAO — đã dừng trước STT</div>
-              <div style={{ fontSize: '13px', whiteSpace: 'pre-wrap' }}>
-                {(job.copyright_check?.reasons || []).join('\n') || job.current_step}
-              </div>
-              <button
-                type="button"
-                onClick={handleCopyrightContinue}
-                disabled={!!loadingWorkflowAction}
-                style={{ marginTop: '10px', padding: '8px 12px', borderRadius: '8px', border: 'none', background: '#f97316', color: '#111', fontWeight: 700, cursor: 'pointer' }}
-              >
-                Tôi hiểu rủi ro, tiếp tục dịch
-              </button>
-            </div>
-          )}
-
-      </StudioSection>
       <StudioSection id="studio-setup" title="Nhập & cấu hình" open={!!openSections.setup} onToggle={open => toggleSection('setup', open)}>
           {/* Compact Input Video & Configuration Options */}
           <div className="compact-card">
@@ -1956,7 +2019,29 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
 
             </div>
 
-<StudioSection id="studio-ai" title="AI & dịch thuật" open={!!openSections.ai} onToggle={open => toggleSection('ai', open)} summary={`${llmProviderId} · ${sttModel}`}>
+            {/* Start Pipeline Action Button */}
+            <button
+              onClick={handleOpenPreflightOrPromptProject}
+              disabled={studioPhase !== 'setup' || isPreflighting || !!loadingWorkflowAction}
+              style={{
+                width: '100%',
+                padding: '10px 16px',
+                borderRadius: '8px',
+                background: 'linear-gradient(90deg, #4f46e5 0%, #7c3aed 100%)',
+                color: '#fff',
+                fontWeight: 'bold',
+                fontSize: '14px',
+                border: 'none',
+                cursor: isProcessing ? 'not-allowed' : 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+              }}
+            >
+              {isProcessing ? <><ButtonSpinner /> Đang xử lý...</> : 'Bắt đầu dịch'}
+            </button>
+            <StudioSection id="studio-ai" title="AI & dịch thuật" open={!!openSections.ai} onToggle={open => toggleSection('ai', open)} summary={`${llmProviderId} · ${sttModel}`}>
               <div>
                 <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: '#94a3b8' }}>LLM Provider:</label>
                 <select
@@ -1971,8 +2056,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
               </div>
 
 
-</StudioSection>
-<StudioSection id="studio-audio" title="Giọng & xử lý âm thanh" open={!!openSections.audio} onToggle={open => toggleSection('audio', open)} summary={`Âm thanh gốc: ${originalAudioMode}`}>
+            </StudioSection>
+            <StudioSection id="studio-audio" title="Giọng & xử lý âm thanh" open={!!openSections.audio} onToggle={open => toggleSection('audio', open)} summary={`Âm thanh gốc: ${{ mute: 'Tắt tiếng gốc', duck: 'Giảm âm lượng gốc', keep: 'Giữ tiếng gốc' }[originalAudioMode] || originalAudioMode}`}>
               <div>
                 <label style={{ display: 'block', fontSize: '12px', marginBottom: '4px', color: '#94a3b8' }}>Âm thanh gốc:</label>
                 <select
@@ -1986,8 +2071,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
                 </select>
               </div>
 
-</StudioSection>
-<StudioSection id="studio-output" title="Hình ảnh đầu ra" open={!!openSections.output} onToggle={open => toggleSection('output', open)} summary={`Watermark: ${watermarkEnabled ? `bật (${watermarkType})` : 'tắt'}`}>
+            </StudioSection>
+            <StudioSection id="studio-output" title="Hình ảnh đầu ra" open={!!openSections.output} onToggle={open => toggleSection('output', open)} summary={`Watermark: ${watermarkEnabled ? `bật (${watermarkType})` : 'tắt'}`}>
           {/* Watermark Branding Section */}
           <div className="compact-card">
             <div className="compact-card-header">
@@ -2134,8 +2219,8 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
           </div>
 
 
-</StudioSection>
-<StudioSection id="studio-automatic" title="Tùy chọn tự động" open={!!openSections.automatic} onToggle={open => toggleSection('automatic', open)} summary={`Tự xác nhận dịch: ${autoConfirmTranslation ? 'bật' : 'tắt'} · Tự xác nhận giọng: ${autoConfirmVoice ? 'bật' : 'tắt'} · Cắt intro/outro: ${trimFillerEnabled ? 'bật' : 'tắt'} · Bản quyền: ${copyrightCheckEnabled ? 'bật' : 'tắt'} · Thumbnail: ${thumbnailEnabled ? 'bật' : 'tắt'}`}>
+            </StudioSection>
+            <StudioSection id="studio-automatic" title="Tùy chọn tự động" open={!!openSections.automatic} onToggle={open => toggleSection('automatic', open)} summary={`Tự xác nhận dịch: ${autoConfirmTranslation ? 'bật' : 'tắt'} · Tự xác nhận giọng: ${autoConfirmVoice ? 'bật' : 'tắt'} · Cắt intro/outro: ${trimFillerEnabled ? 'bật' : 'tắt'} · Bản quyền: ${copyrightCheckEnabled ? 'bật' : 'tắt'} · Thumbnail: ${thumbnailEnabled ? 'bật' : 'tắt'}`}>
             <div
               style={{
                 display: 'grid',
@@ -2379,39 +2464,39 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
             )}
           </div>
 
-</StudioSection>
-            {/* Start Pipeline Action Button */}
-            <button
-              onClick={handleOpenPreflightOrPromptProject}
-              disabled={studioPhase !== 'setup' || isPreflighting || !!loadingWorkflowAction}
-              style={{
-                width: '100%',
-                padding: '10px 16px',
-                borderRadius: '8px',
-                background: 'linear-gradient(90deg, #4f46e5 0%, #7c3aed 100%)',
-                color: '#fff',
-                fontWeight: 'bold',
-                fontSize: '14px',
-                border: 'none',
-                cursor: isProcessing ? 'not-allowed' : 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-              }}
-            >
-              {isProcessing ? <><ButtonSpinner /> Đang xử lý...</> : 'Bắt đầu dịch'}
-            </button>
+            </StudioSection>
+
           </div>
       {/* BELOW VIEWPORT SECTION: GLOSSARY MANAGER (DEFAULT CLOSED) */}
       <div style={{ marginTop: '20px' }}>
         <StudioSection id="studio-glossary" title="Thuật ngữ" open={!!openSections.glossary} onToggle={open => toggleSection('glossary', open)}>
           <ProjectGlossaryManager
+            key={activeProjectId}
             projectId={activeProjectId}
             refreshKey={`${job?.status || ''}-${job?.last_checkpoint_stage || ''}-${job?.overall_progress_pct || 0}-${segments.length}`}
           />
         </StudioSection>
       </div>
+
+      </StudioSection>
+      <StudioSection id="studio-progress" title="Tiến độ" open={!!openSections.progress} onToggle={open => toggleSection('progress', open)}>
+        <p role="status">{({ setup: 'Sẵn sàng nhập video', progress: 'Đang xử lý video', review: 'Cần duyệt bản dịch & giọng', result: 'Kết quả đã sẵn sàng', hold: 'Cần xử lý rủi ro bản quyền', error: job?.status === 'interrupted' ? 'Tác vụ bị gián đoạn' : 'Xử lý thất bại', paused: 'Đã tạm dừng', cancelled: 'Đã hủy', unknown: 'Đang xác định trạng thái', missing_result: 'Chưa có file kết quả. Tác vụ đã hoàn tất nhưng chưa có đường dẫn video.' })[studioPhase]}</p>
+          {job && (job.status === 'copyright_hold' || job.stage === 'COPYRIGHT_HOLD') && (
+            <div style={{ marginTop: '12px', padding: '12px 14px', background: '#7f1d1d', border: '1px solid #ef4444', borderRadius: '10px', color: '#fecaca' }}>
+              <div style={{ fontWeight: 700, marginBottom: '6px' }}>Rủi ro bản quyền CAO — đã dừng trước STT</div>
+              <div style={{ fontSize: '13px', whiteSpace: 'pre-wrap' }}>
+                {(job.copyright_check?.reasons || []).join('\n') || job.current_step}
+              </div>
+              <button
+                type="button"
+                onClick={handleCopyrightContinue}
+                disabled={!!loadingWorkflowAction}
+                style={{ marginTop: '10px', padding: '8px 12px', borderRadius: '8px', border: 'none', background: '#f97316', color: '#111', fontWeight: 700, cursor: 'pointer' }}
+              >
+                Tôi hiểu rủi ro, tiếp tục dịch
+              </button>
+            </div>
+          )}
 
       </StudioSection>
       <StudioSection id="studio-review" title="Duyệt bản dịch & giọng" open={!!openSections.review} onToggle={open => toggleSection('review', open)}>
@@ -2776,7 +2861,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
 
           </div>
 
-<StudioSection id="studio-publishing" title="Đăng video tùy chọn" open={!!openSections.publishing} onToggle={open => toggleSection('publishing', open)}>
+          <StudioSection id="studio-publishing" title="Đăng video tùy chọn" open={!!openSections.publishing} onToggle={open => toggleSection('publishing', open)}>
             <button
               onClick={() => setShowYouTubeModal(true)}
               style={{
@@ -2792,14 +2877,14 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
             >
               🔴 Tự Động SEO & Đăng Bài YouTube
             </button>
-</StudioSection>
-<StudioSection id="studio-qc" title="Kiểm định chất lượng" open={!!openSections.qc} onToggle={open => toggleSection('qc', open)}>
-<AIQCScorecard jobId={job.id} />
-</StudioSection>
+          </StudioSection>
+          <StudioSection id="studio-qc" title="Kiểm định chất lượng" open={!!openSections.qc} onToggle={open => toggleSection('qc', open)}>
+            <AIQCScorecard jobId={job.id} />
+          </StudioSection>
 
-<StudioSection id="studio-editor" title="Chỉnh sửa video & phụ đề" open={!!openSections.editor} onToggle={open => toggleSection('editor', open)}>
-<VideoEditorStudio jobId={job.id} />
-</StudioSection>
+          <StudioSection id="studio-editor" title="Chỉnh sửa video & phụ đề" open={!!openSections.editor} onToggle={open => toggleSection('editor', open)}>
+            <VideoEditorStudio jobId={job.id} />
+          </StudioSection>
 
         </div>
       )}
@@ -2878,16 +2963,14 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
           <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '14px', padding: '24px', maxWidth: '460px', width: '90%', color: '#fff' }}>
             <h3 style={{ margin: '0 0 10px 0', fontSize: '16px', color: '#f59e0b' }}>⚠️ Có thay đổi chưa lưu</h3>
+            {hasFileDraft && <p>File vừa chọn chưa được nhập. Chọn Hủy để tiếp tục, hoặc Bỏ qua thay đổi để chuyển dự án.</p>}
             <p style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '16px', lineHeight: '1.5' }}>
               Bạn có cấu hình hoặc bản sửa câu thoại chưa lưu. Hãy lưu trước khi chuyển dự án. Với cấu hình, bấm <strong>Lưu cấu hình</strong>. Vui lòng chọn thao tác:
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <button
-                onClick={async () => {
-                  await handleSaveSettingsToProject();
-                  switchProject(pendingSwitchProjectId);
-                  setShowSwitchGuardModal(false);
-                }}
+                onClick={handleSaveDraftsAndSwitch}
+                disabled={isSavingSettings || hasFileDraft}
                 style={{ background: '#2563eb', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}
               >
                 💾 Lưu thay đổi & Chuyển dự án
@@ -2895,7 +2978,7 @@ export default function VideoTranslator({ initialJobId, initialProjectId, onProc
               <button
                 onClick={() => {
                   handleDiscardChanges();
-                  switchProject(pendingSwitchProjectId);
+                  switchProject(pendingSwitchProjectId, pendingSwitchJobId);
                   setShowSwitchGuardModal(false);
                 }}
                 style={{ background: '#475569', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' }}

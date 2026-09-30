@@ -4,8 +4,8 @@ export function resolveStudioPhase({ job, workflow, transfer, busy, loading } = 
   const status = String(job?.status || workflow?.status || '').toLowerCase();
   const stage = String(job?.stage || workflow?.current_stage || '').toUpperCase();
   if (status === 'completed') return job?.output_url || job?.output_video_path ? 'result' : 'missing_result';
+  if (status === 'cancelled' || stage === 'CANCELLED') return 'cancelled';
   if (['failed', 'interrupted'].includes(status)) return 'error';
-  if (status === 'cancelled') return 'cancelled';
   if (status === 'copyright_hold' || stage === 'COPYRIGHT_HOLD') return 'hold';
   if (['needs_review', 'segment_editing'].includes(status)) return 'review';
   if (status === 'paused') return 'paused';

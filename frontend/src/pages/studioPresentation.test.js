@@ -18,3 +18,6 @@ it.each([
   [{ workflow: { status: 'not_started' } }, 'setup'], [{ workflow: { status: 'needs_review' } }, 'review'],
 ])('classifies %j as %s', (input, expected) => expect(resolveStudioPhase(input)).toBe(expected));
 it.each([['setup', 'setup'], ['review', 'review'], ['result', 'result'], ['hold', 'progress'], ['unknown', 'progress'], ['missing_result', 'progress']])('opens %s in %s', (phase, section) => expect(sectionForPhase(phase)).toBe(section));
+it('recognizes the existing cancel endpoint representation', () => {
+  expect(resolveStudioPhase({ job: { status: 'failed', stage: 'CANCELLED' } })).toBe('cancelled');
+});
