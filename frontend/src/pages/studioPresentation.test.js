@@ -4,7 +4,7 @@ import { resolveStudioPhase, sectionForPhase } from './studioPresentation';
 it.each([
   [{}, 'setup'], [{ loading: true }, 'unknown'], [{ busy: true }, 'progress'],
   [{ transfer: { status: 'running' } }, 'progress'],
-  ...['created', 'queued', 'pending', 'extracting_audio', 'stt', 'translating', 'generating_tts', 'syncing_audio', 'rendering', 'processing', 'running'].map(status => [{ job: { status } }, 'progress']),
+  ...['checking', 'downloading', 'language_detected', 'translated', 'created', 'queued', 'pending', 'extracting_audio', 'stt', 'translating', 'generating_tts', 'syncing_audio', 'rendering', 'processing', 'running'].map(status => [{ job: { status } }, 'progress']),
   ...['needs_review', 'segment_editing'].map(status => [{ job: { status }, workflow: { status: 'running' }, busy: true }, 'review']),
   [{ job: { status: 'copyright_hold' } }, 'hold'], [{ job: { status: 'running', stage: 'COPYRIGHT_HOLD' } }, 'hold'],
   [{ job: { status: 'paused' } }, 'paused'],

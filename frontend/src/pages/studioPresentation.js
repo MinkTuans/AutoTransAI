@@ -10,7 +10,7 @@ export function resolveStudioPhase({ job, workflow, transfer, busy, loading } = 
   if (['needs_review', 'segment_editing'].includes(status)) return 'review';
   if (status === 'paused') return 'paused';
   if (busy || transfer?.status === 'running') return 'progress';
-  if (['created', 'queued', 'pending', 'extracting_audio', 'stt', 'translating', 'generating_tts', 'syncing_audio', 'rendering', 'processing', 'running'].includes(status)) return 'progress';
+  if (['checking', 'downloading', 'language_detected', 'translated', 'created', 'queued', 'pending', 'extracting_audio', 'stt', 'translating', 'generating_tts', 'syncing_audio', 'rendering', 'processing', 'running'].includes(status)) return 'progress';
   if ((!job && !workflow) || (!job && status === 'not_started')) return 'setup';
   return 'unknown';
 }
