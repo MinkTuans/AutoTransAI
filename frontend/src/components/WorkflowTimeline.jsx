@@ -229,7 +229,8 @@ export default function WorkflowTimeline({
 
           let stDataStatus = 'pending';
           if (st.id === 'PUBLISH') {
-            stDataStatus = stagesMap.PUBLISH?.status || 'pending';
+            // Job-derived workflow responses synthesize PUBLISH passed without an upload.
+            stDataStatus = statusData?.context?.job_id ? 'pending' : (stagesMap.PUBLISH?.status || 'pending');
           } else if (currentStatus === 'not_started') {
             stDataStatus = 'pending';
           } else if (currentStatus === 'completed') {

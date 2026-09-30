@@ -33,3 +33,7 @@ it.each([['running', 'Tạm dừng'], ['paused', 'Tiếp tục'], ['failed', 'Th
   render(<WorkflowTimeline job={{ status }} loadingAction="cancel" onPause={vi.fn()} onResume={vi.fn()} onCancel={vi.fn()} onRetryJob={vi.fn()} />);
   expect(screen.getAllByRole('button', { name: label }).every(button => button.disabled)).toBe(true);
 });
+it('does not mistake synthesized job workflow stages for publishing evidence', () => {
+  render(<WorkflowTimeline job={{ id: 'j1', status: 'completed' }} statusData={{ context: { job_id: 'j1' }, stages: [{ name: 'PUBLISH', status: 'passed', steps: [] }] }} />);
+  expect(within(screen.getByRole('button', { name: /Đăng video/ })).getByText('Chờ')).toBeTruthy();
+});
