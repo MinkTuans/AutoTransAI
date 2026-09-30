@@ -50,3 +50,7 @@ Measure full owned process tree and renderer working-set/private bytes and CPU a
 ## Release gate
 
 Block delivery claims until Windows build, install, renderer, lifecycle, media and uninstall evidence exists. An unsigned artifact must be labeled unsigned. Signing, live provider compatibility and performance claims require their own evidence. See `FINAL_REPORT.md` for the actual executed checks and outstanding items.
+
+### Acceptance refresh checkpoint (2026-09-30)
+
+Candidate source `21970901c5b2dae3ae79f234389f51c2727fa347` is building in run `36781928499`; this checkpoint does not claim acceptance passed. The feature-branch harness now attempts actual foreground keyboard F5, CDP document reload/Studio DOM/authenticated health, unchanged session cookie/backend PID, and Win32 native menu absence. Debug instrumentation is restricted to the marked disposable runner launch. Additional checks cover same-version install-over retention, bundled synthetic FFmpeg generation/probe/full decode, owned port conflict and backend crash cleanup. Same-version reinstall is not an older-version migration; synthetic media is not provider E2E. Live STT/TTS/OAuth and physical-user clean-machine/performance matrix remain separate. Final run evidence will supersede this checkpoint. No product, API, schema or provider changes.

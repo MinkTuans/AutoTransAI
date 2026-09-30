@@ -1298,3 +1298,8 @@
 - Files: desktop/scripts/smoke-installed*.ps1, desktop/packaging/smoke_frozen.py, desktop/tests/test_installed_smoke.py, .github/workflows/desktop-windows.yml and desktop documentation.
 - Verification: 26 targeted portable tests and all six PowerShell scripts parsed; independent review findings closed. Windows run `36551294736` source `c3bc02e17c5d915314ef57e3248af5f4ffbaaad5` passed actual install/restart/GUI-window-close/uninstall/retention and upload. New unsigned artifact `11024283910`; earlier successful candidate remains unchanged.
 - Knowledge base, FINAL_REPORT, TEST_PLAN and BUILD updated with actual native coverage, artifact SHA256 and one-run timings/sizes. Interactive/media/failure/clean-machine/provider/full-performance and signing/public-distribution gates remain open. No production code changed.
+
+## 2026-09-30 — Windows acceptance refresh harness
+- Added installed foreground F5/CDP reload/session/backend checks and native-menu absence, same-version install-over retention, synthetic bundled FFmpeg generation/decode and owned port/crash checks.
+- Files: desktop/scripts/smoke-installed*.ps1, desktop/packaging/smoke_frozen.py; desktop reports and knowledge base checkpoint.
+- No product/API/database/configuration change. Disposable instrumentation only. Native results pending new CI; local portable tests/parser are recorded in job progress.

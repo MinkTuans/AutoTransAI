@@ -85,6 +85,21 @@ try {
     Assert-Check ($LASTEXITCODE -eq 0) 'installed-backend-smoke-failed'
     Assert-NoInstalledProcesses
     $Result.backend = Get-Content (Join-Path $Workspace 'backend.json') -Raw | ConvertFrom-Json
+    $Result.phase = 'install-over'
+    Invoke-Bounded $Setup @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/TASKS=desktopicon', "/DIR=`"$Install`"") 300
+    & $Python -c "import sqlite3,sys; from pathlib import Path; p=Path(sys.argv[1]); db=sqlite3.connect(p/'data/workflow.db'); assert db.execute('SELECT value FROM installed_smoke_marker').fetchall()==[('retained',)]; assert (p/'storage/installed-smoke-sentinel.txt').read_text()=='retained disposable user data'" $Data
+    Assert-Check ($LASTEXITCODE -eq 0) 'install-over-data-changed'
+    $Result.install_over = 'passed; same-version reinstall, not previous-version migration'
+    $Result.phase = 'synthetic-media'
+    $ffmpeg = Join-Path $Install '_internal/bin/ffmpeg.exe'
+    $ffprobe = Join-Path $Install '_internal/bin/ffprobe.exe'
+    $media = Join-Path $Workspace 'synthetic ü sample.mp4'
+    Invoke-Bounded $ffmpeg @('-hide_banner','-loglevel','error','-nostdin','-y','-f','lavfi','-i','testsrc2=size=320x180:rate=25','-f','lavfi','-i','sine=frequency=440:sample_rate=44100','-t','2','-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac',"`"$media`"") 60
+    $probe = (& $ffprobe -v error -show_streams -show_format -of json $media | ConvertFrom-Json)
+    Assert-Check ($LASTEXITCODE -eq 0 -and [double]$probe.format.duration -ge 2 -and @($probe.streams | Where-Object codec_type -eq 'video').Count -eq 1) 'synthetic-probe-failed'
+    Invoke-Bounded $ffmpeg @('-hide_banner','-loglevel','error','-nostdin','-i',"`"$media`"",'-f','null','-') 60
+    $Result.synthetic_media = 'passed; bundled FFmpeg generated H264/AAC 2s and decoded full file; no provider or Studio flow assertion'
+    Write-Output '::notice title=Installed extended evidence::Same-version install-over retained SQLite marker/storage sentinel; installed FFmpeg generated/probed/fully decoded Unicode-path synthetic H264/AAC sample.'
     $Result.phase = 'gui-capability'
     & (Join-Path $PSScriptRoot 'smoke-installed-gui.ps1') -Install $Install -Shortcut $MenuLink -Evidence (Join-Path $Workspace 'gui.json')
     $Result.gui = Get-Content (Join-Path $Workspace 'gui.json') -Raw | ConvertFrom-Json

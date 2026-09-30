@@ -13,6 +13,7 @@ import sys
 import json
 import os
 import sqlite3
+import socket
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -81,6 +82,42 @@ def run_cycle(payload: Path, data: Path, previous_client=None):
             'owned_backend_exited': True}, client
 
 
+def run_failure_checks(payload: Path, data: Path):
+    # Bind the same loopback port ourselves; never attach to an arbitrary listener.
+    listener = socket.socket()
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    listener.bind(('127.0.0.1', 8000))
+    listener.listen(1)
+    manager = BackendManager([str(payload / 'AutoTransAI.exe')], payload / '_internal', data)
+    try:
+        try:
+            manager.start()
+        except Exception:
+            pass
+        else:
+            raise AssertionError('Foreign owned listener was accepted')
+        with socket.create_connection(('127.0.0.1', 8000), timeout=2):
+            connection, _ = listener.accept()
+            connection.close()
+    finally:
+        manager.stop()
+        listener.close()
+    # A crash of our exact backend process is reaped by the supervisor.
+    manager = BackendManager([str(payload / 'AutoTransAI.exe')], payload / '_internal', data)
+    try:
+        manager.start()
+        process = manager._process
+        process.kill()
+        process.wait(timeout=10)
+        assert not manager.is_running()
+    finally:
+        manager.stop()
+    assert process.poll() is not None
+    return {'owned_port_conflict_rejected_listener_survived': True,
+            'owned_backend_crash_detected_cleanup': True,
+            'scope': 'installed backend manager; no shell error-page or active-media descendant assertion'}
+
+
 def main(payload: Path, data_root: Path | None = None, evidence: Path | None = None) -> None:
     if sys.platform != 'win32':
         raise SystemExit('Frozen Windows smoke test requires Windows')
@@ -105,9 +142,11 @@ def main(payload: Path, data_root: Path | None = None, evidence: Path | None = N
         with sqlite3.connect(database) as db:
             assert db.execute('SELECT value FROM installed_smoke_marker').fetchall() == [('retained',)]
         assert sentinel.read_text() == 'retained disposable user data'
+        failures = run_failure_checks(payload, data)
+        print('::notice title=Installed failure evidence::Owned port conflict rejected; listener survived; owned backend crash detected and reaped. No GUI error-page assertion.')
         if evidence:
             evidence.write_text(json.dumps({'scope': 'one CI run, two sequential installed backend launches; not p95',
-                                            'samples': samples, 'restart_data_retained': True, 'previous_session_rejected': True}, indent=2))
+                                            'failures': failures, 'samples': samples, 'restart_data_retained': True, 'previous_session_rejected': True}, indent=2))
     print('Frozen backend authenticated startup, UI/API and owned shutdown passed.')
 
 
