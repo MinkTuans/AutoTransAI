@@ -1303,3 +1303,5 @@
 - Added installed foreground F5/CDP reload/session/backend checks and native-menu absence, same-version install-over retention, synthetic bundled FFmpeg generation/decode and owned port/crash checks.
 - Files: desktop/scripts/smoke-installed*.ps1, desktop/packaging/smoke_frozen.py; desktop reports and knowledge base checkpoint.
 - No product/API/database/configuration change. Disposable instrumentation only. Native results pending new CI; local portable tests/parser are recorded in job progress.
+
+Acceptance harness continuation: installed WebView2 now attempts authenticated synthetic upload → real merger API/FFmpeg → completion polling → HTTP range 206 → video metadata/seek and invalid-extension/empty-job 400 checks, plus one raw observed-process-tree idle RAM/CPU sample. No native picker, real speech/provider, SSE, OAuth, representative performance or physical-machine assertion follows. Native results remain pending CI.
